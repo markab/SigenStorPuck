@@ -10,8 +10,10 @@
   below rather than left to fail confusingly: WebSerial is Chromium-only, and the
   page must be served over HTTPS, which GitHub Pages provides.
 
-  The manifest is fetched from the latest GitHub release rather than bundled, so
-  this page never needs redeploying when a new firmware is cut.
+  The manifest and the firmware are served from this same origin, and they have to
+  be: GitHub release assets carry no access-control-allow-origin header, so a page
+  fetching them from another origin is blocked by the browser and flashing never
+  begins. CI publishes merged.bin next to this file when a release is cut.
 -->
 <script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
 <style>
@@ -42,7 +44,7 @@
 
 <div class="install">
   <esp-web-install-button
-    manifest="https://github.com/markab/SigenStorPuck/releases/latest/download/manifest.json">
+    manifest="manifest.json">
     <button slot="activate">Install SigenStorPuck</button>
     <span slot="unsupported">
       This browser cannot flash over USB. Open this page in <strong>Chrome</strong> or

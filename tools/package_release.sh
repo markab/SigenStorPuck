@@ -70,8 +70,16 @@ pio pkg exec -- esptool.py --chip esp32s3 merge_bin \
 	0xe000 "${boot_app0}" \
 	0x10000 "${build_dir}/firmware.bin"
 
-# `path` is absolute and points at "latest", so the installer page never needs
-# redeploying when a new version is released.
+# `path` is relative, and that is the whole trick.
+#
+# An absolute URL into the GitHub release cannot be fetched by the installer page:
+# release assets send no access-control-allow-origin header, so a browser blocks the
+# cross-origin request and flashing never starts. Relative means the page and the
+# binary must sit on one origin, which is what the Pages job arranges by publishing
+# merged.bin next to index.html.
+#
+# It also resolves correctly against the release itself, so pointing anything at the
+# release copy of this manifest still works.
 cat > "${dist}/manifest.json" <<JSON
 {
   "name": "SigenStorPuck",
@@ -82,7 +90,7 @@ cat > "${dist}/manifest.json" <<JSON
       "chipFamily": "ESP32-S3",
       "parts": [
         {
-          "path": "https://github.com/${owner_repo}/releases/latest/download/merged.bin",
+          "path": "merged.bin",
           "offset": 0
         }
       ]

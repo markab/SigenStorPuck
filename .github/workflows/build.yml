@@ -62,10 +62,23 @@ jobs:
             dist/manifest.json
           generate_release_notes: true
 
-  # Publishes web/installer to Pages. Separate job so a Pages failure cannot fail
-  # the build, and so it only runs for the real branch.
+      # Handed to the pages job, which cannot see this job's workspace.
+      - name: Keep artifacts for the installer
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-artifacts
+          path: dist/
+
+  # Publishes the installer to Pages, with the firmware alongside it.
+  #
+  # Tags only, deliberately. The page and the binary it flashes have to be served
+  # from the same origin — GitHub release assets send no CORS header, so a page
+  # fetching them cross-origin is blocked and flashing never starts. Publishing on
+  # every main push would leave Pages advertising a manifest with no binary next to
+  # it, so it only ever deploys as part of cutting a release.
   pages:
-    if: github.ref == 'refs/heads/main'
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     needs: build
     permissions:
@@ -76,6 +89,13 @@ jobs:
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Collect the firmware built above
+        uses: actions/download-artifact@v4
+        with:
+          name: release-artifacts
+          path: web/installer
+
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
