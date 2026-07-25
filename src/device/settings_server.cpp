@@ -115,7 +115,11 @@ String page(const String& message, bool message_is_error) {
   } else if (!power.battery_present) {
     html += power.usb_present ? "USB, no battery fitted" : "no battery fitted";
   } else {
-    html += String(power.percent) + "% (" + power.millivolts + " mV)";
+    if (power.percent >= 0) {
+      html += String(power.percent) + "% (" + power.millivolts + " mV)";
+    } else {
+      html += String(power.millivolts) + " mV (gauge not reporting)";
+    }
     html += power.charging ? ", charging" : (power.usb_present ? ", on USB" : ", on battery");
   }
   html += "</p>";

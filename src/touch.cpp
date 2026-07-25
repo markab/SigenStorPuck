@@ -75,25 +75,12 @@ void indev_read_cb(lv_indev_drv_t* /*drv*/, lv_indev_data_t* data) {
     // The touch layer is mounted 180 degrees round from the panel's scan order,
     // so start by undoing that; this reproduces the setMirrorXY(true, true) that
     // was verified on hardware at rotation 0.
-    lv_coord_t x = PUCK_LCD_WIDTH - 1 - static_cast<lv_coord_t>(point.x);
-    lv_coord_t y = PUCK_LCD_HEIGHT - 1 - static_cast<lv_coord_t>(point.y);
+    // Only the mounting correction belongs here. LVGL rotates pointer coordinates
+    // itself from disp->driver->rotated (lv_indev.c), so applying the display
+    // rotation here as well turned every swipe the wrong way.
+    const lv_coord_t x = PUCK_LCD_WIDTH - 1 - static_cast<lv_coord_t>(point.x);
+    const lv_coord_t y = PUCK_LCD_HEIGHT - 1 - static_cast<lv_coord_t>(point.y);
 
-    // Then the display rotation, clockwise. Square panel, so width and height are
-    // interchangeable and no axis swap of the resolution is needed.
-    switch (s_rotation & 0x03) {
-      case 1:
-        { const lv_coord_t t = x; x = PUCK_LCD_WIDTH - 1 - y; y = t; }
-        break;
-      case 2:
-        x = PUCK_LCD_WIDTH - 1 - x;
-        y = PUCK_LCD_HEIGHT - 1 - y;
-        break;
-      case 3:
-        { const lv_coord_t t = x; x = y; y = PUCK_LCD_HEIGHT - 1 - t; }
-        break;
-      default:
-        break;
-    }
 
     s_last_point.x = x;
     s_last_point.y = y;

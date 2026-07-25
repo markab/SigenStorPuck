@@ -203,6 +203,15 @@ void setup() {
 
 void loop() {
   buttons_loop();
+
+  // A short press of PWR wakes the screen and steps to the next screen — a useful
+  // thing on a mains-powered display, where a power button has little to do.
+  if (power_take_short_press()) {
+    lv_disp_trig_activity(nullptr);
+    display_set_brightness(settings_get().brightness);
+    ui_show_screen((ui_current_screen() + 1) % ui_screen_count());
+  }
+  power_loop();
   net_loop();
 
   // Started only once connected: the captive portal owns port 80 until then.

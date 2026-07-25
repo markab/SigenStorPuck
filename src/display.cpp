@@ -58,12 +58,23 @@ bool display_begin(uint8_t rotation) {
   s_panel->fillScreen(RGB565_BLACK);
   s_panel->setBrightness(PUCK_LCD_BRIGHTNESS);
 
-  const size_t pixel_count = static_cast<size_t>(PUCK_LCD_WIDTH) * PUCK_LVGL_BUFFER_LINES;
+  // Rotating in software means LVGL rotates each rendered fragment, and a partial
+  // buffer makes that come out garbled — the fragment geometry no longer lines up
+  // with what the panel is told to expect. A rotated display therefore gets a whole
+  // frame and full_refresh; unrotated keeps the cheap 40-line slice in DMA RAM.
+  const bool rotated = (rotation & 0x03) != 0;
+  const size_t pixel_count = rotated
+                                 ? static_cast<size_t>(PUCK_LCD_WIDTH) * PUCK_LCD_HEIGHT
+                                 : static_cast<size_t>(PUCK_LCD_WIDTH) * PUCK_LVGL_BUFFER_LINES;
   const size_t bytes = pixel_count * sizeof(lv_color_t);
 
   // DMA-capable internal RAM matters for QSPI throughput; PSRAM works but the
   // frame rate drops noticeably, so log which one we got.
-  s_pixels = static_cast<lv_color_t*>(heap_caps_malloc(bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA));
+  // A whole frame is 434 KB and will not fit in internal RAM, so a rotated display
+  // goes straight to PSRAM.
+  s_pixels = rotated ? nullptr
+                     : static_cast<lv_color_t*>(
+                           heap_caps_malloc(bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA));
   s_buffer_is_internal = s_pixels != nullptr;
   if (s_pixels == nullptr) {
     s_pixels = static_cast<lv_color_t*>(heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM));
@@ -83,6 +94,7 @@ bool display_begin(uint8_t rotation) {
   s_disp_drv.draw_buf = &s_draw_buf;
   s_disp_drv.flush_cb = flush_cb;
   s_disp_drv.rounder_cb = rounder_cb;
+  s_disp_drv.full_refresh = rotated ? 1 : 0;
   // Software rotation, per Waveshare's 06_LVGL_Widgets sketch. Costs some CPU in
   // the flush path but actually rotates rather than mirroring.
   s_disp_drv.sw_rotate = 1;
