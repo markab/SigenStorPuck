@@ -1,0 +1,43 @@
+{
+  "v": 1,
+  "ts": 1784984400,
+  "ok": true,
+  "age": 3,
+  "power": {
+    "pv": 3.1,
+    "grid": -0.9,
+    "batt": 1.0,
+    "home": 1.2,
+    "ev": 0.0,
+    "plant": 2.1,
+    "off_grid": false
+  },
+  "battery": {
+    "soc": 66.0,
+    "soh": 99.0,
+    "capacity_kwh": 16.0,
+    "temp_c": 24.5,
+    "eta_min": 104
+  },
+  "today": null,
+  "cost": {
+    "configured": true,
+    "saving_gbp": 1.23,
+    "rate_p": 7.5,
+    "next": [
+      {
+        "from": 1784986200,
+        "p": 23.1
+      },
+      {
+        "from": 1784988000,
+        "p": 7.5
+      },
+      {
+        "from": 1784989800,
+        "p": 7.5
+      }
+    ]
+  },
+  "alarms": 0
+}

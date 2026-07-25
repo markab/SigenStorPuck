@@ -1,0 +1,34 @@
+{
+  "v": 1,
+  "ts": 1784984400,
+  "ok": true,
+  "age": 3,
+  "power": {
+    "pv": 2.9,
+    "grid": -0.4,
+    "batt": 0.8,
+    "home": 1.7,
+    "ev": 0.0,
+    "plant": 2.1,
+    "off_grid": false
+  },
+  "battery": {
+    "soc": 70.0,
+    "soh": 99.0,
+    "capacity_kwh": 16.0,
+    "temp_c": 24.5,
+    "eta_min": 110
+  },
+  "today": {
+    "solar": 12.4,
+    "import": 3.1,
+    "export": 5.2,
+    "load": 9.8,
+    "charge": 6.0,
+    "discharge": 4.2
+  },
+  "cost": {
+    "configured": false
+  },
+  "alarms": 0
+}
