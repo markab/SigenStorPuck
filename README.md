@@ -22,8 +22,11 @@ The EV leg only appears when something is charging, so nothing moves around when
 
 ## Installing
 
-1. Plug the Puck into a computer and open the installer page in **Chrome or Edge**. It
-   flashes over WebSerial — nothing to download, no drivers.
+### → [Install SigenStorPuck](https://markab.github.io/SigenStorPuck/)
+
+1. Plug the Puck into a computer and open the link above in **Chrome or Edge**. It
+   flashes over WebSerial — nothing to download, no drivers. Safari and Firefox cannot
+   do it, and neither can anything on iOS.
 2. On first boot it raises a WiFi access point called `SigenStorPuck-Setup`. Join it and
    pick your network.
 3. Open `http://sigenstorpuck.local/` and paste the enrolment URL from SigenStor
