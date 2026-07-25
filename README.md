@@ -9,8 +9,10 @@ and tariff costs, swiping between screens.
 
 ## Status
 
-Not yet started. The design is in [docs/PLAN.md](docs/PLAN.md); the server half it
-depends on shipped in SigenStor Display v0.13.0 as `GET /api/summary`.
+Early. Board bring-up works — the display, LVGL and touch all run on real hardware —
+but none of the four screens, the provisioning flow or the network client exist yet. The
+design is in [docs/PLAN.md](docs/PLAN.md); the server half it depends on shipped in
+SigenStor Display v0.13.0 as `GET /api/summary`.
 
 ## How it works
 
