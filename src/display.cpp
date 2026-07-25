@@ -19,6 +19,15 @@ lv_disp_drv_t s_disp_drv;
 lv_color_t* s_pixels = nullptr;
 bool s_buffer_is_internal = false;
 
+// Rotation is done here, on the way to the panel, rather than by LVGL's sw_rotate.
+// sw_rotate rotates each rendered fragment but leaves the area rectangle
+// describing the unrotated one, so a partial buffer feeds the panel a block of
+// h x w against a rect of w x h — every row walks sideways and the screen shears
+// diagonally. Transforming in the flush keeps the 40-line buffer, needs no
+// full_refresh, and touches nothing in the boot path.
+uint8_t s_rotation = 0;
+lv_color_t* s_rotated = nullptr;
+
 // The CO5300 only accepts even-aligned write windows. LVGL is happy to hand us
 // odd areas, and the panel then renders them offset and torn, so widen every
 // invalidated area to an even start and an odd end.
@@ -34,8 +43,64 @@ void rounder_cb(lv_disp_drv_t* /*drv*/, lv_area_t* area) {
 }
 
 void flush_cb(lv_disp_drv_t* drv, const lv_area_t* area, lv_color_t* pixels) {
-  s_panel->draw16bitRGBBitmap(area->x1, area->y1, reinterpret_cast<uint16_t*>(pixels),
-                              area->x2 - area->x1 + 1, area->y2 - area->y1 + 1);
+  const int32_t w = area->x2 - area->x1 + 1;
+  const int32_t h = area->y2 - area->y1 + 1;
+
+  // Unrotated is the untouched fast path: straight out of the DMA-capable buffer.
+  if (s_rotation == 0 || s_rotated == nullptr) {
+    s_panel->draw16bitRGBBitmap(area->x1, area->y1, reinterpret_cast<uint16_t*>(pixels), w, h);
+    lv_disp_flush_ready(drv);
+    return;
+  }
+
+  // A quarter turn swaps the block's dimensions; a half turn does not.
+  const bool quarter = s_rotation == 1 || s_rotation == 3;
+  const int32_t dst_w = quarter ? h : w;
+
+  for (int32_t sy = 0; sy < h; ++sy) {
+    const lv_color_t* src_row = pixels + sy * w;
+    for (int32_t sx = 0; sx < w; ++sx) {
+      int32_t dx = 0;
+      int32_t dy = 0;
+      switch (s_rotation) {
+        case 1:  // 90 clockwise
+          dx = h - 1 - sy;
+          dy = sx;
+          break;
+        case 2:  // 180
+          dx = w - 1 - sx;
+          dy = h - 1 - sy;
+          break;
+        default:  // 3, 270 clockwise
+          dx = sy;
+          dy = w - 1 - sx;
+          break;
+      }
+      s_rotated[dy * dst_w + dx] = src_row[sx];
+    }
+  }
+
+  // Where that block lands on the physical panel. Even/odd alignment survives the
+  // transform, so the 2-pixel rounding the CO5300 needs still holds.
+  int32_t px = 0;
+  int32_t py = 0;
+  switch (s_rotation) {
+    case 1:
+      px = PUCK_LCD_HEIGHT - 1 - area->y2;
+      py = area->x1;
+      break;
+    case 2:
+      px = PUCK_LCD_WIDTH - 1 - area->x2;
+      py = PUCK_LCD_HEIGHT - 1 - area->y2;
+      break;
+    default:
+      px = area->y1;
+      py = PUCK_LCD_WIDTH - 1 - area->x2;
+      break;
+  }
+
+  s_panel->draw16bitRGBBitmap(px, py, reinterpret_cast<uint16_t*>(s_rotated), dst_w,
+                              quarter ? w : h);
   lv_disp_flush_ready(drv);
 }
 
@@ -83,6 +148,21 @@ bool display_begin(uint8_t rotation) {
     return false;
   }
 
+  s_rotation = rotation & 0x03;
+  if (s_rotation != 0) {
+    // Somewhere to rotate each block into. Same size as the draw buffer, and only
+    // allocated when it is actually needed.
+    s_rotated = static_cast<lv_color_t*>(heap_caps_malloc(bytes, MALLOC_CAP_INTERNAL));
+    if (s_rotated == nullptr) {
+      s_rotated = static_cast<lv_color_t*>(heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM));
+    }
+    if (s_rotated == nullptr) {
+      // Better to run unrotated than not at all.
+      Serial.println("[display] no room for a rotation buffer, staying at 0");
+      s_rotation = 0;
+    }
+  }
+
   // Single-buffered partial rendering.
   lv_disp_draw_buf_init(&s_draw_buf, s_pixels, nullptr, pixel_count);
 
@@ -92,18 +172,18 @@ bool display_begin(uint8_t rotation) {
   s_disp_drv.draw_buf = &s_draw_buf;
   s_disp_drv.flush_cb = flush_cb;
   s_disp_drv.rounder_cb = rounder_cb;
-  // Software rotation, per Waveshare's 06_LVGL_Widgets sketch. Costs some CPU in
-  // the flush path but actually rotates rather than mirroring.
-  s_disp_drv.sw_rotate = 1;
-  lv_disp_t* disp = lv_disp_drv_register(&s_disp_drv);
+  // sw_rotate stays off: flush_cb does the rotation. `rotated` is still set,
+  // because LVGL uses it to rotate touch coordinates (lv_indev.c) — which is
+  // exactly the half we do want from it.
+  s_disp_drv.sw_rotate = 0;
+  s_disp_drv.rotated = s_rotation == 1   ? LV_DISP_ROT_90
+                       : s_rotation == 2 ? LV_DISP_ROT_180
+                       : s_rotation == 3 ? LV_DISP_ROT_270
+                                         : LV_DISP_ROT_NONE;
+  lv_disp_drv_register(&s_disp_drv);
 
-  switch (rotation & 0x03) {
-    case 1: lv_disp_set_rotation(disp, LV_DISP_ROT_90); break;
-    case 2: lv_disp_set_rotation(disp, LV_DISP_ROT_180); break;
-    case 3: lv_disp_set_rotation(disp, LV_DISP_ROT_270); break;
-    default: lv_disp_set_rotation(disp, LV_DISP_ROT_NONE); break;
-  }
-
+  Serial.printf("[display] rotation %u%s\n", static_cast<unsigned>(s_rotation),
+                s_rotation != 0 ? " (rotated in flush)" : "");
   Serial.printf("[display] CO5300 %dx%d up, %u-byte buffer (%u lines) in %s\n", PUCK_LCD_WIDTH,
                 PUCK_LCD_HEIGHT, static_cast<unsigned>(bytes),
                 static_cast<unsigned>(PUCK_LVGL_BUFFER_LINES),
