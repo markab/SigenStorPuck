@@ -48,8 +48,10 @@ jobs:
           sudo apt-get install -y libsdl2-dev
           pio run -e sim
 
-      - name: Package release artifacts
-        if: startsWith(github.ref, 'refs/tags/v')
+      # On tags this feeds the release; on main it feeds the installer page. Both
+      # want the same three files, so it runs for both.
+      - name: Package artifacts
+        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
         run: ./tools/package_release.sh
 
       - name: Publish release
@@ -64,7 +66,7 @@ jobs:
 
       # Handed to the pages job, which cannot see this job's workspace.
       - name: Keep artifacts for the installer
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
         uses: actions/upload-artifact@v4
         with:
           name: release-artifacts
@@ -79,11 +81,15 @@ jobs:
   #     published — which looks like the install link reloading the page, because the
   #     README's own link points back at the same URL.
   #
-  #   Settings > Environments > github-pages > Deployment branches and tags:
-  #     add the tag pattern v*
-  #     The environment is created restricted to branches, so deploying from a tag is
-  #     rejected with "not allowed to deploy ... due to environment protection rules".
-  #     This job runs on tags by design, see below.
+  # Deploys from main rather than from a tag. The github-pages environment is created
+  # restricted to branches, and getting a tag allowed there needs a rule whose ref
+  # type is Tag rather than Branch — an easy thing to set wrongly, and it rejected two
+  # releases before this was changed. main is allowed by default, so this needs no
+  # environment rule at all.
+  #
+  # The cost is that the installer flashes the tip of main rather than the newest
+  # tagged release. That does not conflict with anything: the device's updater reads
+  # the manifest from the GitHub release, not from Pages, so the two are independent.
   #
   # Tags only, deliberately. The page and the binary it flashes have to be served
   # from the same origin — GitHub release assets send no CORS header, so a page
@@ -91,7 +97,7 @@ jobs:
   # every main push would leave Pages advertising a manifest with no binary next to
   # it, so it only ever deploys as part of cutting a release.
   pages:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     needs: build
     permissions:
