@@ -94,7 +94,18 @@ FetchResult sigen_api_fetch(Snapshot* out, int* status_code) {
     // anyone who can spoof DNS or sit on the route.
     tls.setCACertBundle(rootca_crt_bundle_start,
                         static_cast<size_t>(rootca_crt_bundle_end - rootca_crt_bundle_start));
-    tls.setTimeout(TOTAL_TIMEOUT_MS / 1000);
+    // No setTimeout() here: HTTPClient::setTimeout below covers the read timeout
+    // once the stream exists, so this would be redundant.
+    //
+    // Note on log noise you will see on every HTTPS poll:
+    //   [E][NetworkClient.cpp:323] setSocketOption(): fail on 0, errno: 9
+    // three times per fetch. That is upstream and harmless. NetworkClient::read
+    // and ::write apply SO_RCVTIMEO/SO_SNDTIMEO using the base class's fd, but
+    // NetworkClientSecure never sets it — TLS runs its own socket through
+    // sslclient — so the option lands on fd 0 and fails. Polls succeed regardless.
+    // Silencing it would mean giving up the timeouts below, which is a far worse
+    // trade than a noisy log: they are what stops a stalled server holding the
+    // poll loop.
     client = &tls;
   } else {
     // Plain HTTP is for the LAN only, and only because the user asked for an

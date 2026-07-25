@@ -123,6 +123,10 @@ void ui_update(const Snapshot& snapshot) {
   screen_cost_update(snapshot);
 }
 
+void ui_set_device_battery(bool show, int percent, bool charging) {
+  screen_power_set_device_battery(show, percent, charging);
+}
+
 void ui_set_overlay(const char* title, const char* detail) {
   if (s_overlay == nullptr) {
     return;

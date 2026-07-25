@@ -15,8 +15,10 @@ struct Settings {
 
   uint32_t poll_interval_s = 5;
   uint8_t brightness = 200;
-  // 0 disables dimming.
-  uint32_t dim_after_s = 0;
+  // Dimmed rather than switched off: a status display you have to wake to read is
+  // a worse status display. 0 disables dimming entirely.
+  uint32_t dim_after_s = 30;
+  uint8_t dim_brightness = 24;
 };
 
 // Loads from NVS, falling back to defaults. Safe to call before WiFi is up.
@@ -28,7 +30,8 @@ const Settings& settings_get();
 // if NVS rejected the write.
 bool settings_set_server(const String& base_url, const String& token);
 
-bool settings_set_display(uint8_t brightness, uint32_t dim_after_s);
+bool settings_set_display(uint8_t brightness, uint32_t dim_after_s,
+                          uint8_t dim_brightness);
 
 bool settings_set_poll_interval(uint32_t seconds);
 

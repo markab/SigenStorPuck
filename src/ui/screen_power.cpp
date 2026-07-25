@@ -57,6 +57,12 @@ constexpr lv_coord_t FLOW_DOT_SIZE = 7;
 // bearing the star leaves free.
 constexpr lv_coord_t SOC_RADIUS = 178;
 
+// The Puck's own battery goes at 36 deg, between solar and the battery leg. The
+// star's five points leave gaps at 36, 108, 180, 252 and 324; 180 is taken by the
+// state of charge, so this is the next one nothing else reaches.
+constexpr float DEVICE_BATTERY_BEARING = 36.0f;
+constexpr lv_coord_t DEVICE_BATTERY_RADIUS = 186;
+
 // Dot speed maps |kW| onto a travel period, so a heavy flow visibly runs faster
 // than a trickle. Above FLOW_SPEED_FULL_KW it stops getting quicker.
 constexpr uint32_t FLOW_PERIOD_SLOW_MS = 2400;
@@ -95,6 +101,7 @@ lv_obj_t* s_ring = nullptr;
 lv_obj_t* s_plant_value = nullptr;
 lv_obj_t* s_plant_status = nullptr;
 lv_obj_t* s_soc_label = nullptr;
+lv_obj_t* s_device_battery = nullptr;
 Leg s_legs[LEG_COUNT];
 
 // ------------------------------------------------------------- formatting ---
@@ -359,6 +366,14 @@ lv_obj_t* screen_power_create(lv_obj_t* parent) {
   lv_label_set_text(s_soc_label, "SOC --");
   lv_obj_align(s_soc_label, LV_ALIGN_CENTER, soc_dx, soc_dy);
 
+  lv_coord_t battery_dx = 0;
+  lv_coord_t battery_dy = 0;
+  offset_for(DEVICE_BATTERY_BEARING, DEVICE_BATTERY_RADIUS, &battery_dx, &battery_dy);
+  s_device_battery = make_label(s_root, PUCK_FONT_SMALL, PUCK_COLOUR_MUTED);
+  lv_label_set_text(s_device_battery, "");
+  lv_obj_align(s_device_battery, LV_ALIGN_CENTER, battery_dx, battery_dy);
+  lv_obj_add_flag(s_device_battery, LV_OBJ_FLAG_HIDDEN);
+
   lv_timer_create(flow_tick, FLOW_TICK_MS, nullptr);
 
   return s_root;
@@ -435,4 +450,28 @@ void screen_power_update(const Snapshot& snapshot) {
     set_leg(LEG_GRID, snapshot.power.grid, importing ? FLOW_INWARD : FLOW_OUTWARD,
             importing ? "kW import" : "kW export", true);
   }
+}
+
+void screen_power_set_device_battery(bool show, int percent, bool charging) {
+  if (s_device_battery == nullptr) {
+    return;
+  }
+  if (!show) {
+    lv_obj_add_flag(s_device_battery, LV_OBJ_FLAG_HIDDEN);
+    return;
+  }
+  char text[24];
+  if (percent < 0) {
+    snprintf(text, sizeof(text), "batt --");
+  } else {
+    snprintf(text, sizeof(text), "batt %d%%%s", percent, charging ? " +" : "");
+  }
+  lv_label_set_text(s_device_battery, text);
+  // Amber below a fifth: on battery, that is the point at which it stops being
+  // information and starts being something to act on.
+  lv_obj_set_style_text_color(
+      s_device_battery,
+      lv_color_hex(percent >= 0 && percent < 20 ? PUCK_COLOUR_WARN : PUCK_COLOUR_MUTED),
+      LV_PART_MAIN);
+  lv_obj_clear_flag(s_device_battery, LV_OBJ_FLAG_HIDDEN);
 }

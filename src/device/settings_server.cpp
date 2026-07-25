@@ -6,6 +6,7 @@
 #include "enrol_url.h"
 #include "net.h"
 #include "poller.h"
+#include "power.h"
 #include "settings.h"
 #include "sigen_api.h"
 
@@ -106,6 +107,16 @@ String page(const String& message, bool message_is_error) {
   html += status.consecutive_failures;
   html += "<br>Clock: ";
   html += net_time_synced() ? "set from NTP" : "not set (HTTPS will fail)";
+  const PowerStatus power = power_status();
+  html += "<br>Puck power: ";
+  if (!power.pmic_ok) {
+    html += "PMIC not detected";
+  } else if (!power.battery_present) {
+    html += power.usb_present ? "USB, no battery fitted" : "no battery fitted";
+  } else {
+    html += String(power.percent) + "% (" + power.millivolts + " mV)";
+    html += power.charging ? ", charging" : (power.usb_present ? ", on USB" : ", on battery");
+  }
   html += "</p>";
 
   html += "<h2>Display</h2><form method=post action=/display><div class=row>";
@@ -114,6 +125,12 @@ String page(const String& message, bool message_is_error) {
   html += "></div>";
   html += "<div><label for=poll>Poll interval (s)</label><input id=poll name=poll type=number min=2 max=300 value=";
   html += settings.poll_interval_s;
+  html += "></div></div><div class=row>";
+  html += "<div><label for=dim>Dim after (s, 0 = never)</label><input id=dim name=dim type=number min=0 max=3600 value=";
+  html += settings.dim_after_s;
+  html += "></div>";
+  html += "<div><label for=dimb>Dimmed brightness</label><input id=dimb name=dimb type=number min=1 max=255 value=";
+  html += settings.dim_brightness;
   html += "></div></div>";
   html += "<button type=submit>Apply</button></form>";
 
@@ -233,8 +250,12 @@ void handle_test() {
 void handle_display() {
   const long brightness = s_server.arg("bright").toInt();
   const long poll = s_server.arg("poll").toInt();
-  if (brightness >= 10 && brightness <= 255) {
-    settings_set_display(static_cast<uint8_t>(brightness), settings_get().dim_after_s);
+  const long dim_after = s_server.arg("dim").toInt();
+  const long dim_brightness = s_server.arg("dimb").toInt();
+  if (brightness >= 10 && brightness <= 255 && dim_brightness >= 1 && dim_brightness <= 255 &&
+      dim_after >= 0) {
+    settings_set_display(static_cast<uint8_t>(brightness), static_cast<uint32_t>(dim_after),
+                         static_cast<uint8_t>(dim_brightness));
   }
   if (poll > 0) {
     settings_set_poll_interval(static_cast<uint32_t>(poll));

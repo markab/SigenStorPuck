@@ -13,6 +13,7 @@ constexpr const char* KEY_TOKEN = "token";
 constexpr const char* KEY_POLL = "poll_s";
 constexpr const char* KEY_BRIGHTNESS = "bright";
 constexpr const char* KEY_DIM = "dim_s";
+constexpr const char* KEY_DIM_BRIGHT = "dim_bright";
 
 // The protocol enforces a 1 s floor and the server polls Modbus every 5 s, so
 // anything faster only adds load without making data fresher (PLAN.md §A4).
@@ -35,6 +36,7 @@ void settings_begin() {
   s_settings.poll_interval_s = prefs.getUInt(KEY_POLL, s_settings.poll_interval_s);
   s_settings.brightness = prefs.getUChar(KEY_BRIGHTNESS, s_settings.brightness);
   s_settings.dim_after_s = prefs.getUInt(KEY_DIM, s_settings.dim_after_s);
+  s_settings.dim_brightness = prefs.getUChar(KEY_DIM_BRIGHT, s_settings.dim_brightness);
   prefs.end();
 
   // The token is never logged, only its presence.
@@ -68,16 +70,18 @@ bool settings_set_server(const String& base_url, const String& token) {
   return true;
 }
 
-bool settings_set_display(uint8_t brightness, uint32_t dim_after_s) {
+bool settings_set_display(uint8_t brightness, uint32_t dim_after_s, uint8_t dim_brightness) {
   Preferences prefs;
   if (!prefs.begin(NAMESPACE, /*readOnly=*/false)) {
     return false;
   }
   prefs.putUChar(KEY_BRIGHTNESS, brightness);
   prefs.putUInt(KEY_DIM, dim_after_s);
+  prefs.putUChar(KEY_DIM_BRIGHT, dim_brightness);
   prefs.end();
   s_settings.brightness = brightness;
   s_settings.dim_after_s = dim_after_s;
+  s_settings.dim_brightness = dim_brightness;
   return true;
 }
 

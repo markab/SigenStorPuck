@@ -12,6 +12,7 @@
 #include "board_config.h"
 #include "device/net.h"
 #include "device/poller.h"
+#include "device/power.h"
 #include "device/settings.h"
 #include "device/settings_server.h"
 #include "display.h"
@@ -25,6 +26,9 @@ namespace {
 // The UI is refreshed on a timer rather than whenever a poll lands, so the render
 // rate is decoupled from the network entirely.
 constexpr uint32_t UI_REFRESH_MS = 250;
+
+// The PMIC is read over I2C, so at a human rate rather than per frame.
+constexpr uint32_t POWER_POLL_MS = 5000;
 
 // Two lines of storage for the overlay, so a message that has not changed is not
 // rewritten into LVGL 4 times a second.
@@ -98,6 +102,27 @@ void refresh_overlay(bool have_snapshot, const PollStatus& status) {
   set_overlay(nullptr, nullptr);
 }
 
+// Dims after a period with no touch. LVGL's own inactivity timer is used rather
+// than tracking touch here, because it already accounts for every input the
+// indev driver reports — so a tap wakes the screen for free.
+//
+// Dimmed, never blanked: a status display you have to wake up before you can read
+// it has stopped being a status display. It also matters on AMOLED, where a static
+// image at full brightness for months is what causes burn-in.
+void apply_idle_dim() {
+  const Settings& settings = settings_get();
+  if (settings.dim_after_s == 0) {
+    return;
+  }
+  const bool should_dim = lv_disp_get_inactive_time(nullptr) > settings.dim_after_s * 1000;
+
+  static bool dimmed = false;
+  if (should_dim != dimmed) {
+    dimmed = should_dim;
+    display_set_brightness(dimmed ? settings.dim_brightness : settings.brightness);
+  }
+}
+
 void refresh_ui() {
   Snapshot snapshot;
   const bool have = poller_snapshot(&snapshot);
@@ -107,6 +132,15 @@ void refresh_ui() {
     ui_update(snapshot);
   }
   refresh_overlay(have, status);
+}
+
+// The Puck's own battery, shown only when it is actually running on one. Normally
+// this is a mains-powered display and the indicator would be permanent clutter
+// telling you nothing.
+void refresh_device_battery() {
+  const PowerStatus power = power_status();
+  const bool on_battery = power.pmic_ok && power.battery_present && !power.usb_present;
+  ui_set_device_battery(on_battery, power.percent, power.charging);
 }
 
 void log_boot_banner() {
@@ -141,11 +175,14 @@ void setup() {
   touch_begin();
 
   settings_begin();
+  power_begin();
 
   ui_create(lv_scr_act());
   display_set_brightness(settings_get().brightness);
-  set_overlay("Starting", nullptr);
-  ui_set_overlay("Starting", "");
+  // A named boot screen rather than a bare word: on a device that takes a couple
+  // of seconds to find WiFi, this is the only proof it is alive.
+  set_overlay("SigenStorPuck", PUCK_FW_VERSION);
+  ui_set_overlay("SigenStorPuck", PUCK_FW_VERSION);
   // Draw the first frame before WiFi so the screen is alive while the radio comes
   // up, rather than black for a couple of seconds.
   lv_timer_handler();
@@ -171,6 +208,13 @@ void loop() {
     refresh_ui();
   }
 
+  static uint32_t last_power = 0;
+  if (millis() - last_power >= POWER_POLL_MS) {
+    last_power = millis();
+    refresh_device_battery();
+  }
+
+  apply_idle_dim();
   lv_timer_handler();
   delay(5);
 }
