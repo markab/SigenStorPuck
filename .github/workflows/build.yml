@@ -72,6 +72,19 @@ jobs:
 
   # Publishes the installer to Pages, with the firmware alongside it.
   #
+  # Two repository settings are required and neither can be set from here:
+  #
+  #   Settings > Pages > Source: GitHub Actions
+  #     Otherwise Pages serves README.md through Jekyll and the installer is never
+  #     published — which looks like the install link reloading the page, because the
+  #     README's own link points back at the same URL.
+  #
+  #   Settings > Environments > github-pages > Deployment branches and tags:
+  #     add the tag pattern v*
+  #     The environment is created restricted to branches, so deploying from a tag is
+  #     rejected with "not allowed to deploy ... due to environment protection rules".
+  #     This job runs on tags by design, see below.
+  #
   # Tags only, deliberately. The page and the binary it flashes have to be served
   # from the same origin — GitHub release assets send no CORS header, so a page
   # fetching them cross-origin is blocked and flashing never starts. Publishing on
