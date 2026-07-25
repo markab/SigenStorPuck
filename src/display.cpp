@@ -173,12 +173,20 @@ bool display_begin(uint8_t rotation) {
   s_disp_drv.flush_cb = flush_cb;
   s_disp_drv.rounder_cb = rounder_cb;
   // sw_rotate stays off: flush_cb does the rotation. `rotated` is still set,
-  // because LVGL uses it to rotate touch coordinates (lv_indev.c) — which is
-  // exactly the half we do want from it.
+  // because LVGL uses it to rotate touch coordinates (lv_indev.c) — exactly the
+  // half we want from it.
+  //
+  // Note 90 and 270 are deliberately swapped here, and this is not a typo.
+  // flush_cb maps an LVGL point to a panel point with some transform R. A physical
+  // touch needs the inverse, R-inverse, to get back to LVGL space — but LVGL
+  // applies R. At 0 and 180 R is its own inverse so it happens to be right; at 90
+  // and 270 it is not, and swipes came out reversed. R-inverse(90) is R(270), so
+  // handing LVGL the opposite quarter turn is what makes touch agree with what is
+  // on the glass. Verified against lv_indev.c for every rotation.
   s_disp_drv.sw_rotate = 0;
-  s_disp_drv.rotated = s_rotation == 1   ? LV_DISP_ROT_90
+  s_disp_drv.rotated = s_rotation == 1   ? LV_DISP_ROT_270
                        : s_rotation == 2 ? LV_DISP_ROT_180
-                       : s_rotation == 3 ? LV_DISP_ROT_270
+                       : s_rotation == 3 ? LV_DISP_ROT_90
                                          : LV_DISP_ROT_NONE;
   lv_disp_drv_register(&s_disp_drv);
 
