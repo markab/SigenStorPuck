@@ -204,12 +204,12 @@ void setup() {
 void loop() {
   buttons_loop();
 
-  // A short press of PWR wakes the screen and steps to the next screen — a useful
-  // thing on a mains-powered display, where a power button has little to do.
+  // A short press of PWR wakes the screen, and only that. Advancing a screen as
+  // well meant you could not wake the device without also moving off whatever you
+  // had left on it.
   if (power_take_short_press()) {
     lv_disp_trig_activity(nullptr);
     display_set_brightness(settings_get().brightness);
-    ui_show_screen((ui_current_screen() + 1) % ui_screen_count());
   }
   power_loop();
   net_loop();
