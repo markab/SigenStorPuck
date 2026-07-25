@@ -20,6 +20,9 @@ constexpr lv_coord_t DOT_GAP = 10;
 lv_obj_t* s_tileview = nullptr;
 lv_obj_t* s_tiles[SCREEN_COUNT] = {};
 lv_obj_t* s_dots[SCREEN_COUNT] = {};
+lv_obj_t* s_overlay = nullptr;
+lv_obj_t* s_overlay_title = nullptr;
+lv_obj_t* s_overlay_detail = nullptr;
 
 void highlight_active_dot() {
   lv_obj_t* active = lv_tileview_get_tile_act(s_tileview);
@@ -78,6 +81,32 @@ lv_obj_t* ui_create(lv_obj_t* parent) {
     s_dots[i] = dot;
   }
 
+  // Built last so it sits above the tileview and the dots in z-order.
+  s_overlay = lv_obj_create(parent);
+  lv_obj_remove_style_all(s_overlay);
+  lv_obj_set_size(s_overlay, PUCK_LCD_WIDTH, PUCK_LCD_HEIGHT);
+  lv_obj_center(s_overlay);
+  lv_obj_set_style_bg_color(s_overlay, lv_color_hex(PUCK_COLOUR_BG), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(s_overlay, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_clear_flag(s_overlay, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_flag(s_overlay, LV_OBJ_FLAG_HIDDEN);
+
+  s_overlay_title = lv_label_create(s_overlay);
+  lv_obj_set_style_text_font(s_overlay_title, PUCK_FONT_LARGE, LV_PART_MAIN);
+  lv_obj_set_style_text_color(s_overlay_title, lv_color_hex(PUCK_COLOUR_TEXT), LV_PART_MAIN);
+  lv_obj_set_style_text_align(s_overlay_title, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+  lv_obj_set_width(s_overlay_title, PUCK_SAFE_SQUARE);
+  lv_label_set_long_mode(s_overlay_title, LV_LABEL_LONG_WRAP);
+  lv_obj_align(s_overlay_title, LV_ALIGN_CENTER, 0, -40);
+
+  s_overlay_detail = lv_label_create(s_overlay);
+  lv_obj_set_style_text_font(s_overlay_detail, PUCK_FONT_SMALL, LV_PART_MAIN);
+  lv_obj_set_style_text_color(s_overlay_detail, lv_color_hex(PUCK_COLOUR_MUTED), LV_PART_MAIN);
+  lv_obj_set_style_text_align(s_overlay_detail, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+  lv_obj_set_width(s_overlay_detail, PUCK_SAFE_SQUARE);
+  lv_label_set_long_mode(s_overlay_detail, LV_LABEL_LONG_WRAP);
+  lv_obj_align(s_overlay_detail, LV_ALIGN_CENTER, 0, 30);
+
   lv_obj_add_event_cb(s_tileview, on_tile_changed, LV_EVENT_VALUE_CHANGED, nullptr);
   highlight_active_dot();
 
@@ -92,6 +121,19 @@ void ui_update(const Snapshot& snapshot) {
   screen_battery_update(snapshot);
   screen_today_update(snapshot);
   screen_cost_update(snapshot);
+}
+
+void ui_set_overlay(const char* title, const char* detail) {
+  if (s_overlay == nullptr) {
+    return;
+  }
+  if (title == nullptr) {
+    lv_obj_add_flag(s_overlay, LV_OBJ_FLAG_HIDDEN);
+    return;
+  }
+  lv_label_set_text(s_overlay_title, title);
+  lv_label_set_text(s_overlay_detail, detail != nullptr ? detail : "");
+  lv_obj_clear_flag(s_overlay, LV_OBJ_FLAG_HIDDEN);
 }
 
 int ui_screen_count() {

@@ -1,19 +1,19 @@
 // SigenStorPuck — device entry point.
 //
-// Still scaffolding (PLAN.md §C4 step 2): it renders the real screens against
-// canned payloads compiled in from test/fixtures, so a design can be judged on
-// the actual 1.75" panel before the network client of step 4 exists. Tap the
-// screen to step through the fixtures.
-//
-// At step 4 the fixture cycling and src/dev_fixtures.h come out, replaced by a
-// poll of /api/summary feeding the same screen_power_update() call.
+// Brings up the hardware, joins WiFi, serves the settings page, and polls
+// /api/summary on a task pinned to core 0 while this loop runs LVGL on core 1.
+// Screens never learn where a reading came from: everything arrives through one
+// ui_update() call (PLAN.md §B3).
 
 #include <Arduino.h>
 #include <Wire.h>
 #include <lvgl.h>
 
 #include "board_config.h"
-#include "dev_fixtures.h"
+#include "device/net.h"
+#include "device/poller.h"
+#include "device/settings.h"
+#include "device/settings_server.h"
 #include "display.h"
 #include "snapshot.h"
 #include "touch.h"
@@ -22,48 +22,91 @@
 
 namespace {
 
-size_t s_fixture = 0;
-lv_obj_t* s_fixture_label = nullptr;
+// The UI is refreshed on a timer rather than whenever a poll lands, so the render
+// rate is decoupled from the network entirely.
+constexpr uint32_t UI_REFRESH_MS = 250;
 
-void show_fixture(size_t index) {
-  const DevFixture& fixture = DEV_FIXTURES[index];
+// Two lines of storage for the overlay, so a message that has not changed is not
+// rewritten into LVGL 4 times a second.
+char s_overlay_title[48] = {};
+char s_overlay_detail[96] = {};
 
-  Snapshot snapshot;
-  if (!snapshot_parse(fixture.json, strlen(fixture.json), &snapshot)) {
-    Serial.printf("[dev] %s did not parse\n", fixture.name);
-    ui_update(Snapshot{});
+void set_overlay(const char* title, const char* detail) {
+  const bool same = strncmp(s_overlay_title, title == nullptr ? "" : title,
+                            sizeof(s_overlay_title)) == 0 &&
+                    strncmp(s_overlay_detail, detail == nullptr ? "" : detail,
+                            sizeof(s_overlay_detail)) == 0;
+  if (same) {
+    return;
+  }
+  snprintf(s_overlay_title, sizeof(s_overlay_title), "%s", title == nullptr ? "" : title);
+  snprintf(s_overlay_detail, sizeof(s_overlay_detail), "%s", detail == nullptr ? "" : detail);
+  ui_set_overlay(title, detail);
+}
+
+// Decides what, if anything, should cover the screens. Ordered by what the viewer
+// can actually do about it: no network, then nothing configured, then a revoked
+// token, then simply waiting.
+void refresh_overlay(bool have_snapshot, const PollStatus& status) {
+  static String detail;
+
+  switch (net_state()) {
+    case NetState::Portal:
+      detail = String("Join the WiFi network\n") + net_setup_ap_name();
+      set_overlay("WiFi setup", detail.c_str());
+      return;
+    case NetState::Starting:
+    case NetState::Connecting:
+      set_overlay("Connecting to WiFi", nullptr);
+      return;
+    case NetState::Connected:
+      break;
+  }
+
+  if (!settings_is_provisioned()) {
+    detail = "Open http://";
+    detail += net_hostname().isEmpty() ? net_ip() : net_hostname();
+    detail += "/\nand paste the enrolment URL";
+    set_overlay("Not configured", detail.c_str());
     return;
   }
 
-  ui_update(snapshot);
-  lv_label_set_text_fmt(s_fixture_label, "%u/%u %s", static_cast<unsigned>(index + 1),
-                        static_cast<unsigned>(DEV_FIXTURE_COUNT), fixture.name);
-  Serial.printf("[dev] %s\n", fixture.name);
+  // A revoked token is not a network fault and will never fix itself, so it says
+  // so rather than sitting on "waiting for data" forever.
+  if (status.last_result == FetchResult::Unauthorised) {
+    detail = "The kiosk token was revoked.\nRe-enrol at http://";
+    detail += net_hostname().isEmpty() ? net_ip() : net_hostname();
+    detail += "/";
+    set_overlay("Re-enrol needed", detail.c_str());
+    return;
+  }
+
+  if (!have_snapshot) {
+    if (status.last_result == FetchResult::ClockUnset) {
+      set_overlay("Waiting for clock", "HTTPS needs the time set.\nWaiting for NTP.");
+    } else if (status.consecutive_failures > 0) {
+      detail = String("Cannot reach the server\n") + fetch_result_name(status.last_result);
+      set_overlay("No data", detail.c_str());
+    } else {
+      set_overlay("Waiting for data", nullptr);
+    }
+    return;
+  }
+
+  // Data is flowing: get out of the way. A stale reading is reported by the plant
+  // node on screen 1, not by covering everything up.
+  set_overlay(nullptr, nullptr);
 }
 
-// A tap advances the fixture; a drag is left alone so it reaches the tileview and
-// swipes between screens. Without the distance test every swipe would also jump
-// to the next fixture.
-constexpr lv_coord_t TAP_SLOP_PX = 20;
+void refresh_ui() {
+  Snapshot snapshot;
+  const bool have = poller_snapshot(&snapshot);
+  const PollStatus status = poller_status();
 
-void poll_touch_advance(lv_timer_t* /*timer*/) {
-  static bool was_pressed = false;
-  static lv_point_t pressed_at = {};
-
-  lv_point_t point = {};
-  const bool pressed = touch_pressed(&point);
-
-  if (pressed && !was_pressed) {
-    pressed_at = point;
-  } else if (!pressed && was_pressed) {
-    const int32_t dx = point.x - pressed_at.x;
-    const int32_t dy = point.y - pressed_at.y;
-    if (dx * dx + dy * dy <= TAP_SLOP_PX * TAP_SLOP_PX) {
-      s_fixture = (s_fixture + 1) % DEV_FIXTURE_COUNT;
-      show_fixture(s_fixture);
-    }
+  if (have) {
+    ui_update(snapshot);
   }
-  was_pressed = pressed;
+  refresh_overlay(have, status);
 }
 
 void log_boot_banner() {
@@ -83,8 +126,8 @@ void setup() {
   delay(1500);
   log_boot_banner();
 
-  // main() owns the shared I2C bus: touch now, and the AXP2101 PMIC and
-  // PCF85063 RTC join it in later steps.
+  // main() owns the shared I2C bus: touch now, the AXP2101 PMIC and PCF85063 RTC
+  // later.
   Wire.begin(PUCK_I2C_SDA, PUCK_I2C_SCL, PUCK_I2C_HZ);
   touch_scan_i2c();
 
@@ -95,35 +138,39 @@ void setup() {
       delay(1000);
     }
   }
+  touch_begin();
 
-  // Touch is not fatal: a working screen is a more useful diagnostic than a
-  // dead board. Without it the fixtures simply cannot be cycled.
-  const bool touch_ok = touch_begin();
+  settings_begin();
 
-  lv_obj_t* screen = lv_scr_act();
-  lv_obj_set_style_bg_color(screen, lv_color_hex(PUCK_COLOUR_BG), LV_PART_MAIN);
-  ui_create(screen);
+  ui_create(lv_scr_act());
+  display_set_brightness(settings_get().brightness);
+  set_overlay("Starting", nullptr);
+  ui_set_overlay("Starting", "");
+  // Draw the first frame before WiFi so the screen is alive while the radio comes
+  // up, rather than black for a couple of seconds.
+  lv_timer_handler();
 
-  // Which fixture is on screen. Tucked just under the plant node in the dimmest
-  // colour available: the star fills every bearing, so the middle is the only
-  // free space left. Scaffolding, so it lives here and not in screen_power.cpp.
-  s_fixture_label = lv_label_create(screen);
-  lv_obj_set_style_text_font(s_fixture_label, PUCK_FONT_SMALL, LV_PART_MAIN);
-  lv_obj_set_style_text_color(s_fixture_label, lv_color_hex(PUCK_COLOUR_TRACK), LV_PART_MAIN);
-  lv_obj_align(s_fixture_label, LV_ALIGN_CENTER, 0, 40);
-
-  show_fixture(s_fixture);
-
-  if (touch_ok) {
-    lv_timer_create(poll_touch_advance, 40, nullptr);
-    Serial.printf("[dev] tap to cycle %u fixtures, swipe to change screen\n",
-                  static_cast<unsigned>(DEV_FIXTURE_COUNT));
-  }
+  net_begin();
+  poller_begin();
 
   Serial.println("[boot] ready");
 }
 
 void loop() {
+  net_loop();
+
+  // Started only once connected: the captive portal owns port 80 until then.
+  if (net_state() == NetState::Connected && !settings_server_running()) {
+    settings_server_begin();
+  }
+  settings_server_loop();
+
+  static uint32_t last_refresh = 0;
+  if (millis() - last_refresh >= UI_REFRESH_MS) {
+    last_refresh = millis();
+    refresh_ui();
+  }
+
   lv_timer_handler();
   delay(5);
 }

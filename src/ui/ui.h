@@ -18,6 +18,13 @@ lv_obj_t* ui_create(lv_obj_t* parent);
 // poll loop later without any screen changing.
 void ui_update(const Snapshot& snapshot);
 
+// A full-screen message covering the tileview: WiFi setup, "not configured",
+// "re-enrol needed", "waiting for data". Pass nullptr as the title to hide it.
+//
+// An overlay rather than a fifth screen, because these states are not something
+// to swipe to — they are the only thing worth showing while they last.
+void ui_set_overlay(const char* title, const char* detail);
+
 // Screen navigation, for the simulator's keyboard and its screenshot pass. Touch
 // swiping needs none of this — the tileview handles that itself.
 int ui_screen_count();
