@@ -192,8 +192,9 @@ void setup() {
   // up, rather than black for a couple of seconds.
   lv_timer_handler();
 
-  ui_set_fine_rotation(settings_get().fine_tenths);
-  touch_set_fine_rotation(settings_get().fine_tenths);
+  // Neither applied while the drawing side is blocked: skewing touch to match a
+  // rotation that is not on screen would put every tap 2.5 degrees out for no
+  // visible reason.
   ui_set_rotate_interval(settings_get().rotate_s);
   ui_set_sweep_interval(settings_get().sweep_min);
 

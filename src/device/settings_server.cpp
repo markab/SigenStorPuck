@@ -140,12 +140,9 @@ String page(const String& message, bool message_is_error) {
   html += "<div><label for=dimb>Dimmed brightness</label><input id=dimb name=dimb type=number min=1 max=255 value=";
   html += settings.dim_brightness;
   html += "></div></div>";
-  html += "<label for=fine>Fine rotation (degrees, e.g. -2.5)</label>";
-  html += "<input id=fine name=fine type=number step=0.1 min=-30 max=30 value=";
-  html += String(settings.fine_tenths / 10.0, 1);
-  html += ">";
-  html += "<p class=hint>Applies at once. Costs a resampling pass, so text softens "
-          "slightly; 0 is the sharp path.</p>";
+  // No fine-rotation field yet: the drawing mechanism for it is blocked (see
+  // ui_set_fine_rotation). Offering a control that stores a value and changes
+  // nothing on screen would be worse than not offering it.
   html += "<label for=orient>Orientation (quarter turns, applies on restart)</label>";
   html += "<input id=orient name=orient type=number min=0 max=3 value=";
   html += settings.orientation;
