@@ -195,6 +195,34 @@ void ui_update(const Snapshot& snapshot) {
   screen_cost_update(snapshot);
 }
 
+void ui_set_fine_rotation(int16_t tenths_of_a_degree) {
+  if (s_shift_root == nullptr) {
+    return;
+  }
+  // Deliberately inert, and loudly so.
+  //
+  // transform_angle renders the content through an intermediate layer, and that
+  // layer needs an alpha channel: LVGL refuses with "needs LV_COLOR_SCREEN_TRANSP
+  // 1", which in LVGL 8 requires LV_COLOR_DEPTH 32. This project is RGB565 to match
+  // the panel, so enabling it would double every buffer and add a 32->16 conversion
+  // to every flush — permanently, tilted or not.
+  //
+  // Applying it anyway leaves the container unrendered, which is worse than not
+  // offering the feature. The settings field, the NVS value and the inverse touch
+  // transform are all correct and stay, so whichever mechanism is chosen can use
+  // them.
+  if (tenths_of_a_degree != 0) {
+    LV_LOG_WARN("fine rotation needs 32-bit colour; ignoring");
+    return;
+  }
+  // Pivot on the middle of the panel, not the container's own origin, so the whole
+  // face turns about its centre.
+  lv_obj_set_style_transform_pivot_x(s_shift_root, PUCK_LCD_WIDTH / 2, LV_PART_MAIN);
+  lv_obj_set_style_transform_pivot_y(s_shift_root, PUCK_LCD_HEIGHT / 2, LV_PART_MAIN);
+  lv_obj_set_style_transform_angle(s_shift_root, tenths_of_a_degree, LV_PART_MAIN);
+  lv_obj_invalidate(s_shift_root);
+}
+
 void ui_set_rotate_interval(uint32_t seconds) {
   s_rotate_seconds = seconds;
 }

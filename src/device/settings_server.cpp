@@ -9,7 +9,10 @@
 #include "power.h"
 #include "settings.h"
 #include "sigen_api.h"
+#include "touch.h"
 #include "ui/ui.h"
+
+#include <math.h>
 
 namespace {
 
@@ -137,6 +140,12 @@ String page(const String& message, bool message_is_error) {
   html += "<div><label for=dimb>Dimmed brightness</label><input id=dimb name=dimb type=number min=1 max=255 value=";
   html += settings.dim_brightness;
   html += "></div></div>";
+  html += "<label for=fine>Fine rotation (degrees, e.g. -2.5)</label>";
+  html += "<input id=fine name=fine type=number step=0.1 min=-30 max=30 value=";
+  html += String(settings.fine_tenths / 10.0, 1);
+  html += ">";
+  html += "<p class=hint>Applies at once. Costs a resampling pass, so text softens "
+          "slightly; 0 is the sharp path.</p>";
   html += "<label for=orient>Orientation (quarter turns, applies on restart)</label>";
   html += "<input id=orient name=orient type=number min=0 max=3 value=";
   html += settings.orientation;
@@ -285,6 +294,16 @@ void handle_display() {
       restart_needed = true;
     }
   }
+  const String fine = s_server.arg("fine");
+  if (fine.length() > 0) {
+    const int16_t tenths = static_cast<int16_t>(lroundf(fine.toFloat() * 10.0f));
+    if (tenths != settings_get().fine_tenths) {
+      settings_set_fine_rotation(tenths);
+      ui_set_fine_rotation(settings_get().fine_tenths);
+      touch_set_fine_rotation(settings_get().fine_tenths);
+    }
+  }
+
   const String rot = s_server.arg("rot");
   const String sweep = s_server.arg("sweep");
   if (rot.length() > 0 || sweep.length() > 0) {

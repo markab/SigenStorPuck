@@ -12,6 +12,7 @@
 #include <dirent.h>
 #include <lvgl.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 #include <algorithm>
 #include <string>
@@ -33,6 +34,7 @@ constexpr uint32_t COLOUR_WARN = PUCK_COLOUR_WARN;
 
 std::vector<std::string> s_fixture_paths;
 size_t s_current = 0;
+int16_t s_startup_tilt = 0;
 
 // The real screen, plus the raw field dump kept behind the 'd' key. Keeping the
 // dump around is worth its few lines: when a screen shows something surprising,
@@ -248,7 +250,7 @@ void build_debug_view() {
   lv_obj_t* hint = lv_label_create(screen);
   lv_obj_set_style_text_font(hint, PUCK_FONT_SMALL, LV_PART_MAIN);
   lv_obj_set_style_text_color(hint, lv_color_hex(COLOUR_MUTED), LV_PART_MAIN);
-  lv_label_set_text(hint, "n/p fixture   [ ] screen   d dump   esc quit");
+  lv_label_set_text(hint, "n/p fixture  [ ] screen  , . tilt  d dump  esc quit");
   lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -40);
 }
 
@@ -286,6 +288,16 @@ void handle_key(int key) {
   if (key == 'd') {
     s_show_debug = !s_show_debug;
     apply_view_visibility();
+    return;
+  }
+  // Fine rotation, for judging the resampling cost before it reaches hardware.
+  if (key == ',' || key == '.') {
+    static int16_t tenths = 0;
+    tenths += (key == '.') ? 5 : -5;
+    if (tenths > 300) tenths = 300;
+    if (tenths < -300) tenths = -300;
+    ui_set_fine_rotation(tenths);
+    printf("[sim] fine rotation %.1f degrees\n", tenths / 10.0);
     return;
   }
   if (key == ']' || key == '[') {
@@ -353,6 +365,8 @@ int main(int argc, char** argv) {
     const std::string argument = argv[i];
     if (argument == "--shot" && i + 1 < argc) {
       shot_directory = argv[++i];
+    } else if (argument == "--tilt" && i + 1 < argc) {
+      s_startup_tilt = static_cast<int16_t>(atoi(argv[++i]));
     } else {
       directory = argument;
     }
@@ -374,6 +388,9 @@ int main(int argc, char** argv) {
   }
 
   build_views();
+  if (s_startup_tilt != 0) {
+    ui_set_fine_rotation(s_startup_tilt);
+  }
 
   if (!shot_directory.empty()) {
     const int failures = run_screenshot_pass(shot_directory);

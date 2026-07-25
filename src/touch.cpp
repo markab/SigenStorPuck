@@ -1,6 +1,7 @@
 #include "touch.h"
 
 #include <Arduino.h>
+#include <math.h>
 #include <TouchDrv.hpp>
 #include <Wire.h>
 
@@ -15,6 +16,11 @@ lv_indev_drv_t s_indev_drv;
 lv_point_t s_last_point = {PUCK_LCD_WIDTH / 2, PUCK_LCD_HEIGHT / 2};
 bool s_pressed = false;
 uint8_t s_rotation = 0;
+// Cosine and sine of the *negative* fine angle, so the transform is the inverse of
+// the one applied to the display. Precomputed: this runs on every touch report.
+float s_fine_cos = 1.0f;
+float s_fine_sin = 0.0f;
+bool s_fine_active = false;
 
 const char* i2c_device_name(uint8_t address) {
   switch (address) {
@@ -78,8 +84,20 @@ void indev_read_cb(lv_indev_drv_t* /*drv*/, lv_indev_data_t* data) {
     // Only the mounting correction belongs here. LVGL rotates pointer coordinates
     // itself from disp->driver->rotated (lv_indev.c), so applying the display
     // rotation here as well turned every swipe the wrong way.
-    const lv_coord_t x = PUCK_LCD_WIDTH - 1 - static_cast<lv_coord_t>(point.x);
-    const lv_coord_t y = PUCK_LCD_HEIGHT - 1 - static_cast<lv_coord_t>(point.y);
+    lv_coord_t x = PUCK_LCD_WIDTH - 1 - static_cast<lv_coord_t>(point.x);
+    lv_coord_t y = PUCK_LCD_HEIGHT - 1 - static_cast<lv_coord_t>(point.y);
+
+    // Undo the fine rotation about the centre of the panel. Rotations about the
+    // same point commute, so it does not matter that LVGL applies its own quarter
+    // turn after this.
+    if (s_fine_active) {
+      const float cx = PUCK_LCD_WIDTH / 2.0f;
+      const float cy = PUCK_LCD_HEIGHT / 2.0f;
+      const float ox = x - cx;
+      const float oy = y - cy;
+      x = static_cast<lv_coord_t>(lroundf(cx + ox * s_fine_cos - oy * s_fine_sin));
+      y = static_cast<lv_coord_t>(lroundf(cy + ox * s_fine_sin + oy * s_fine_cos));
+    }
 
 
     s_last_point.x = x;
@@ -168,4 +186,11 @@ bool touch_pressed(lv_point_t* point) {
 
 void touch_set_orientation(uint8_t rotation) {
   s_rotation = rotation & 0x03;
+}
+
+void touch_set_fine_rotation(int16_t tenths_of_a_degree) {
+  s_fine_active = tenths_of_a_degree != 0;
+  const float radians = -static_cast<float>(tenths_of_a_degree) / 10.0f * 3.14159265f / 180.0f;
+  s_fine_cos = cosf(radians);
+  s_fine_sin = sinf(radians);
 }

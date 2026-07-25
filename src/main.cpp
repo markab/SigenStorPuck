@@ -192,6 +192,8 @@ void setup() {
   // up, rather than black for a couple of seconds.
   lv_timer_handler();
 
+  ui_set_fine_rotation(settings_get().fine_tenths);
+  touch_set_fine_rotation(settings_get().fine_tenths);
   ui_set_rotate_interval(settings_get().rotate_s);
   ui_set_sweep_interval(settings_get().sweep_min);
 

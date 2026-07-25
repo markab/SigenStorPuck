@@ -29,6 +29,14 @@ void ui_set_overlay(const char* title, const char* detail);
 // device is genuinely running on battery.
 void ui_set_device_battery(bool show, int percent, bool charging);
 
+// Fine rotation, in tenths of a degree, for a panel mounted a few degrees off a
+// quarter turn. Applied on top of whatever whole quarter turn is in force.
+//
+// This is not free: LVGL renders the rotated content through an intermediate layer
+// and resamples it, so text goes slightly soft and redraws cost more. 0 disables it
+// completely and is the untouched path.
+void ui_set_fine_rotation(int16_t tenths_of_a_degree);
+
 // Auto-cycling through the screens, in seconds; 0 turns it off. Pauses while the
 // screen is being touched so it never changes under your finger.
 void ui_set_rotate_interval(uint32_t seconds);

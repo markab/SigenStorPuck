@@ -21,6 +21,11 @@ bool touch_begin();
 // rotating the touch mapping puts every tap in the wrong place.
 void touch_set_orientation(uint8_t rotation);
 
+// The same fine angle passed to ui_set_fine_rotation(), in tenths of a degree.
+// Rotating what is drawn without undoing it here leaves every tap offset by the
+// same angle — about 7 px at the edge for 2.5 degrees.
+void touch_set_fine_rotation(int16_t tenths_of_a_degree);
+
 // The address the controller actually answered on, or 0 if it never did.
 uint8_t touch_address();
 

@@ -15,6 +15,7 @@ constexpr const char* KEY_BRIGHTNESS = "bright";
 constexpr const char* KEY_DIM = "dim_s";
 constexpr const char* KEY_DIM_BRIGHT = "dim_bright";
 constexpr const char* KEY_ORIENT = "orient";
+constexpr const char* KEY_FINE = "fine_deg10";
 constexpr const char* KEY_ROTATE = "rotate_s";
 constexpr const char* KEY_SWEEP = "sweep_min";
 
@@ -41,6 +42,7 @@ void settings_begin() {
   s_settings.dim_after_s = prefs.getUInt(KEY_DIM, s_settings.dim_after_s);
   s_settings.dim_brightness = prefs.getUChar(KEY_DIM_BRIGHT, s_settings.dim_brightness);
   s_settings.orientation = prefs.getUChar(KEY_ORIENT, s_settings.orientation) & 0x03;
+  s_settings.fine_tenths = prefs.getShort(KEY_FINE, s_settings.fine_tenths);
   s_settings.rotate_s = prefs.getUInt(KEY_ROTATE, s_settings.rotate_s);
   s_settings.sweep_min = prefs.getUInt(KEY_SWEEP, s_settings.sweep_min);
   prefs.end();
@@ -155,5 +157,23 @@ bool settings_set_screensaver(uint32_t rotate_s, uint32_t sweep_min) {
   prefs.end();
   s_settings.rotate_s = rotate_s;
   s_settings.sweep_min = sweep_min;
+  return true;
+}
+
+bool settings_set_fine_rotation(int16_t tenths_of_a_degree) {
+  // More than a few degrees is a quarter turn wanted instead, and the resampling
+  // cost is not worth paying for it.
+  if (tenths_of_a_degree < -300) {
+    tenths_of_a_degree = -300;
+  } else if (tenths_of_a_degree > 300) {
+    tenths_of_a_degree = 300;
+  }
+  Preferences prefs;
+  if (!prefs.begin(NAMESPACE, /*readOnly=*/false)) {
+    return false;
+  }
+  prefs.putShort(KEY_FINE, tenths_of_a_degree);
+  prefs.end();
+  s_settings.fine_tenths = tenths_of_a_degree;
   return true;
 }
