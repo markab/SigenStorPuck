@@ -10,6 +10,7 @@
 
 #pragma once
 
+#include <lvgl.h>
 #include <stdint.h>
 
 // --------------------------------------------------------------- firmware ---
@@ -107,3 +108,23 @@ static constexpr int PUCK_KW_DECIMALS = 2;
 // means "the battery" everywhere else, so it should only change colour when
 // there is genuinely something to notice.
 static constexpr float PUCK_SOC_LOW_PCT = 15.0f;
+
+// ------------------------------------------------------- panel longevity ---
+//
+// This is a static image on an AMOLED running continuously, so wear is
+// cumulative per pixel and concentrated wherever something is always lit — the
+// state-of-charge ring, the leg labels, the page dots.
+
+// The UI drifts inside a small box so no element keeps a fixed edge. This is
+// what phones and OLED televisions actually do, and it is the highest-value
+// mitigation available: invisible in use, and it adds no emission at all.
+static constexpr lv_coord_t PUCK_PIXEL_SHIFT_PX = 3;
+static constexpr uint32_t PUCK_PIXEL_SHIFT_PERIOD_MS = 120000;
+
+// A band sweeping across the panel, rather than flashing the whole screen white.
+// Every pixel is still lit once per cycle, but a band lights a fraction of them
+// at any instant, so the total added emission is far lower. Flashing all 217k
+// pixels to even out wear on a handful risks costing more life than it saves.
+static constexpr uint32_t PUCK_SWEEP_DURATION_MS = 2600;
+static constexpr lv_coord_t PUCK_SWEEP_BAND_PX = 56;
+static constexpr lv_opa_t PUCK_SWEEP_OPACITY = 150;

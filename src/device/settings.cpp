@@ -14,6 +14,7 @@ constexpr const char* KEY_POLL = "poll_s";
 constexpr const char* KEY_BRIGHTNESS = "bright";
 constexpr const char* KEY_DIM = "dim_s";
 constexpr const char* KEY_DIM_BRIGHT = "dim_bright";
+constexpr const char* KEY_ORIENT = "orient";
 
 // The protocol enforces a 1 s floor and the server polls Modbus every 5 s, so
 // anything faster only adds load without making data fresher (PLAN.md §A4).
@@ -37,6 +38,7 @@ void settings_begin() {
   s_settings.brightness = prefs.getUChar(KEY_BRIGHTNESS, s_settings.brightness);
   s_settings.dim_after_s = prefs.getUInt(KEY_DIM, s_settings.dim_after_s);
   s_settings.dim_brightness = prefs.getUChar(KEY_DIM_BRIGHT, s_settings.dim_brightness);
+  s_settings.orientation = prefs.getUChar(KEY_ORIENT, s_settings.orientation) & 0x03;
   prefs.end();
 
   // The token is never logged, only its presence.
@@ -126,4 +128,15 @@ void settings_forget_server() {
   s_settings.base_url = "";
   s_settings.token = "";
   Serial.println("[settings] server details cleared");
+}
+
+bool settings_set_orientation(uint8_t quarter_turns) {
+  Preferences prefs;
+  if (!prefs.begin(NAMESPACE, /*readOnly=*/false)) {
+    return false;
+  }
+  prefs.putUChar(KEY_ORIENT, quarter_turns & 0x03);
+  prefs.end();
+  s_settings.orientation = quarter_turns & 0x03;
+  return true;
 }

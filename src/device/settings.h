@@ -19,6 +19,8 @@ struct Settings {
   // a worse status display. 0 disables dimming entirely.
   uint32_t dim_after_s = 30;
   uint8_t dim_brightness = 24;
+  // Quarter turns clockwise, 0-3, for mounting the Puck whichever way suits.
+  uint8_t orientation = 0;
 };
 
 // Loads from NVS, falling back to defaults. Safe to call before WiFi is up.
@@ -34,6 +36,9 @@ bool settings_set_display(uint8_t brightness, uint32_t dim_after_s,
                           uint8_t dim_brightness);
 
 bool settings_set_poll_interval(uint32_t seconds);
+
+// Takes effect on the next boot: the panel's rotation is set when it is brought up.
+bool settings_set_orientation(uint8_t quarter_turns);
 
 // True once there is both a base URL and a token — i.e. there is any point
 // trying to poll.

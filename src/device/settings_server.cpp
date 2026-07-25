@@ -132,6 +132,10 @@ String page(const String& message, bool message_is_error) {
   html += "<div><label for=dimb>Dimmed brightness</label><input id=dimb name=dimb type=number min=1 max=255 value=";
   html += settings.dim_brightness;
   html += "></div></div>";
+  html += "<label for=orient>Orientation (quarter turns, applies on restart)</label>";
+  html += "<input id=orient name=orient type=number min=0 max=3 value=";
+  html += settings.orientation;
+  html += ">";
   html += "<button type=submit>Apply</button></form>";
 
   html += "<h2>Danger</h2>";
@@ -260,8 +264,19 @@ void handle_display() {
   if (poll > 0) {
     settings_set_poll_interval(static_cast<uint32_t>(poll));
   }
+  const String orient = s_server.arg("orient");
+  bool restart_needed = false;
+  if (orient.length() > 0) {
+    const uint8_t turns = static_cast<uint8_t>(orient.toInt()) & 0x03;
+    if (turns != settings_get().orientation) {
+      settings_set_orientation(turns);
+      restart_needed = true;
+    }
+  }
   poller_wake();
-  send_page("Display settings applied.", false);
+  send_page(restart_needed ? "Applied. Restart for the new orientation."
+                           : "Display settings applied.",
+            false);
 }
 
 void handle_forget_server() {

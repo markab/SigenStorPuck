@@ -16,6 +16,11 @@ uint8_t touch_scan_i2c();
 // Returns false if neither answered; the display still works in that case.
 bool touch_begin();
 
+// Quarter turns clockwise, 0-3, matching what was passed to display_begin().
+// Applied to the reported coordinates, because rotating the image without
+// rotating the touch mapping puts every tap in the wrong place.
+void touch_set_orientation(uint8_t rotation);
+
 // The address the controller actually answered on, or 0 if it never did.
 uint8_t touch_address();
 

@@ -41,10 +41,10 @@ void flush_cb(lv_disp_drv_t* drv, const lv_area_t* area, lv_color_t* pixels) {
 
 }  // namespace
 
-bool display_begin() {
+bool display_begin(uint8_t rotation) {
   s_bus = new Arduino_ESP32QSPI(PUCK_LCD_CS, PUCK_LCD_SCLK, PUCK_LCD_D0, PUCK_LCD_D1,
                                 PUCK_LCD_D2, PUCK_LCD_D3);
-  s_panel = new Arduino_CO5300(s_bus, PUCK_LCD_RST, PUCK_LCD_ROTATION, PUCK_LCD_WIDTH,
+  s_panel = new Arduino_CO5300(s_bus, PUCK_LCD_RST, rotation & 0x03, PUCK_LCD_WIDTH,
                                PUCK_LCD_HEIGHT, PUCK_LCD_COL_OFFSET, PUCK_LCD_ROW_OFFSET, 0, 0);
 
   if (!s_panel->begin(PUCK_LCD_QSPI_HZ)) {

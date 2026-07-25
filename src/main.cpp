@@ -165,16 +165,19 @@ void setup() {
   Wire.begin(PUCK_I2C_SDA, PUCK_I2C_SCL, PUCK_I2C_HZ);
   touch_scan_i2c();
 
+  // Before the panel: the rotation is applied as it is brought up.
+  settings_begin();
+
   lv_init();
-  if (!display_begin()) {
+  if (!display_begin(settings_get().orientation)) {
     Serial.println("[boot] display bring-up failed — halting");
     while (true) {
       delay(1000);
     }
   }
   touch_begin();
+  touch_set_orientation(settings_get().orientation);
 
-  settings_begin();
   power_begin();
 
   ui_create(lv_scr_act());

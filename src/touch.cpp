@@ -14,6 +14,7 @@ uint8_t s_address = 0;
 lv_indev_drv_t s_indev_drv;
 lv_point_t s_last_point = {PUCK_LCD_WIDTH / 2, PUCK_LCD_HEIGHT / 2};
 bool s_pressed = false;
+uint8_t s_rotation = 0;
 
 const char* i2c_device_name(uint8_t address) {
   switch (address) {
@@ -70,8 +71,32 @@ void indev_read_cb(lv_indev_drv_t* /*drv*/, lv_indev_data_t* data) {
   const TouchPoints& points = s_touch.getTouchPoints();
   if (points.hasPoints()) {
     const TouchPoint& point = points.getPoint(0);
-    s_last_point.x = static_cast<lv_coord_t>(point.x);
-    s_last_point.y = static_cast<lv_coord_t>(point.y);
+
+    // The touch layer is mounted 180 degrees round from the panel's scan order,
+    // so start by undoing that; this reproduces the setMirrorXY(true, true) that
+    // was verified on hardware at rotation 0.
+    lv_coord_t x = PUCK_LCD_WIDTH - 1 - static_cast<lv_coord_t>(point.x);
+    lv_coord_t y = PUCK_LCD_HEIGHT - 1 - static_cast<lv_coord_t>(point.y);
+
+    // Then the display rotation, clockwise. Square panel, so width and height are
+    // interchangeable and no axis swap of the resolution is needed.
+    switch (s_rotation & 0x03) {
+      case 1:
+        { const lv_coord_t t = x; x = PUCK_LCD_WIDTH - 1 - y; y = t; }
+        break;
+      case 2:
+        x = PUCK_LCD_WIDTH - 1 - x;
+        y = PUCK_LCD_HEIGHT - 1 - y;
+        break;
+      case 3:
+        { const lv_coord_t t = x; x = y; y = PUCK_LCD_HEIGHT - 1 - t; }
+        break;
+      default:
+        break;
+    }
+
+    s_last_point.x = x;
+    s_last_point.y = y;
     s_pressed = true;
   } else {
     s_pressed = false;
@@ -128,16 +153,18 @@ bool touch_begin() {
   }
 
   s_touch.setMaxCoordinates(PUCK_LCD_WIDTH, PUCK_LCD_HEIGHT);
-  s_touch.setMirrorXY(PUCK_TOUCH_MIRROR_X, PUCK_TOUCH_MIRROR_Y);
+  // Mirroring is applied here rather than in the library, because it has to
+  // compose with the display rotation and the library only knows about itself.
+  s_touch.setMirrorXY(false, false);
 
   lv_indev_drv_init(&s_indev_drv);
   s_indev_drv.type = LV_INDEV_TYPE_POINTER;
   s_indev_drv.read_cb = indev_read_cb;
   lv_indev_drv_register(&s_indev_drv);
 
-  Serial.printf("[touch] %s at 0x%02X, %u points, mirror x=%d y=%d\n", s_touch.getModelName(),
+  Serial.printf("[touch] %s at 0x%02X, %u points, rotation %u\n", s_touch.getModelName(),
                 s_address, static_cast<unsigned>(s_touch.getSupportTouchPoint()),
-                PUCK_TOUCH_MIRROR_X, PUCK_TOUCH_MIRROR_Y);
+                static_cast<unsigned>(s_rotation));
   return true;
 }
 
@@ -150,4 +177,8 @@ bool touch_pressed(lv_point_t* point) {
     *point = s_last_point;
   }
   return s_pressed;
+}
+
+void touch_set_orientation(uint8_t rotation) {
+  s_rotation = rotation & 0x03;
 }
