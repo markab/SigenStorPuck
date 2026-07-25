@@ -50,6 +50,12 @@ static constexpr uint8_t PUCK_LCD_BRIGHTNESS = 200;
 // which fits in DMA-capable internal RAM — the QSPI transfer needs that.
 static constexpr uint16_t PUCK_LVGL_BUFFER_LINES = 40;
 
+// ---------------------------------------------------------------- buttons ---
+
+// GPIO0, the standard ESP32-S3 strapping pin. Readable at runtime; still forces
+// download mode if held while power is applied.
+static constexpr int8_t PUCK_BUTTON_BOOT = 0;
+
 // ------------------------------------------------------------------ touch ---
 
 static constexpr int8_t PUCK_TOUCH_INT = 11;

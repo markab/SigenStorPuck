@@ -21,6 +21,11 @@ struct Settings {
   uint8_t dim_brightness = 24;
   // Quarter turns clockwise, 0-3, for mounting the Puck whichever way suits.
   uint8_t orientation = 0;
+  // Auto-cycle through the screens; 0 = off. Spreads AMOLED wear across four
+  // layouts instead of burning one in.
+  uint32_t rotate_s = 0;
+  // How often the sweep band runs, in minutes; 0 = off.
+  uint32_t sweep_min = 240;
 };
 
 // Loads from NVS, falling back to defaults. Safe to call before WiFi is up.
@@ -39,6 +44,8 @@ bool settings_set_poll_interval(uint32_t seconds);
 
 // Takes effect on the next boot: the panel's rotation is set when it is brought up.
 bool settings_set_orientation(uint8_t quarter_turns);
+
+bool settings_set_screensaver(uint32_t rotate_s, uint32_t sweep_min);
 
 // True once there is both a base URL and a token — i.e. there is any point
 // trying to poll.

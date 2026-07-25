@@ -9,6 +9,7 @@
 #include "power.h"
 #include "settings.h"
 #include "sigen_api.h"
+#include "ui/ui.h"
 
 namespace {
 
@@ -136,6 +137,13 @@ String page(const String& message, bool message_is_error) {
   html += "<input id=orient name=orient type=number min=0 max=3 value=";
   html += settings.orientation;
   html += ">";
+  html += "<div class=row>";
+  html += "<div><label for=rot>Rotate screens (s, 0 = off)</label><input id=rot name=rot type=number min=0 max=3600 value=";
+  html += settings.rotate_s;
+  html += "></div>";
+  html += "<div><label for=sweep>Sweep every (min, 0 = off)</label><input id=sweep name=sweep type=number min=0 max=1440 value=";
+  html += settings.sweep_min;
+  html += "></div></div>";
   html += "<button type=submit>Apply</button></form>";
 
   html += "<h2>Danger</h2>";
@@ -272,6 +280,14 @@ void handle_display() {
       settings_set_orientation(turns);
       restart_needed = true;
     }
+  }
+  const String rot = s_server.arg("rot");
+  const String sweep = s_server.arg("sweep");
+  if (rot.length() > 0 || sweep.length() > 0) {
+    settings_set_screensaver(static_cast<uint32_t>(rot.toInt()),
+                             static_cast<uint32_t>(sweep.toInt()));
+    ui_set_rotate_interval(settings_get().rotate_s);
+    ui_set_sweep_interval(settings_get().sweep_min);
   }
   poller_wake();
   send_page(restart_needed ? "Applied. Restart for the new orientation."

@@ -29,6 +29,13 @@ void ui_set_overlay(const char* title, const char* detail);
 // device is genuinely running on battery.
 void ui_set_device_battery(bool show, int percent, bool charging);
 
+// Auto-cycling through the screens, in seconds; 0 turns it off. Pauses while the
+// screen is being touched so it never changes under your finger.
+void ui_set_rotate_interval(uint32_t seconds);
+
+// How often to run the sweep band, in minutes; 0 turns it off.
+void ui_set_sweep_interval(uint32_t minutes);
+
 // Screen navigation, for the simulator's keyboard and its screenshot pass. Touch
 // swiping needs none of this — the tileview handles that itself.
 int ui_screen_count();

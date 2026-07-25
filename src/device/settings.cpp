@@ -15,6 +15,8 @@ constexpr const char* KEY_BRIGHTNESS = "bright";
 constexpr const char* KEY_DIM = "dim_s";
 constexpr const char* KEY_DIM_BRIGHT = "dim_bright";
 constexpr const char* KEY_ORIENT = "orient";
+constexpr const char* KEY_ROTATE = "rotate_s";
+constexpr const char* KEY_SWEEP = "sweep_min";
 
 // The protocol enforces a 1 s floor and the server polls Modbus every 5 s, so
 // anything faster only adds load without making data fresher (PLAN.md §A4).
@@ -39,6 +41,8 @@ void settings_begin() {
   s_settings.dim_after_s = prefs.getUInt(KEY_DIM, s_settings.dim_after_s);
   s_settings.dim_brightness = prefs.getUChar(KEY_DIM_BRIGHT, s_settings.dim_brightness);
   s_settings.orientation = prefs.getUChar(KEY_ORIENT, s_settings.orientation) & 0x03;
+  s_settings.rotate_s = prefs.getUInt(KEY_ROTATE, s_settings.rotate_s);
+  s_settings.sweep_min = prefs.getUInt(KEY_SWEEP, s_settings.sweep_min);
   prefs.end();
 
   // The token is never logged, only its presence.
@@ -138,5 +142,18 @@ bool settings_set_orientation(uint8_t quarter_turns) {
   prefs.putUChar(KEY_ORIENT, quarter_turns & 0x03);
   prefs.end();
   s_settings.orientation = quarter_turns & 0x03;
+  return true;
+}
+
+bool settings_set_screensaver(uint32_t rotate_s, uint32_t sweep_min) {
+  Preferences prefs;
+  if (!prefs.begin(NAMESPACE, /*readOnly=*/false)) {
+    return false;
+  }
+  prefs.putUInt(KEY_ROTATE, rotate_s);
+  prefs.putUInt(KEY_SWEEP, sweep_min);
+  prefs.end();
+  s_settings.rotate_s = rotate_s;
+  s_settings.sweep_min = sweep_min;
   return true;
 }

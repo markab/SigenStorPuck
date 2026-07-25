@@ -10,6 +10,7 @@
 #include <lvgl.h>
 
 #include "board_config.h"
+#include "device/buttons.h"
 #include "device/net.h"
 #include "device/poller.h"
 #include "device/power.h"
@@ -179,6 +180,7 @@ void setup() {
   touch_set_orientation(settings_get().orientation);
 
   power_begin();
+  buttons_begin();
 
   ui_create(lv_scr_act());
   display_set_brightness(settings_get().brightness);
@@ -190,6 +192,9 @@ void setup() {
   // up, rather than black for a couple of seconds.
   lv_timer_handler();
 
+  ui_set_rotate_interval(settings_get().rotate_s);
+  ui_set_sweep_interval(settings_get().sweep_min);
+
   net_begin();
   poller_begin();
 
@@ -197,6 +202,7 @@ void setup() {
 }
 
 void loop() {
+  buttons_loop();
   net_loop();
 
   // Started only once connected: the captive portal owns port 80 until then.
