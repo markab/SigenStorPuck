@@ -44,7 +44,11 @@ void flush_cb(lv_disp_drv_t* drv, const lv_area_t* area, lv_color_t* pixels) {
 bool display_begin(uint8_t rotation) {
   s_bus = new Arduino_ESP32QSPI(PUCK_LCD_CS, PUCK_LCD_SCLK, PUCK_LCD_D0, PUCK_LCD_D1,
                                 PUCK_LCD_D2, PUCK_LCD_D3);
-  s_panel = new Arduino_CO5300(s_bus, PUCK_LCD_RST, rotation & 0x03, PUCK_LCD_WIDTH,
+  // Always 0 here. The CO5300's own rotation parameter drives MADCTL bits that
+  // this panel interprets as an axis flip, so asking it for 90 degrees mirrors the
+  // image instead of turning it. Waveshare's own LVGL example does not use it
+  // either — it rotates in software, which is what happens below.
+  s_panel = new Arduino_CO5300(s_bus, PUCK_LCD_RST, 0, PUCK_LCD_WIDTH,
                                PUCK_LCD_HEIGHT, PUCK_LCD_COL_OFFSET, PUCK_LCD_ROW_OFFSET, 0, 0);
 
   if (!s_panel->begin(PUCK_LCD_QSPI_HZ)) {
@@ -79,7 +83,17 @@ bool display_begin(uint8_t rotation) {
   s_disp_drv.draw_buf = &s_draw_buf;
   s_disp_drv.flush_cb = flush_cb;
   s_disp_drv.rounder_cb = rounder_cb;
-  lv_disp_drv_register(&s_disp_drv);
+  // Software rotation, per Waveshare's 06_LVGL_Widgets sketch. Costs some CPU in
+  // the flush path but actually rotates rather than mirroring.
+  s_disp_drv.sw_rotate = 1;
+  lv_disp_t* disp = lv_disp_drv_register(&s_disp_drv);
+
+  switch (rotation & 0x03) {
+    case 1: lv_disp_set_rotation(disp, LV_DISP_ROT_90); break;
+    case 2: lv_disp_set_rotation(disp, LV_DISP_ROT_180); break;
+    case 3: lv_disp_set_rotation(disp, LV_DISP_ROT_270); break;
+    default: lv_disp_set_rotation(disp, LV_DISP_ROT_NONE); break;
+  }
 
   Serial.printf("[display] CO5300 %dx%d up, %u-byte buffer (%u lines) in %s\n", PUCK_LCD_WIDTH,
                 PUCK_LCD_HEIGHT, static_cast<unsigned>(bytes),

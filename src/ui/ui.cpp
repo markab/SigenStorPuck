@@ -38,21 +38,6 @@ void highlight_active_dot() {
   }
 }
 
-// Walks the UI around a small box so no element keeps a fixed edge. Four
-// positions is enough — the aim is to break up a constant boundary, not to
-// scatter it.
-void pixel_shift_tick(lv_timer_t* /*timer*/) {
-  static uint8_t step = 0;
-  static const lv_point_t OFFSETS[4] = {
-      {-PUCK_PIXEL_SHIFT_PX, -PUCK_PIXEL_SHIFT_PX},
-      {PUCK_PIXEL_SHIFT_PX, -PUCK_PIXEL_SHIFT_PX},
-      {PUCK_PIXEL_SHIFT_PX, PUCK_PIXEL_SHIFT_PX},
-      {-PUCK_PIXEL_SHIFT_PX, PUCK_PIXEL_SHIFT_PX},
-  };
-  step = (step + 1) % 4;
-  lv_obj_align(s_shift_root, LV_ALIGN_CENTER, OFFSETS[step].x, OFFSETS[step].y);
-}
-
 void sweep_finished(lv_anim_t* /*anim*/) {
   lv_obj_add_flag(s_sweep, LV_OBJ_FLAG_HIDDEN);
 }
@@ -192,7 +177,6 @@ lv_obj_t* ui_create(lv_obj_t* parent) {
   lv_obj_clear_flag(s_sweep, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_add_flag(s_sweep, LV_OBJ_FLAG_HIDDEN);
 
-  lv_timer_create(pixel_shift_tick, PUCK_PIXEL_SHIFT_PERIOD_MS, nullptr);
   lv_timer_create(housekeeping_tick, 1000, nullptr);
 
   lv_obj_add_event_cb(s_tileview, on_tile_changed, LV_EVENT_VALUE_CHANGED, nullptr);
