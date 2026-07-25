@@ -20,3 +20,6 @@ build/
 # Local secrets — server URLs and kiosk tokens belong in NVS, never in the tree
 secrets.h
 *.local.ini
+
+# Release artifacts, built by tools/package_release.sh
+dist/

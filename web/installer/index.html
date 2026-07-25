@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Install SigenStorPuck</title>
+<!--
+  ESP Web Tools flashes over WebSerial, so there is nothing to download and no
+  drivers to install on macOS. Two constraints come with that and are stated plainly
+  below rather than left to fail confusingly: WebSerial is Chromium-only, and the
+  page must be served over HTTPS, which GitHub Pages provides.
+
+  The manifest is fetched from the latest GitHub release rather than bundled, so
+  this page never needs redeploying when a new firmware is cut.
+-->
+<script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
+<style>
+  :root { color-scheme: dark light; }
+  body {
+    font-family: system-ui, -apple-system, sans-serif;
+    max-width: 36rem; margin: 3rem auto; padding: 0 1.25rem; line-height: 1.55;
+  }
+  h1 { font-size: 1.6rem; margin-bottom: .25rem; }
+  p.sub { color: #888; margin-top: 0; }
+  .install { margin: 2rem 0; }
+  ol { padding-left: 1.2rem; }
+  li { margin: .4rem 0; }
+  .note {
+    border-left: 3px solid #0a84ff; padding: .6rem 0 .6rem .9rem; margin: 1.5rem 0;
+    background: color-mix(in srgb, currentColor 4%, transparent);
+  }
+  code { background: color-mix(in srgb, currentColor 10%, transparent);
+         padding: .1rem .35rem; border-radius: .25rem; }
+  footer { margin-top: 3rem; color: #888; font-size: .85rem; }
+  a { color: #0a84ff; }
+</style>
+</head>
+<body>
+
+<h1>SigenStorPuck</h1>
+<p class="sub">A round status display for a SigenStor solar and battery installation.</p>
+
+<div class="install">
+  <esp-web-install-button
+    manifest="https://github.com/markab/SigenStorPuck/releases/latest/download/manifest.json">
+    <button slot="activate">Install SigenStorPuck</button>
+    <span slot="unsupported">
+      This browser cannot flash over USB. Open this page in <strong>Chrome</strong> or
+      <strong>Edge</strong> on a desktop — WebSerial does not exist in Safari or Firefox,
+      and is unavailable on iOS entirely.
+    </span>
+    <span slot="not-allowed">
+      Serial access was blocked. This page has to be served over HTTPS to flash.
+    </span>
+  </esp-web-install-button>
+</div>
+
+<h2>After flashing</h2>
+<ol>
+  <li>The Puck raises a WiFi access point called <code>SigenStorPuck-Setup</code>. Join it
+      and choose your network.</li>
+  <li>Open <code>http://sigenstorpuck.local/</code> and paste the enrolment URL from
+      SigenStor Display's <em>Admin → Kiosk devices</em>.</li>
+  <li>It starts showing live data, and updates itself from GitHub Releases after that.</li>
+</ol>
+
+<div class="note">
+  <strong>Only needed once.</strong> This installer is for the first flash and for
+  recovery. Afterwards the Puck updates itself, so you should not need to come back
+  here.
+</div>
+
+<h2>Hardware</h2>
+<p>Waveshare ESP32-S3-Touch-AMOLED-1.75 — a 466&times;466 round AMOLED with capacitive
+touch. Plug it into this computer with USB-C before clicking Install.</p>
+
+<footer>
+  <a href="https://github.com/markab/SigenStorPuck">Source and releases</a>
+</footer>
+
+</body>
+</html>

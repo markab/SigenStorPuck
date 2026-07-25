@@ -1,0 +1,84 @@
+name: build
+
+# Every push and pull request gets built, so breakage is caught without hardware.
+# A v* tag additionally cuts a release with the flashable artifacts attached.
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      # Needed only to create the release on a tag.
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # The ESP32 toolchain is several hundred megabytes and the platform pulls
+      # more; without this every run spends most of its time downloading.
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            ~/.cache/pip
+          key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+          restore-keys: pio-${{ runner.os }}-
+
+      - name: Install PlatformIO
+        run: pip install --upgrade platformio esptool
+
+      - name: Build firmware
+        run: pio run -e puck
+
+      # Worth building too: the simulator shares the snapshot model, the enrolment
+      # URL parser and every screen, so this catches breakage in code the firmware
+      # build also depends on — and it is a fraction of the cost.
+      - name: Build simulator
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsdl2-dev
+          pio run -e sim
+
+      - name: Package release artifacts
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: ./tools/package_release.sh
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/firmware.bin
+            dist/merged.bin
+            dist/manifest.json
+          generate_release_notes: true
+
+  # Publishes web/installer to Pages. Separate job so a Pages failure cannot fail
+  # the build, and so it only runs for the real branch.
+  pages:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web/installer
+      - id: deploy
+        uses: actions/deploy-pages@v4
