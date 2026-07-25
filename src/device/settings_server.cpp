@@ -9,6 +9,7 @@
 #include "power.h"
 #include "settings.h"
 #include "sigen_api.h"
+#include "updater.h"
 #include "touch.h"
 #include "ui/ui.h"
 
@@ -155,6 +156,28 @@ String page(const String& message, bool message_is_error) {
   html += settings.sweep_min;
   html += "></div></div>";
   html += "<button type=submit>Apply</button></form>";
+
+  html += "<h2>Firmware</h2><p>Running <code>" PUCK_FW_VERSION "</code>.";
+  const UpdateStatus update = updater_status();
+  if (!update.latest_version.isEmpty()) {
+    html += " Latest release <code>";
+    html += escape_html(update.latest_version);
+    html += "</code>.";
+  }
+  if (update.message.length() > 0) {
+    html += "<br>";
+    html += escape_html(update.message);
+  }
+  html += "</p>";
+  html += "<form method=post action=/update-check><button class=secondary type=submit>";
+  html += updater_enabled() ? "Check for updates" : "Enable update checks and check now";
+  html += "</button></form>";
+  if (update.state == UpdateState::Available) {
+    html += "<form method=post action=/update-apply><button type=submit>";
+    html += "Install ";
+    html += escape_html(update.latest_version);
+    html += " and restart</button></form>";
+  }
 
   html += "<h2>Danger</h2>";
   html += "<form method=post action=/forget-server><button class=secondary type=submit>";
@@ -315,6 +338,27 @@ void handle_display() {
             false);
 }
 
+void handle_update_check() {
+  // Ticking the box is implied by asking: someone pressing "check for updates" has
+  // consented to the outbound call that requires.
+  if (!updater_enabled()) {
+    settings_set_check_updates(true);
+  }
+  updater_check();
+  send_page("", false);
+}
+
+void handle_update_apply() {
+  // Answer first: applying reboots the device, so a reply sent afterwards never
+  // arrives and the browser shows a connection error instead of an explanation.
+  s_server.send(200, "text/html; charset=utf-8",
+                "<!doctype html><p>Installing and restarting. This page will stop "
+                "responding for a minute or so.");
+  s_server.client().flush();
+  delay(200);
+  updater_apply();
+}
+
 void handle_forget_server() {
   settings_forget_server();
   send_page("Server details cleared.", false);
@@ -338,6 +382,8 @@ void settings_server_begin() {
   s_server.on("/save", HTTP_POST, handle_save);
   s_server.on("/test", HTTP_POST, handle_test);
   s_server.on("/display", HTTP_POST, handle_display);
+  s_server.on("/update-check", HTTP_POST, handle_update_check);
+  s_server.on("/update-apply", HTTP_POST, handle_update_apply);
   s_server.on("/forget-server", HTTP_POST, handle_forget_server);
   s_server.on("/forget-wifi", HTTP_POST, handle_forget_wifi);
   s_server.onNotFound(handle_root);

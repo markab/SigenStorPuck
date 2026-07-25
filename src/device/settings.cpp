@@ -18,6 +18,7 @@ constexpr const char* KEY_ORIENT = "orient";
 constexpr const char* KEY_FINE = "fine_deg10";
 constexpr const char* KEY_ROTATE = "rotate_s";
 constexpr const char* KEY_SWEEP = "sweep_min";
+constexpr const char* KEY_UPDATES = "updates";
 
 // The protocol enforces a 1 s floor and the server polls Modbus every 5 s, so
 // anything faster only adds load without making data fresher (PLAN.md §A4).
@@ -45,6 +46,7 @@ void settings_begin() {
   s_settings.fine_tenths = prefs.getShort(KEY_FINE, s_settings.fine_tenths);
   s_settings.rotate_s = prefs.getUInt(KEY_ROTATE, s_settings.rotate_s);
   s_settings.sweep_min = prefs.getUInt(KEY_SWEEP, s_settings.sweep_min);
+  s_settings.check_updates = prefs.getBool(KEY_UPDATES, s_settings.check_updates);
   prefs.end();
 
   // The token is never logged, only its presence.
@@ -175,5 +177,16 @@ bool settings_set_fine_rotation(int16_t tenths_of_a_degree) {
   prefs.putShort(KEY_FINE, tenths_of_a_degree);
   prefs.end();
   s_settings.fine_tenths = tenths_of_a_degree;
+  return true;
+}
+
+bool settings_set_check_updates(bool enabled) {
+  Preferences prefs;
+  if (!prefs.begin(NAMESPACE, /*readOnly=*/false)) {
+    return false;
+  }
+  prefs.putBool(KEY_UPDATES, enabled);
+  prefs.end();
+  s_settings.check_updates = enabled;
   return true;
 }

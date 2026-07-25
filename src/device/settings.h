@@ -29,6 +29,9 @@ struct Settings {
   uint32_t rotate_s = 0;
   // How often the sweep band runs, in minutes; 0 = off.
   uint32_t sweep_min = 240;
+  // Off by default: with this false the device makes no outbound call beyond your
+  // own server (PLAN.md §C3).
+  bool check_updates = false;
 };
 
 // Loads from NVS, falling back to defaults. Safe to call before WiFi is up.
@@ -51,6 +54,8 @@ bool settings_set_orientation(uint8_t quarter_turns);
 bool settings_set_fine_rotation(int16_t tenths_of_a_degree);
 
 bool settings_set_screensaver(uint32_t rotate_s, uint32_t sweep_min);
+
+bool settings_set_check_updates(bool enabled);
 
 // True once there is both a base URL and a token — i.e. there is any point
 // trying to poll.

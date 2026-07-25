@@ -16,6 +16,7 @@
 #include "device/power.h"
 #include "device/settings.h"
 #include "device/settings_server.h"
+#include "device/updater.h"
 #include "display.h"
 #include "snapshot.h"
 #include "touch.h"
@@ -200,6 +201,7 @@ void setup() {
 
   net_begin();
   poller_begin();
+  updater_begin();
 
   Serial.println("[boot] ready");
 }
