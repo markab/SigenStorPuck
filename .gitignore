@@ -1,0 +1,22 @@
+# PlatformIO
+.pio/
+.pioenvs/
+.piolibdeps/
+.clang_complete
+.gcc-flags.json
+
+# Build output
+*.bin
+*.elf
+*.map
+build/
+
+# Editors
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Local secrets — server URLs and kiosk tokens belong in NVS, never in the tree
+secrets.h
+*.local.ini
