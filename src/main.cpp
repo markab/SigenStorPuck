@@ -48,6 +48,16 @@ void set_overlay(const char* title, const char* detail) {
   snprintf(s_overlay_title, sizeof(s_overlay_title), "%s", title == nullptr ? "" : title);
   snprintf(s_overlay_detail, sizeof(s_overlay_detail), "%s", detail == nullptr ? "" : detail);
   ui_set_overlay(title, detail);
+
+  // Logged because it is the one part of the UI you cannot ask the device about
+  // over the network, and it is exactly what you want to know when someone says
+  // the screen is covered. Only on a change, so it stays quiet — the dedupe
+  // above is what makes that true.
+  if (title == nullptr) {
+    Serial.println("[ui] overlay cleared");
+  } else {
+    Serial.printf("[ui] overlay: %s | %s\n", s_overlay_title, s_overlay_detail);
+  }
 }
 
 // Decides what, if anything, should cover the screens. Ordered by what the viewer
@@ -70,15 +80,31 @@ void refresh_overlay(bool have_snapshot, const PollStatus& status) {
   }
 
   const bool modbus = settings_get().source == DataSource::Modbus;
-  const String& where = net_hostname().isEmpty() ? net_ip() : net_hostname();
+
+  // Both addresses, not whichever one happens to be available.
+  //
+  // The .local name is the nicer one to type, but mDNS resolution is not
+  // universal — Android has never supported it properly, and plenty of routers
+  // drop multicast between bands or VLANs. Showing only the name strands anyone
+  // whose phone cannot resolve it, on the one screen whose entire job is to tell
+  // them where to go. The IP always works, so it is always shown.
+  const String host = net_hostname();
+  const String ip = net_ip();
+  String where = "http://";
+  if (!host.isEmpty()) {
+    where += host;
+    where += "/\nor http://";
+  }
+  where += ip;
+  where += "/";
 
   if (!settings_is_provisioned()) {
-    detail = "Open http://";
+    detail = "Open ";
     detail += where;
     // Different instruction per source: there is no enrolment URL to paste when
     // the Puck talks to the plant directly, and telling someone to find one
     // would send them looking for something that does not exist.
-    detail += modbus ? "/\nand set the plant's IP address" : "/\nand paste the enrolment URL";
+    detail += modbus ? "\nand set the plant's IP address" : "\nand paste the enrolment URL";
     set_overlay("Not configured", detail.c_str());
     return;
   }
@@ -86,9 +112,8 @@ void refresh_overlay(bool have_snapshot, const PollStatus& status) {
   // A revoked token is not a network fault and will never fix itself, so it says
   // so rather than sitting on "waiting for data" forever.
   if (status.last_result == FetchResult::Unauthorised) {
-    detail = "The kiosk token was revoked.\nRe-enrol at http://";
+    detail = "The kiosk token was revoked.\nRe-enrol at ";
     detail += where;
-    detail += "/";
     set_overlay("Re-enrol needed", detail.c_str());
     return;
   }
