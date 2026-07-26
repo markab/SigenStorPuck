@@ -7,11 +7,48 @@
 
 #include <Arduino.h>
 
+// Where readings come from (docs/PLAN.md §D1). One firmware carries both paths;
+// this picks which one the poll task uses, and it takes effect on the next boot
+// like `orientation` does — changing it also changes how many screens exist.
+enum class DataSource : uint8_t {
+  Server = 0,  // SigenStor Display's /api/summary over HTTP(S)
+  Modbus = 1,  // straight to the plant over Modbus TCP, LAN only
+};
+
+enum class ModbusDeviceType : uint8_t {
+  Inverter = 0,
+  AcCharger = 1,
+};
+
+// One device in the plant, as addressed in the Sigen app. The plant itself is
+// implicit at address 247 and is not listed here.
+struct ModbusDevice {
+  uint8_t slave_id = 0;  // 1-246; 0 means the slot is unused
+  ModbusDeviceType type = ModbusDeviceType::Inverter;
+  // Only meaningful for an inverter: whether it has a DC (vehicle) charger, and
+  // so whether its DC output counts towards EV power. Mirrors the `dc_charger`
+  // flag in the server's own device config.
+  bool dc_charger = false;
+};
+
+// Four covers any domestic plant with room to spare, and keeps the settings page
+// a fixed shape rather than a list that grows.
+static constexpr size_t SETTINGS_MAX_MODBUS_DEVICES = 4;
+
 struct Settings {
+  DataSource source = DataSource::Server;
+
   // "https://host" or "http://192.168.1.10:8000", no trailing slash.
   String base_url;
   // The server's read-only kiosk token. 365-day, revocable.
   String token;
+
+  // The gateway or inverter exposing Modbus TCP. Enable access for this device's
+  // IP in the Sigen app, which whitelists by address.
+  String modbus_host;
+  uint16_t modbus_port = 502;
+  uint8_t modbus_plant_address = 247;
+  ModbusDevice modbus_devices[SETTINGS_MAX_MODBUS_DEVICES];
 
   uint32_t poll_interval_s = 5;
   uint8_t brightness = 200;
@@ -43,6 +80,15 @@ const Settings& settings_get();
 // if NVS rejected the write.
 bool settings_set_server(const String& base_url, const String& token);
 
+// Which data source to use on the next boot.
+bool settings_set_source(DataSource source);
+
+// Stores the Modbus endpoint and device list. `count` slots are taken from
+// `devices`; the rest are cleared, so removing a device is a matter of sending
+// a shorter list.
+bool settings_set_modbus(const String& host, uint16_t port, uint8_t plant_address,
+                         const ModbusDevice* devices, size_t count);
+
 bool settings_set_display(uint8_t brightness, uint32_t dim_after_s,
                           uint8_t dim_brightness);
 
@@ -57,8 +103,8 @@ bool settings_set_screensaver(uint32_t rotate_s, uint32_t sweep_min);
 
 bool settings_set_check_updates(bool enabled);
 
-// True once there is both a base URL and a token — i.e. there is any point
-// trying to poll.
+// True once there is enough stored to be worth polling: a base URL and a token
+// on the server path, a host on the Modbus path.
 bool settings_is_provisioned();
 
 // The token with all but its last four characters replaced. Everything that

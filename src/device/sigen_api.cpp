@@ -61,6 +61,10 @@ const char* fetch_result_name(FetchResult result) {
       return "http error";
     case FetchResult::BadPayload:
       return "bad payload";
+    case FetchResult::ProtocolError:
+      return "modbus error";
+    case FetchResult::ReadTimeout:
+      return "read timeout";
   }
   return "unknown";
 }

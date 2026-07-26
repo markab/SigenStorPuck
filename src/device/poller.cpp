@@ -4,6 +4,7 @@
 #include <freertos/semphr.h>
 #include <freertos/task.h>
 
+#include "modbus_api.h"
 #include "settings.h"
 
 namespace {
@@ -12,6 +13,11 @@ namespace {
 // under-sized stack here shows up as a crash inside the handshake rather than as
 // anything that looks like a stack problem.
 constexpr uint32_t TASK_STACK_BYTES = 16384;
+
+// The Modbus path never runs a handshake, so it needs nothing like the above.
+// Sized for the register buffer and the usual call depth, with room to spare
+// (PLAN.md §D1).
+constexpr uint32_t TASK_STACK_BYTES_MODBUS = 6144;
 constexpr UBaseType_t TASK_PRIORITY = 3;
 // Core 0. Arduino's loop(), and so LVGL, owns core 1.
 constexpr BaseType_t TASK_CORE = 0;
@@ -55,10 +61,16 @@ void publish_status(const PollStatus& status) {
 void poll_task(void* /*argument*/) {
   PollStatus status;
 
+  // Read once, not per cycle: the source applies on the next boot (§D1), so it
+  // cannot change under this loop, and re-reading it would only invite the two
+  // paths to interleave.
+  const bool modbus = settings_get().source == DataSource::Modbus;
+
   for (;;) {
     Snapshot fetched;
     int http_status = 0;
-    const FetchResult result = sigen_api_fetch(&fetched, &http_status);
+    const FetchResult result = modbus ? modbus_api_fetch(&fetched, &http_status)
+                                      : sigen_api_fetch(&fetched, &http_status);
 
     status.last_result = result;
     status.last_http_status = http_status;
@@ -118,9 +130,12 @@ void poller_begin() {
     return;
   }
   s_lock = xSemaphoreCreateMutex();
-  xTaskCreatePinnedToCore(poll_task, "puck_poll", TASK_STACK_BYTES, nullptr, TASK_PRIORITY,
-                          nullptr, TASK_CORE);
-  Serial.printf("[poll] task started on core %d\n", static_cast<int>(TASK_CORE));
+  const bool modbus = settings_get().source == DataSource::Modbus;
+  const uint32_t stack = modbus ? TASK_STACK_BYTES_MODBUS : TASK_STACK_BYTES;
+  xTaskCreatePinnedToCore(poll_task, "puck_poll", stack, nullptr, TASK_PRIORITY, nullptr,
+                          TASK_CORE);
+  Serial.printf("[poll] task started on core %d, source %s, stack %u\n",
+                static_cast<int>(TASK_CORE), modbus ? "modbus" : "server", stack);
 }
 
 bool poller_snapshot(Snapshot* out) {

@@ -3,6 +3,7 @@
 #include <stdio.h>
 
 #include "board_config.h"
+#include "chart_band.h"
 #include "format.h"
 #include "theme.h"
 
@@ -13,7 +14,17 @@ namespace {
 constexpr lv_coord_t ARC_DIAMETER = 448;
 constexpr lv_coord_t ARC_WIDTH = 16;
 
+// The day's state of charge (§D3), in the gap between the time-to-empty line and
+// the health readout. The arc says where the battery is now; this says how it
+// got there, which is what makes a charge/discharge cycle legible at a glance.
+//
+// Clear of the text rather than behind it, for the same reason as screen 3.
+constexpr lv_coord_t BAND_WIDTH = 300;
+constexpr lv_coord_t BAND_HEIGHT = 40;
+constexpr lv_coord_t BAND_Y = 96;
+
 lv_obj_t* s_root = nullptr;
+lv_obj_t* s_band = nullptr;
 lv_obj_t* s_arc = nullptr;
 lv_obj_t* s_soc = nullptr;
 lv_obj_t* s_stored = nullptr;
@@ -54,6 +65,18 @@ lv_obj_t* screen_battery_create(lv_obj_t* parent) {
   lv_obj_set_style_arc_color(s_arc, lv_color_hex(PUCK_COLOUR_TRACK), LV_PART_MAIN);
   lv_obj_set_style_arc_color(s_arc, lv_color_hex(PUCK_COLOUR_BATTERY), LV_PART_INDICATOR);
 
+  // Before the labels, so they sit on top of it.
+  s_band = chart_band_create(s_root, HistorySeries::Soc, PUCK_COLOUR_BATTERY);
+  if (s_band != nullptr) {
+    lv_obj_set_size(s_band, BAND_WIDTH, BAND_HEIGHT);
+    lv_obj_align(s_band, LV_ALIGN_CENTER, 0, BAND_Y);
+    // Fixed 0-100 rather than autoscaled: the height of this curve should mean
+    // the same thing every time you look at it, and a battery that stayed
+    // between 60 % and 64 % all day must not be stretched to look like a full
+    // cycle.
+    chart_band_set_range(s_band, 0.0f, 100.0f);
+  }
+
   lv_obj_t* title = make_label(s_root, PUCK_FONT_SMALL, PUCK_COLOUR_MUTED, -150);
   lv_label_set_text(title, "BATTERY");
 
@@ -84,6 +107,10 @@ void screen_battery_update(const Snapshot& snapshot) {
 
   char text[48];
   char scratch[24];
+
+  if (s_band != nullptr) {
+    chart_band_refresh(s_band);
+  }
 
   const Snapshot::Battery* battery = nullptr;
   if (snapshot.valid) {

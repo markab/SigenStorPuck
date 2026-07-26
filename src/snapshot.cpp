@@ -50,6 +50,9 @@ bool snapshot_parse(const char* json, size_t length, Snapshot* out) {
   parsed.ok = doc["ok"] | false;
   parsed.age_s = doc["age"] | 0u;
   parsed.alarms = doc["alarms"] | 0;
+  // Absent from every payload the server sends today, which is why this is a
+  // MaybeInt and not a plain 0: an offset of zero is UTC, not "unknown".
+  parsed.tz_offset_min = maybe_int(doc["tz"]);
 
   // Missing sub-objects resolve to null variants, so every field below simply
   // comes out "unknown" rather than needing its own presence check.

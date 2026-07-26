@@ -19,6 +19,14 @@ constexpr const char* KEY_FINE = "fine_deg10";
 constexpr const char* KEY_ROTATE = "rotate_s";
 constexpr const char* KEY_SWEEP = "sweep_min";
 constexpr const char* KEY_UPDATES = "updates";
+constexpr const char* KEY_SOURCE = "source";
+constexpr const char* KEY_MB_HOST = "mb_host";
+constexpr const char* KEY_MB_PORT = "mb_port";
+constexpr const char* KEY_MB_PLANT = "mb_plant";
+// The device list is a fixed-size blob rather than a key per field: four devices
+// times three fields would be twelve NVS entries to keep in step, and the struct
+// is plain data with no pointers in it.
+constexpr const char* KEY_MB_DEVICES = "mb_devs";
 
 // The protocol enforces a 1 s floor and the server polls Modbus every 5 s, so
 // anything faster only adds load without making data fresher (PLAN.md §A4).
@@ -47,13 +55,34 @@ void settings_begin() {
   s_settings.rotate_s = prefs.getUInt(KEY_ROTATE, s_settings.rotate_s);
   s_settings.sweep_min = prefs.getUInt(KEY_SWEEP, s_settings.sweep_min);
   s_settings.check_updates = prefs.getBool(KEY_UPDATES, s_settings.check_updates);
+
+  s_settings.source = prefs.getUChar(KEY_SOURCE, 0) == 1 ? DataSource::Modbus : DataSource::Server;
+  // Guarded by isKey rather than left to the default argument: Preferences logs a
+  // missing key at ERROR level, and two red lines on the first boot of every
+  // device that has never used Modbus look like a fault when they are not.
+  if (prefs.isKey(KEY_MB_HOST)) {
+    s_settings.modbus_host = prefs.getString(KEY_MB_HOST, "");
+  }
+  s_settings.modbus_port = prefs.getUShort(KEY_MB_PORT, s_settings.modbus_port);
+  s_settings.modbus_plant_address = prefs.getUChar(KEY_MB_PLANT, s_settings.modbus_plant_address);
+  if (prefs.isKey(KEY_MB_DEVICES)) {
+    // A short blob leaves the defaults, which is an empty device list.
+    prefs.getBytes(KEY_MB_DEVICES, s_settings.modbus_devices, sizeof(s_settings.modbus_devices));
+  }
   prefs.end();
 
   // The token is never logged, only its presence.
-  Serial.printf("[settings] server=%s token=%s poll=%us\n",
-                s_settings.base_url.isEmpty() ? "(unset)" : s_settings.base_url.c_str(),
-                s_settings.token.isEmpty() ? "(unset)" : settings_token_masked().c_str(),
-                s_settings.poll_interval_s);
+  if (s_settings.source == DataSource::Modbus) {
+    Serial.printf("[settings] source=modbus host=%s:%u plant=%u poll=%us\n",
+                  s_settings.modbus_host.isEmpty() ? "(unset)" : s_settings.modbus_host.c_str(),
+                  s_settings.modbus_port, s_settings.modbus_plant_address,
+                  s_settings.poll_interval_s);
+  } else {
+    Serial.printf("[settings] source=server server=%s token=%s poll=%us\n",
+                  s_settings.base_url.isEmpty() ? "(unset)" : s_settings.base_url.c_str(),
+                  s_settings.token.isEmpty() ? "(unset)" : settings_token_masked().c_str(),
+                  s_settings.poll_interval_s);
+  }
 }
 
 const Settings& settings_get() {
@@ -111,7 +140,70 @@ bool settings_set_poll_interval(uint32_t seconds) {
   return true;
 }
 
+bool settings_set_source(DataSource source) {
+  Preferences prefs;
+  if (!prefs.begin(NAMESPACE, /*readOnly=*/false)) {
+    return false;
+  }
+  prefs.putUChar(KEY_SOURCE, static_cast<uint8_t>(source));
+  prefs.end();
+  s_settings.source = source;
+  Serial.printf("[settings] source set to %s (applies on next boot)\n",
+                source == DataSource::Modbus ? "modbus" : "server");
+  return true;
+}
+
+bool settings_set_modbus(const String& host, uint16_t port, uint8_t plant_address,
+                         const ModbusDevice* devices, size_t count) {
+  if (port == 0) {
+    port = 502;
+  }
+  if (plant_address == 0) {
+    plant_address = 247;
+  }
+
+  ModbusDevice staged[SETTINGS_MAX_MODBUS_DEVICES];
+  if (devices != nullptr) {
+    if (count > SETTINGS_MAX_MODBUS_DEVICES) {
+      count = SETTINGS_MAX_MODBUS_DEVICES;
+    }
+    for (size_t i = 0; i < count; ++i) {
+      // 247 is the plant and is addressed implicitly; a device claiming it would
+      // make the plant read twice and the device never.
+      if (devices[i].slave_id == 0 || devices[i].slave_id > 246) {
+        continue;
+      }
+      staged[i] = devices[i];
+    }
+  }
+
+  Preferences prefs;
+  if (!prefs.begin(NAMESPACE, /*readOnly=*/false)) {
+    return false;
+  }
+  prefs.putString(KEY_MB_HOST, host);
+  prefs.putUShort(KEY_MB_PORT, port);
+  prefs.putUChar(KEY_MB_PLANT, plant_address);
+  prefs.putBytes(KEY_MB_DEVICES, staged, sizeof(staged));
+  prefs.end();
+
+  s_settings.modbus_host = host;
+  s_settings.modbus_port = port;
+  s_settings.modbus_plant_address = plant_address;
+  for (size_t i = 0; i < SETTINGS_MAX_MODBUS_DEVICES; ++i) {
+    s_settings.modbus_devices[i] = staged[i];
+  }
+  Serial.printf("[settings] modbus set to %s:%u plant %u\n", host.c_str(), port, plant_address);
+  return true;
+}
+
 bool settings_is_provisioned() {
+  if (s_settings.source == DataSource::Modbus) {
+    // No token and no device list needed: a plant with neither an inverter nor a
+    // charger listed still fills the power and battery screens from the plant
+    // address alone.
+    return !s_settings.modbus_host.isEmpty();
+  }
   return !s_settings.base_url.isEmpty() && !s_settings.token.isEmpty();
 }
 

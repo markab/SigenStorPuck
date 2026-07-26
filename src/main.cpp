@@ -69,10 +69,16 @@ void refresh_overlay(bool have_snapshot, const PollStatus& status) {
       break;
   }
 
+  const bool modbus = settings_get().source == DataSource::Modbus;
+  const String& where = net_hostname().isEmpty() ? net_ip() : net_hostname();
+
   if (!settings_is_provisioned()) {
     detail = "Open http://";
-    detail += net_hostname().isEmpty() ? net_ip() : net_hostname();
-    detail += "/\nand paste the enrolment URL";
+    detail += where;
+    // Different instruction per source: there is no enrolment URL to paste when
+    // the Puck talks to the plant directly, and telling someone to find one
+    // would send them looking for something that does not exist.
+    detail += modbus ? "/\nand set the plant's IP address" : "/\nand paste the enrolment URL";
     set_overlay("Not configured", detail.c_str());
     return;
   }
@@ -81,7 +87,7 @@ void refresh_overlay(bool have_snapshot, const PollStatus& status) {
   // so rather than sitting on "waiting for data" forever.
   if (status.last_result == FetchResult::Unauthorised) {
     detail = "The kiosk token was revoked.\nRe-enrol at http://";
-    detail += net_hostname().isEmpty() ? net_ip() : net_hostname();
+    detail += where;
     detail += "/";
     set_overlay("Re-enrol needed", detail.c_str());
     return;
@@ -91,7 +97,11 @@ void refresh_overlay(bool have_snapshot, const PollStatus& status) {
     if (status.last_result == FetchResult::ClockUnset) {
       set_overlay("Waiting for clock", "HTTPS needs the time set.\nWaiting for NTP.");
     } else if (status.consecutive_failures > 0) {
-      detail = String("Cannot reach the server\n") + fetch_result_name(status.last_result);
+      // Naming what is unreachable, because on the Modbus path "the server" is
+      // not a thing that exists and the first place to look is the Sigen app's
+      // Modbus whitelist.
+      detail = modbus ? String("Cannot reach the plant\n") : String("Cannot reach the server\n");
+      detail += fetch_result_name(status.last_result);
       set_overlay("No data", detail.c_str());
     } else {
       set_overlay("Waiting for data", nullptr);
@@ -183,7 +193,10 @@ void setup() {
   power_begin();
   buttons_begin();
 
-  ui_create(lv_scr_act());
+  // Three screens on the Modbus source: no server means no tariff, and so no
+  // cost screen to swipe to (PLAN.md §D1). Read here rather than watched,
+  // because the source only changes across a reboot.
+  ui_create(lv_scr_act(), settings_get().source != DataSource::Modbus);
   display_set_brightness(settings_get().brightness);
   // A named boot screen rather than a bare word: on a device that takes a couple
   // of seconds to find WiFi, this is the only proof it is alive.

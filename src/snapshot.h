@@ -42,6 +42,15 @@ struct Snapshot {
   uint32_t age_s = 0;    // seconds since the plant reading was taken
   int32_t alarms = 0;    // count of active alarms
 
+  // Minutes east of UTC. Optional, and absent from /api/summary today — the
+  // server knows the timezone but does not send it (see the tariff-slot note in
+  // CLAUDE.md). Parsed anyway so it starts working the day it is added, and
+  // filled from plant_system_timezone (30002) on the Modbus path.
+  //
+  // What needs it: anchoring the day charts to local midnight. Without it they
+  // fall back to a rolling 24 h window, which spans two part-days.
+  MaybeInt tz_offset_min;
+
   struct Power {
     MaybeFloat pv;     // kW from solar
     MaybeFloat grid;   // kW, >0 importing, <0 exporting

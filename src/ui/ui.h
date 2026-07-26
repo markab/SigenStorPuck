@@ -11,11 +11,16 @@
 #include "snapshot.h"
 
 // Builds the tileview and every screen under `parent`, returning the tileview.
-lv_obj_t* ui_create(lv_obj_t* parent);
+//
+// `with_cost_screen` is false on the Modbus data source, which has no tariff
+// behind it (PLAN.md §D1). Everything downstream asks ui_screen_count() rather
+// than assuming four.
+lv_obj_t* ui_create(lv_obj_t* parent, bool with_cost_screen);
 
-// Pushes a snapshot to all four screens. This is the single "here is a new
-// reading" call PLAN.md §B3 asks for: the WebSocket path of §A4 can replace the
-// poll loop later without any screen changing.
+// Pushes a snapshot to every screen that exists. This is the single "here is a
+// new reading" call PLAN.md §B3 asks for: the WebSocket path of §A4 can replace
+// the poll loop later without any screen changing, and §D2's Modbus path
+// already does.
 void ui_update(const Snapshot& snapshot);
 
 // A full-screen message covering the tileview: WiFi setup, "not configured",

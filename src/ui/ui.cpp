@@ -1,6 +1,7 @@
 #include "ui.h"
 
 #include "board_config.h"
+#include "history.h"
 #include "screen_battery.h"
 #include "screen_cost.h"
 #include "screen_power.h"
@@ -9,7 +10,16 @@
 
 namespace {
 
-constexpr int SCREEN_COUNT = 4;
+// The cost screen only exists when a SigenStor Display server is behind us: it
+// needs the tariff tables, the Octopus API and a priced integration over the
+// day, none of which a plant exposes over Modbus (§D1). So the count is decided
+// at build-the-UI time rather than compiled in.
+//
+// Every caller outside this file already goes through ui_screen_count(), which
+// is what makes this a contained change.
+constexpr int MAX_SCREENS = 4;
+int s_screen_count = MAX_SCREENS;
+bool s_has_cost = true;
 
 // Just above the bottom of the bezel, below everything the screens draw. Screen
 // 1's state-of-charge readout was moved inboard to make room.
@@ -18,8 +28,8 @@ constexpr lv_coord_t DOT_SIZE = 7;
 constexpr lv_coord_t DOT_GAP = 10;
 
 lv_obj_t* s_tileview = nullptr;
-lv_obj_t* s_tiles[SCREEN_COUNT] = {};
-lv_obj_t* s_dots[SCREEN_COUNT] = {};
+lv_obj_t* s_tiles[MAX_SCREENS] = {};
+lv_obj_t* s_dots[MAX_SCREENS] = {};
 lv_obj_t* s_shift_root = nullptr;
 lv_obj_t* s_sweep = nullptr;
 uint32_t s_rotate_seconds = 0;
@@ -30,7 +40,7 @@ lv_obj_t* s_overlay_detail = nullptr;
 
 void highlight_active_dot() {
   lv_obj_t* active = lv_tileview_get_tile_act(s_tileview);
-  for (int i = 0; i < SCREEN_COUNT; ++i) {
+  for (int i = 0; i < s_screen_count; ++i) {
     const bool here = s_tiles[i] == active;
     lv_obj_set_style_bg_color(s_dots[i],
                               lv_color_hex(here ? PUCK_COLOUR_TEXT : PUCK_COLOUR_TRACK),
@@ -69,7 +79,7 @@ void housekeeping_tick(lv_timer_t* /*timer*/) {
   if (s_rotate_seconds > 0 && !busy) {
     if (++rotate_elapsed >= s_rotate_seconds) {
       rotate_elapsed = 0;
-      const int next = (ui_current_screen() + 1) % SCREEN_COUNT;
+      const int next = (ui_current_screen() + 1) % s_screen_count;
       lv_obj_set_tile(s_tileview, s_tiles[next], LV_ANIM_ON);
       highlight_active_dot();
     }
@@ -92,7 +102,10 @@ void on_tile_changed(lv_event_t* /*event*/) {
 
 }  // namespace
 
-lv_obj_t* ui_create(lv_obj_t* parent) {
+lv_obj_t* ui_create(lv_obj_t* parent, bool with_cost_screen) {
+  s_has_cost = with_cost_screen;
+  s_screen_count = with_cost_screen ? MAX_SCREENS : MAX_SCREENS - 1;
+
   lv_obj_set_style_bg_color(parent, lv_color_hex(PUCK_COLOUR_BG), LV_PART_MAIN);
 
   // A container holding everything, so pixel shift can move the whole UI as one
@@ -112,27 +125,29 @@ lv_obj_t* ui_create(lv_obj_t* parent) {
   // the page dots do the same job where they can actually be seen.
   lv_obj_set_scrollbar_mode(s_tileview, LV_SCROLLBAR_MODE_OFF);
 
-  for (int i = 0; i < SCREEN_COUNT; ++i) {
+  for (int i = 0; i < s_screen_count; ++i) {
     s_tiles[i] = lv_tileview_add_tile(s_tileview, static_cast<uint8_t>(i), 0, LV_DIR_HOR);
   }
 
   screen_power_create(s_tiles[0]);
   screen_battery_create(s_tiles[1]);
   screen_today_create(s_tiles[2]);
-  screen_cost_create(s_tiles[3]);
+  if (s_has_cost) {
+    screen_cost_create(s_tiles[3]);
+  }
 
   // Dots are siblings of the tileview, not children, so they stay put while the
   // screens slide underneath them.
   lv_obj_t* dots = lv_obj_create(parent);
   lv_obj_remove_style_all(dots);
   lv_obj_clear_flag(dots, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_set_size(dots, SCREEN_COUNT * (DOT_SIZE + DOT_GAP), DOT_SIZE);
+  lv_obj_set_size(dots, s_screen_count * (DOT_SIZE + DOT_GAP), DOT_SIZE);
   lv_obj_set_flex_flow(dots, LV_FLEX_FLOW_ROW);
   lv_obj_set_flex_align(dots, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
   lv_obj_set_style_pad_column(dots, DOT_GAP, LV_PART_MAIN);
   lv_obj_align(dots, LV_ALIGN_CENTER, 0, DOTS_Y);
 
-  for (int i = 0; i < SCREEN_COUNT; ++i) {
+  for (int i = 0; i < s_screen_count; ++i) {
     lv_obj_t* dot = lv_obj_create(dots);
     lv_obj_remove_style_all(dot);
     lv_obj_set_size(dot, DOT_SIZE, DOT_SIZE);
@@ -186,13 +201,20 @@ lv_obj_t* ui_create(lv_obj_t* parent) {
 }
 
 void ui_update(const Snapshot& snapshot) {
+  // Filed before anything draws, so the charts see this reading on this pass.
+  // Here rather than in the poll task because this is the one call every data
+  // source goes through — the same reason the screens hang off it.
+  history_record(snapshot);
+
   // Every screen is refreshed, not just the visible one. They are cheap to
   // update and it means a swipe never lands on a screen showing an older
   // reading than the one you just swiped away from.
   screen_power_update(snapshot);
   screen_battery_update(snapshot);
   screen_today_update(snapshot);
-  screen_cost_update(snapshot);
+  if (s_has_cost) {
+    screen_cost_update(snapshot);
+  }
 }
 
 void ui_set_fine_rotation(int16_t tenths_of_a_degree) {
@@ -249,12 +271,12 @@ void ui_set_overlay(const char* title, const char* detail) {
 }
 
 int ui_screen_count() {
-  return SCREEN_COUNT;
+  return s_screen_count;
 }
 
 int ui_current_screen() {
   lv_obj_t* active = lv_tileview_get_tile_act(s_tileview);
-  for (int i = 0; i < SCREEN_COUNT; ++i) {
+  for (int i = 0; i < s_screen_count; ++i) {
     if (s_tiles[i] == active) {
       return i;
     }
@@ -263,7 +285,7 @@ int ui_current_screen() {
 }
 
 void ui_show_screen(int index) {
-  if (s_tileview == nullptr || index < 0 || index >= SCREEN_COUNT) {
+  if (s_tileview == nullptr || index < 0 || index >= s_screen_count) {
     return;
   }
   // No animation: used to jump straight to a screen for a screenshot, where a

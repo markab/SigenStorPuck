@@ -11,6 +11,7 @@
 
 #include <dirent.h>
 #include <lvgl.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -19,6 +20,7 @@
 #include <vector>
 
 #include "board_config.h"
+#include "history.h"
 #include "sim_backend.h"
 #include "snapshot.h"
 #include "ui/theme.h"
@@ -35,6 +37,10 @@ constexpr uint32_t COLOUR_WARN = PUCK_COLOUR_WARN;
 std::vector<std::string> s_fixture_paths;
 size_t s_current = 0;
 int16_t s_startup_tilt = 0;
+
+// --no-cost previews the three-screen arrangement the Modbus source gets (§D1),
+// which is otherwise only visible on a device configured for it.
+bool s_with_cost = true;
 
 // The real screen, plus the raw field dump kept behind the 'd' key. Keeping the
 // dump around is worth its few lines: when a screen shows something surprising,
@@ -188,6 +194,122 @@ std::string describe(const Snapshot& snapshot) {
   return text;
 }
 
+// --------------------------------------------------- synthetic day history ---
+//
+// The fixtures are single snapshots, so there is nothing for the charts of §D3
+// to draw. Rather than grow the fixture format, each one is expanded into a
+// plausible day that *ends* at its own instantaneous values.
+//
+// The point of this is the awkward case, not the pretty one: a solar curve
+// broken up by cloud is what the min/max envelope exists to render, and a smooth
+// bell would let a bug in the reduction pass unnoticed.
+
+float hash01(uint32_t value) {
+  uint32_t x = value * 2654435761u;
+  x ^= x >> 13;
+  x *= 1274126177u;
+  x ^= x >> 16;
+  return static_cast<float>(x & 0xFFFFu) / 65535.0f;
+}
+
+// Normalised generation, 0 at night and peaking near the middle of the day. The
+// exponent narrows the bell slightly, which is closer to a real array than a
+// plain sine.
+float solar_shape(int local_minute) {
+  constexpr int SUNRISE = 330;   // 05:30
+  constexpr int SUNSET = 1230;   // 20:30
+  if (local_minute <= SUNRISE || local_minute >= SUNSET) {
+    return 0.0f;
+  }
+  const float t = static_cast<float>(local_minute - SUNRISE) /
+                  static_cast<float>(SUNSET - SUNRISE);
+  return powf(sinf(t * 3.14159265f), 1.6f);
+}
+
+// Cloud, in bands rather than uniformly, so part of the day stays clean and the
+// two cases can be compared in one screenshot.
+float cloud_factor(uint32_t minute, int local_minute) {
+  const float season = sinf(static_cast<float>(local_minute) * 0.011f);
+  if (season < 0.25f) {
+    return 1.0f;  // clear spell
+  }
+  const float roll = hash01(minute);
+  if (roll > 0.45f) {
+    return 1.0f;
+  }
+  // A dip to somewhere between a fifth and most of clear-sky output.
+  return 0.2f + 0.7f * hash01(minute + 7777u);
+}
+
+// A day's worth of battery: drained overnight, charged through the middle of the
+// day, drawn down again in the evening.
+float soc_shape(int local_minute) {
+  const float t = static_cast<float>(local_minute) / 1440.0f * 2.0f * 3.14159265f;
+  return -cosf(t - 1.2f);  // -1 around 06:00, +1 around 18:00
+}
+
+void synthesise_history(const Snapshot& snapshot) {
+  history_reset();
+  if (!snapshot.valid || snapshot.ts == 0) {
+    return;
+  }
+
+  // UTC, so the fixtures' own 13:00 timestamp is the time of day. Setting it at
+  // all is what puts the charts on their anchored-to-midnight path rather than
+  // the rolling fallback, which is the arrangement worth looking at.
+  history_set_timezone(0);
+
+  const uint32_t end = snapshot.ts / 60;
+  const int end_local = static_cast<int>(end % 1440);
+
+  // Scale the bell so it passes exactly through the live reading. A fixture
+  // reporting nothing at midday gets an overcast day instead of a bright one it
+  // would contradict.
+  const float shape_now = solar_shape(end_local);
+  const bool generating = snapshot.power.pv.known && snapshot.power.pv.value > 0.05f;
+  const bool overcast = snapshot.power.pv.known && !generating;
+  float peak = 4.2f;
+  if (generating && shape_now > 0.05f) {
+    peak = snapshot.power.pv.value / shape_now;
+  } else if (overcast) {
+    peak = 0.9f;
+  }
+
+  // State of charge: build the shape, then shift the whole series so its last
+  // sample is the reading actually on screen.
+  constexpr float SOC_AMPLITUDE = 28.0f;
+  const float soc_offset = snapshot.battery.soc_pct.known
+                               ? snapshot.battery.soc_pct.value -
+                                     SOC_AMPLITUDE * soc_shape(end_local)
+                               : 0.0f;
+
+  // From local midnight to now, not a full 24 h back: the anchored window covers
+  // the whole day, so filling only the part that has happened is what makes the
+  // curve grow into an empty right-hand side the way it will on a real device.
+  for (int local = 0; local <= end_local; ++local) {
+    const uint32_t minute = end - static_cast<uint32_t>(end_local - local);
+
+    // A null-register fixture must leave the band genuinely empty — that is the
+    // case the "nothing recorded yet" path exists for.
+    if (snapshot.power.pv.known) {
+      const float cloud = overcast ? 0.35f + 0.5f * hash01(minute)
+                                   : cloud_factor(minute, local);
+      history_put(HistorySeries::Pv, minute, peak * solar_shape(local) * cloud);
+    }
+
+    if (snapshot.battery.soc_pct.known) {
+      float soc = soc_offset + SOC_AMPLITUDE * soc_shape(local);
+      if (soc < 2.0f) {
+        soc = 2.0f;
+      }
+      if (soc > 100.0f) {
+        soc = 100.0f;
+      }
+      history_put(HistorySeries::Soc, minute, soc);
+    }
+  }
+}
+
 void show_current_fixture() {
   const std::string& path = s_fixture_paths[s_current];
   const std::string name = base_name(path);
@@ -213,6 +335,9 @@ void show_current_fixture() {
 
   lv_obj_set_style_text_color(s_body, lv_color_hex(COLOUR_TEXT), LV_PART_MAIN);
   lv_label_set_text(s_body, describe(snapshot).c_str());
+  // Rebuilt per fixture, so stepping between them does not leave the previous
+  // fixture's day behind the new one's numbers.
+  synthesise_history(snapshot);
   ui_update(snapshot);
 
   const std::string title = "SigenStorPuck sim - " + name;
@@ -261,7 +386,7 @@ void build_views() {
   lv_obj_set_style_bg_color(screen, lv_color_hex(COLOUR_BACKGROUND), LV_PART_MAIN);
   lv_obj_clear_flag(screen, LV_OBJ_FLAG_SCROLLABLE);
 
-  ui_create(screen);
+  ui_create(screen, s_with_cost);
 
   s_debug_root = lv_obj_create(screen);
   lv_obj_remove_style_all(s_debug_root);
@@ -357,13 +482,21 @@ int run_screenshot_pass(const std::string& output_directory) {
   return failures;
 }
 
+// src/sim/selftest.cpp — checks for the shared Modbus and history code, which
+// needs no display and so runs before any of the LVGL setup below.
+int run_selftest();
+
 int main(int argc, char** argv) {
-  // sim [fixture-dir] [--shot output-dir]
+  // sim [fixture-dir] [--shot output-dir] [--selftest] [--no-cost]
   std::string directory = "test/fixtures";
   std::string shot_directory;
   for (int i = 1; i < argc; ++i) {
     const std::string argument = argv[i];
-    if (argument == "--shot" && i + 1 < argc) {
+    if (argument == "--selftest") {
+      return run_selftest();
+    } else if (argument == "--no-cost") {
+      s_with_cost = false;
+    } else if (argument == "--shot" && i + 1 < argc) {
       shot_directory = argv[++i];
     } else if (argument == "--tilt" && i + 1 < argc) {
       s_startup_tilt = static_cast<int16_t>(atoi(argv[++i]));

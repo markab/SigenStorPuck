@@ -4,6 +4,7 @@
 
 #include "board_config.h"
 #include "enrol_url.h"
+#include "modbus_api.h"
 #include "net.h"
 #include "poller.h"
 #include "power.h"
@@ -26,12 +27,30 @@ const char* PAGE_STYLE =
     "body{font-family:system-ui,sans-serif;max-width:34rem;margin:2rem auto;padding:0 1rem;"
     "background:#111;color:#eee}"
     "h1{font-size:1.3rem}h2{font-size:1rem;margin-top:2rem;color:#9ab}"
-    "input,button{font-size:1rem;padding:.5rem;width:100%;box-sizing:border-box;margin:.25rem 0 1rem;"
-    "border-radius:.4rem;border:1px solid #444;background:#1c1c1e;color:#eee}"
+    // `select` belongs here with the text fields. Left out, it falls back to
+    // inline flow and lands on the same line as its own label, which is what put
+    // the Type dropdown on top of the labels either side of it.
+    "input,select,button{font-size:1rem;padding:.5rem;width:100%;box-sizing:border-box;"
+    "margin:.25rem 0 1rem;border-radius:.4rem;border:1px solid #444;background:#1c1c1e;color:#eee}"
     "button{background:#0a84ff;border:0;font-weight:600;cursor:pointer}"
     "button.secondary{background:#333}"
+    // Tick boxes are not text fields, and the rule above would stretch one to the
+    // full width of its column — a 528 px radio button with its text stranded off
+    // to the right.
+    "input[type=checkbox],input[type=radio]{width:auto;flex:0 0 auto;margin:0;padding:0}"
     "label{font-size:.85rem;color:#9ab}"
-    ".row{display:flex;gap:.75rem}.row>*{flex:1}"
+    // A whole row you can click, for the controls whose label sits beside them
+    // rather than above them.
+    "label.opt{display:flex;align-items:center;gap:.5rem;font-size:1rem;color:#eee;margin:.4rem 0}"
+    // Matches a text field's height so a checkbox lines up with the inputs either
+    // side of it instead of floating at the top of the cell.
+    ".check{display:flex;align-items:center;gap:.5rem;padding:.5rem 0;margin:.25rem 0 1rem}"
+    // align-items:end keeps the controls on one line when a label wraps and its
+    // neighbours do not — "Plant address" takes two lines in a third of a 375 px
+    // phone, and without this its input alone sits 19 px lower than the rest.
+    // Bottom-aligning fixes that for any label at any width, rather than tuning
+    // one string until it happens to fit.
+    ".row{display:flex;gap:.75rem;align-items:end}.row>*{flex:1}.row>.wide{flex:2}"
     "code{background:#000;padding:.15rem .35rem;border-radius:.25rem}"
     ".ok{color:#30d158}.bad{color:#ff9f0a}"
     "p.hint{font-size:.8rem;color:#888;margin-top:-.6rem}";
@@ -76,7 +95,26 @@ String page(const String& message, bool message_is_error) {
     html += "</p>";
   }
 
+  // Both sources are configurable whichever one is running, so the other can be
+  // set up before switching to it — a device that had to be switched first and
+  // configured second would spend the gap unable to reach anything.
+  const bool modbus = settings.source == DataSource::Modbus;
+  html += "<h2>Data source</h2><form method=post action=/source>";
+  html += "<label class=opt><input type=radio name=src value=server";
+  html += modbus ? "" : " checked";
+  html += "> SigenStor Display server</label>";
+  html += "<label class=opt><input type=radio name=src value=modbus";
+  html += modbus ? " checked" : "";
+  html += "> Plant over Modbus (LAN only, no cost screen)</label>";
+  html += "<p class=hint>Takes effect after a restart, like orientation.</p>";
+  html += "<button type=submit>Save</button></form>";
+  html += "<form method=post action=/restart><button class=secondary type=submit>";
+  html += "Restart now</button></form>";
+
   html += "<h2>Server</h2>";
+  if (modbus) {
+    html += "<p class=hint>Not in use: the data source is set to Modbus.</p>";
+  }
   html += "<form method=post action=/save>";
   html += "<label for=enrol>Paste the enrolment URL from Admin &rarr; Kiosk devices</label>";
   html += "<input id=enrol name=enrol placeholder='https://host/kiosk-enroll?token=...'>";
@@ -98,6 +136,57 @@ String page(const String& message, bool message_is_error) {
 
   html += "<form method=post action=/test><button class=secondary type=submit>";
   html += "Test connection</button></form>";
+
+  html += "<h2>Plant (Modbus)</h2>";
+  if (!modbus) {
+    html += "<p class=hint>Not in use: the data source is set to the server.</p>";
+  }
+  html += "<form method=post action=/modbus><div class=row>";
+  // An IP address needs about twice the room a port or an address does.
+  html += "<div class=wide><label for=mbhost>Gateway or inverter IP</label>";
+  html += "<input id=mbhost name=mbhost value='";
+  html += escape_html(settings.modbus_host);
+  html += "' placeholder='192.168.1.50'></div>";
+  html += "<div><label for=mbport>Port</label>";
+  html += "<input id=mbport name=mbport type=number min=1 max=65535 value=";
+  html += settings.modbus_port;
+  html += "></div>";
+  html += "<div><label for=mbplant>Plant address</label>";
+  html += "<input id=mbplant name=mbplant type=number min=1 max=247 value=";
+  html += settings.modbus_plant_address;
+  html += "></div></div>";
+  // Enable Modbus TCP for this device's IP in the Sigen app: access is
+  // whitelisted per client address, and a Puck that has not been added simply
+  // gets no answer.
+  html += "<p class=hint>Enable Modbus TCP for this device's IP in the Sigen app, "
+          "and give it a reserved DHCP lease.</p>";
+  html += "<p class=hint>Devices are optional — the plant address alone fills the "
+          "power and battery screens. Add an inverter for battery temperature and "
+          "daily totals, a charger for EV power. Slave ID 0 means the slot is unused.</p>";
+  for (size_t i = 0; i < SETTINGS_MAX_MODBUS_DEVICES; ++i) {
+    const ModbusDevice& device = settings.modbus_devices[i];
+    const String suffix(static_cast<unsigned>(i));
+    html += "<div class=row><div><label for=mbid" + suffix + ">Slave ID</label>";
+    html += "<input id=mbid" + suffix + " name=mbid" + suffix +
+            " type=number min=0 max=246 value=";
+    html += device.slave_id;
+    html += "></div><div><label for=mbtype" + suffix + ">Type</label>";
+    html += "<select id=mbtype" + suffix + " name=mbtype" + suffix + ">";
+    // One word each. Three columns on a 375 px phone leave about 66 px of text
+    // room in the dropdown, and "Hybrid inverter" needs 104 — the browser would
+    // silently clip it to something unreadable.
+    html += "<option value=inv";
+    html += device.type == ModbusDeviceType::Inverter ? " selected" : "";
+    html += ">Inverter</option><option value=acc";
+    html += device.type == ModbusDeviceType::AcCharger ? " selected" : "";
+    html += ">Charger</option></select></div>";
+    html += "<div><label for=mbdc" + suffix + ">DC charger</label>";
+    html += "<div class=check><input id=mbdc" + suffix + " name=mbdc" + suffix +
+            " type=checkbox value=1";
+    html += device.dc_charger ? " checked" : "";
+    html += "> fitted</div></div></div>";
+  }
+  html += "<button type=submit>Save plant</button></form>";
 
   html += "<h2>Status</h2><p>";
   html += "Last poll: <code>";
@@ -359,6 +448,65 @@ void handle_update_apply() {
   updater_apply();
 }
 
+void handle_source() {
+  const String choice = s_server.arg("src");
+  if (choice != "server" && choice != "modbus") {
+    send_page("Pick a data source.", true);
+    return;
+  }
+  const DataSource source = choice == "modbus" ? DataSource::Modbus : DataSource::Server;
+  if (!settings_set_source(source)) {
+    send_page("Could not store the data source.", true);
+    return;
+  }
+  // No live switch: the poll task chose its fetch function and its stack size at
+  // boot, and the screen count is fixed once the tileview is built (§D1).
+  send_page("Data source saved. Restart to apply it.", false);
+}
+
+void handle_modbus() {
+  const String host = s_server.arg("mbhost");
+  const long port = s_server.arg("mbport").toInt();
+  const long plant = s_server.arg("mbplant").toInt();
+
+  ModbusDevice devices[SETTINGS_MAX_MODBUS_DEVICES];
+  for (size_t i = 0; i < SETTINGS_MAX_MODBUS_DEVICES; ++i) {
+    const String suffix(static_cast<unsigned>(i));
+    const long id = s_server.arg("mbid" + suffix).toInt();
+    if (id <= 0 || id > 246) {
+      continue;  // an empty or out-of-range slot stays unused
+    }
+    devices[i].slave_id = static_cast<uint8_t>(id);
+    devices[i].type = s_server.arg("mbtype" + suffix) == "acc" ? ModbusDeviceType::AcCharger
+                                                               : ModbusDeviceType::Inverter;
+    // An unchecked box is simply absent from the form, so this reads false.
+    devices[i].dc_charger = s_server.arg("mbdc" + suffix) == "1";
+  }
+
+  if (!settings_set_modbus(host, static_cast<uint16_t>(port), static_cast<uint8_t>(plant),
+                           devices, SETTINGS_MAX_MODBUS_DEVICES)) {
+    send_page("Could not store the plant settings.", true);
+    return;
+  }
+  // Drops the cached slow readings and the midnight baseline, so a new plant does
+  // not inherit the previous one's day.
+  modbus_api_reset();
+  poller_wake();
+  send_page(settings_get().source == DataSource::Modbus
+                ? "Plant settings saved."
+                : "Plant settings saved. Switch the data source to use them.",
+            false);
+}
+
+void handle_restart() {
+  s_server.send(200, "text/html; charset=utf-8",
+                "<!doctype html><p>Restarting. This page will stop responding for a "
+                "few seconds.");
+  s_server.client().flush();
+  delay(200);
+  ESP.restart();
+}
+
 void handle_forget_server() {
   settings_forget_server();
   send_page("Server details cleared.", false);
@@ -380,6 +528,9 @@ void settings_server_begin() {
   }
   s_server.on("/", HTTP_GET, handle_root);
   s_server.on("/save", HTTP_POST, handle_save);
+  s_server.on("/source", HTTP_POST, handle_source);
+  s_server.on("/modbus", HTTP_POST, handle_modbus);
+  s_server.on("/restart", HTTP_POST, handle_restart);
   s_server.on("/test", HTTP_POST, handle_test);
   s_server.on("/display", HTTP_POST, handle_display);
   s_server.on("/update-check", HTTP_POST, handle_update_check);

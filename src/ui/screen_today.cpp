@@ -3,6 +3,7 @@
 #include <stdio.h>
 
 #include "board_config.h"
+#include "chart_band.h"
 #include "format.h"
 #include "theme.h"
 
@@ -13,6 +14,18 @@ namespace {
 // already started closing in.
 constexpr lv_coord_t ROW_WIDTH = 268;
 constexpr lv_coord_t ROWS_TOP = 8;
+
+// The day's PV curve (§D3), in the strip between the last row and the page dots.
+//
+// Behind the headline figure was tried first and abandoned: solar yellow at any
+// opacity that shows the curve also fights white digits sitting on top of it,
+// and the peak lands squarely behind the number around the middle of the day.
+// Down here it costs no legibility and still reads as a sparkline for the total
+// above it. The width is set by the bezel, not by taste — the circle has closed
+// in to about 266 px by the bottom of this strip.
+constexpr lv_coord_t BAND_WIDTH = 258;
+constexpr lv_coord_t BAND_HEIGHT = 38;
+constexpr lv_coord_t BAND_Y = 172;
 
 // Solar is the headline; the rest are a breakdown beneath it. Colours match the
 // legs on screen 1, so a figure means the same thing on both.
@@ -38,6 +51,7 @@ lv_obj_t* s_solar_unit = nullptr;
 lv_obj_t* s_rows_box = nullptr;
 lv_obj_t* s_values[ROW_COUNT] = {};
 lv_obj_t* s_absent = nullptr;
+lv_obj_t* s_band = nullptr;
 
 lv_obj_t* make_label(lv_obj_t* parent, const lv_font_t* font, uint32_t colour) {
   lv_obj_t* label = lv_label_create(parent);
@@ -60,6 +74,16 @@ lv_obj_t* screen_today_create(lv_obj_t* parent) {
   lv_obj_set_size(s_root, PUCK_LCD_WIDTH, PUCK_LCD_HEIGHT);
   lv_obj_set_style_bg_color(s_root, lv_color_hex(PUCK_COLOUR_BG), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(s_root, LV_OPA_COVER, LV_PART_MAIN);
+
+  // First, so every label that follows sits on top of it.
+  s_band = chart_band_create(s_root, HistorySeries::Pv, PUCK_COLOUR_SOLAR);
+  if (s_band != nullptr) {
+    lv_obj_set_size(s_band, BAND_WIDTH, BAND_HEIGHT);
+    lv_obj_align(s_band, LV_ALIGN_CENTER, 0, BAND_Y);
+    // Autoscaled from zero: a quiet day should look quiet rather than be
+    // stretched to fill the band.
+    chart_band_set_range(s_band, 0.0f, 0.0f);
+  }
 
   lv_obj_t* title = make_label(s_root, PUCK_FONT_SMALL, PUCK_COLOUR_MUTED);
   lv_label_set_text(title, "TODAY");
@@ -129,7 +153,17 @@ void screen_today_update(const Snapshot& snapshot) {
     lv_obj_add_flag(s_solar_unit, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(s_rows_box, LV_OBJ_FLAG_HIDDEN);
     lv_obj_clear_flag(s_absent, LV_OBJ_FLAG_HIDDEN);
+    // The PV curve is still true — it comes from live power, not from the day
+    // block — but a chart behind a warning message reads as decoration on an
+    // error. Hidden with the rest of the figures.
+    if (s_band != nullptr) {
+      lv_obj_add_flag(s_band, LV_OBJ_FLAG_HIDDEN);
+    }
     return;
+  }
+  if (s_band != nullptr) {
+    lv_obj_clear_flag(s_band, LV_OBJ_FLAG_HIDDEN);
+    chart_band_refresh(s_band);
   }
   lv_obj_clear_flag(s_solar_name, LV_OBJ_FLAG_HIDDEN);
   lv_obj_clear_flag(s_solar, LV_OBJ_FLAG_HIDDEN);
