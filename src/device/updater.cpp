@@ -11,6 +11,7 @@
 #include <freertos/task.h>
 
 #include "board_config.h"
+#include "net.h"
 #include "settings.h"
 
 namespace {
@@ -42,15 +43,6 @@ constexpr const char* FIRMWARE_URL = "https://markab.github.io/SigenStorPuck/fir
 // requests to GitHub. The "Check now" button bypasses this.
 constexpr uint32_t CHECK_MIN_INTERVAL_MS = 10 * 60 * 1000;
 
-// TLS lives on this stack, for the same reason the poll task's is this size: an
-// under-sized stack shows up as a crash inside the mbedTLS handshake rather than
-// as anything resembling a stack problem.
-constexpr uint32_t CHECK_TASK_STACK = 16384;
-// Below the poll task. A late update check is a non-event; a late reading is what
-// the device is for.
-constexpr UBaseType_t CHECK_TASK_PRIORITY = 2;
-// Core 0, with the other network work. Core 1 belongs to LVGL.
-constexpr BaseType_t CHECK_TASK_CORE = 0;
 
 // Guards s_status, which the background check writes and the settings page reads.
 // Without it the page could copy a String mid-assignment, which is a use-after-free
@@ -58,7 +50,11 @@ constexpr BaseType_t CHECK_TASK_CORE = 0;
 SemaphoreHandle_t s_lock = nullptr;
 UpdateStatus s_status;
 
-volatile bool s_in_flight = false;
+// Set by the settings page, consumed by the poll task. Nothing else coordinates
+// them: a stale read either runs one extra check or defers it by one poll, and
+// neither matters.
+volatile bool s_check_pending = false;
+volatile bool s_apply_pending = false;
 uint32_t s_last_check_ms = 0;
 bool s_ever_checked = false;
 
@@ -96,6 +92,42 @@ bool is_newer(const String& candidate, const String& current) {
   return false;
 }
 
+// HTTPClient returns its own negative codes alongside real HTTP statuses, so a
+// bare number is not enough to report. "manifest HTTP -1" told a user nothing
+// except that something had gone wrong — and -1 is not an HTTP status at all, it
+// is a connection that never opened.
+//
+// The free heap goes in the connection-failure cases on purpose. A TLS handshake
+// against this cert bundle needs tens of kilobytes in one piece, and running out
+// is a leading cause of a refused connection that looks like a network fault.
+String describe_http_error(int code) {
+  switch (code) {
+    case HTTPC_ERROR_CONNECTION_REFUSED:
+      return String("could not open a TLS connection (free heap ") + ESP.getFreeHeap() + " B)";
+    case HTTPC_ERROR_CONNECTION_LOST:
+      return "the connection dropped mid-request";
+    case HTTPC_ERROR_NOT_CONNECTED:
+      return "not connected";
+    case HTTPC_ERROR_SEND_HEADER_FAILED:
+    case HTTPC_ERROR_SEND_PAYLOAD_FAILED:
+      return "could not send the request";
+    case HTTPC_ERROR_NO_HTTP_SERVER:
+      return "no HTTP server answered";
+    case HTTPC_ERROR_TOO_LESS_RAM:
+      return String("not enough memory (free heap ") + ESP.getFreeHeap() + " B)";
+    case HTTPC_ERROR_READ_TIMEOUT:
+      return "GitHub did not answer in time";
+    case HTTPC_ERROR_ENCODING:
+      return "the reply used an encoding we cannot read";
+    default:
+      break;
+  }
+  if (code < 0) {
+    return String("connection failed (") + code + ")";
+  }
+  return String("GitHub answered HTTP ") + code;
+}
+
 void publish(const UpdateStatus& status) {
   if (s_lock == nullptr) {
     s_status = status;
@@ -118,6 +150,20 @@ UpdateStatus perform_check() {
     return result;
   }
 
+  // The same gate sigen_api.cpp has, and for the same reason: a certificate
+  // cannot be validated against a clock that has not been set, so the handshake
+  // fails and reports itself as a refused connection rather than as the clock
+  // problem it is.
+  //
+  // This became much easier to hit when checks started firing as the settings
+  // page opens. A deliberate button press happened minutes after boot; a page
+  // load happens seconds after it, which is a race against NTP.
+  if (!net_time_synced()) {
+    result.state = UpdateState::Failed;
+    result.message = "waiting for the clock — HTTPS cannot be validated yet";
+    return result;
+  }
+
   WiFiClientSecure client;
   attach_bundle(client);
 
@@ -127,7 +173,7 @@ UpdateStatus perform_check() {
   http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
   if (!http.begin(client, MANIFEST_URL)) {
     result.state = UpdateState::Failed;
-    result.message = "could not reach GitHub";
+    result.message = "could not parse the update URL";
     return result;
   }
 
@@ -135,7 +181,7 @@ UpdateStatus perform_check() {
   if (code != HTTP_CODE_OK) {
     http.end();
     result.state = UpdateState::Failed;
-    result.message = String("manifest HTTP ") + code;
+    result.message = describe_http_error(code);
     return result;
   }
 
@@ -164,67 +210,8 @@ UpdateStatus perform_check() {
   return result;
 }
 
-void check_task(void* /*argument*/) {
-  publish(perform_check());
-  s_last_check_ms = millis();
-  s_ever_checked = true;
-  s_in_flight = false;
-  // One check per task. A permanent task would hold 16 KB of stack all day for
-  // something that runs for a second or two when a page is opened.
-  vTaskDelete(nullptr);
-}
 
-}  // namespace
-
-void updater_begin() {
-  if (s_lock == nullptr) {
-    s_lock = xSemaphoreCreateMutex();
-  }
-  UpdateStatus initial;
-  initial.state = UpdateState::Idle;
-  publish(initial);
-}
-
-bool updater_enabled() {
-  return settings_get().check_updates;
-}
-
-void updater_request_check(bool force) {
-  if (!updater_enabled() || s_in_flight) {
-    return;
-  }
-  if (WiFi.status() != WL_CONNECTED) {
-    return;
-  }
-  if (!force && s_ever_checked && (millis() - s_last_check_ms) < CHECK_MIN_INTERVAL_MS) {
-    return;
-  }
-
-  // Set before the task exists, so a second page load arriving in the meantime is
-  // turned away by the guard above rather than starting a second check.
-  s_in_flight = true;
-  UpdateStatus checking = updater_status();
-  checking.state = UpdateState::Checking;
-  checking.message = "";
-  publish(checking);
-
-  if (xTaskCreatePinnedToCore(check_task, "puck_update", CHECK_TASK_STACK, nullptr,
-                              CHECK_TASK_PRIORITY, nullptr, CHECK_TASK_CORE) != pdPASS) {
-    s_in_flight = false;
-    UpdateStatus failed;
-    failed.state = UpdateState::Failed;
-    failed.message = "not enough memory to check";
-    publish(failed);
-  }
-}
-
-void updater_check() {
-  publish(perform_check());
-  s_last_check_ms = millis();
-  s_ever_checked = true;
-}
-
-void updater_apply() {
+void perform_apply() {
   if (updater_status().state != UpdateState::Available) {
     return;
   }
@@ -260,6 +247,67 @@ void updater_apply() {
       break;
   }
   publish(status);
+}
+
+}  // namespace
+
+void updater_begin() {
+  if (s_lock == nullptr) {
+    s_lock = xSemaphoreCreateMutex();
+  }
+  UpdateStatus initial;
+  initial.state = UpdateState::Idle;
+  publish(initial);
+}
+
+bool updater_enabled() {
+  return settings_get().check_updates;
+}
+
+void updater_request_check(bool force) {
+  if (!updater_enabled() || s_check_pending) {
+    return;
+  }
+  if (WiFi.status() != WL_CONNECTED) {
+    return;
+  }
+  if (!force && s_ever_checked && (millis() - s_last_check_ms) < CHECK_MIN_INTERVAL_MS) {
+    return;
+  }
+
+  s_check_pending = true;
+  UpdateStatus checking = updater_status();
+  checking.state = UpdateState::Checking;
+  checking.message = "";
+  publish(checking);
+}
+
+void updater_request_apply() {
+  if (updater_status().state == UpdateState::Available) {
+    s_apply_pending = true;
+  }
+}
+
+void updater_service() {
+  // Apply first. It ends in a reboot, so anything queued behind it is moot.
+  if (s_apply_pending) {
+    s_apply_pending = false;
+    perform_apply();
+    return;
+  }
+  if (!s_check_pending) {
+    return;
+  }
+  s_check_pending = false;
+  publish(perform_check());
+  s_last_check_ms = millis();
+  s_ever_checked = true;
+}
+
+void updater_check() {
+  publish(perform_check());
+  s_last_check_ms = millis();
+  s_ever_checked = true;
 }
 
 UpdateStatus updater_status() {

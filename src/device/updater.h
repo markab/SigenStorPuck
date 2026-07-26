@@ -35,19 +35,42 @@ void updater_begin();
 // De-duplicated and rate-limited, so repeatedly loading or saving the page does
 // not become a burst of requests to GitHub. `force` skips the rate limit, for the
 // explicit "Check now" button.
+//
+// The check itself runs on the poll task, at its next turn — see updater_service().
 void updater_request_check(bool force);
+
+// Runs a requested check, if there is one. Called from the poll task between
+// fetches, and from nowhere else.
+//
+// The check has to happen there rather than on a task of its own, because a
+// second TLS session cannot be afforded. On the server source the poll task is
+// already holding a WiFiClientSecure, and mbedTLS plus this certificate bundle
+// needs tens of kilobytes of contiguous heap; opening another at the same time
+// fails the handshake and reports itself as a refused connection. Observed on a
+// real device with ~55 KB free — and once, the 16 KB task stack could not be
+// allocated either.
+//
+// Running here means the two are never concurrent, costs no second stack, and
+// still keeps the network off the LVGL thread. The price is latency: a check
+// waits for the current poll to finish, so up to one poll interval.
+void updater_service();
 
 // Fetches the release manifest and compares versions, synchronously. Blocks for
 // as long as the network takes, so never call it from a render path — use
 // updater_request_check() there.
 void updater_check();
 
-// Downloads firmware.bin into the spare OTA slot and reboots into it. Only does
-// anything when a check has found a newer version.
-void updater_apply();
+// Asks for firmware.bin to be downloaded into the spare OTA slot and booted into.
+// Only does anything when a check has found a newer version.
+//
+// Requested here, performed on the poll task, for the same reason as the check:
+// the download is a TLS session, and a second one opened while the poll task
+// holds its own exhausts the heap. Returns immediately, so the settings page can
+// answer before the device starts rebooting under it.
+void updater_request_apply();
 
 UpdateStatus updater_status();
 
-// Off by default, so the device makes no outbound call beyond your own server
-// unless you ask it to (PLAN.md §C3).
+// Whether the settings page checks on open. On by default; turning it off stops
+// every outbound call beyond your own network (PLAN.md §C3).
 bool updater_enabled();

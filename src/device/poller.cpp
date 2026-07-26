@@ -6,18 +6,21 @@
 
 #include "modbus_api.h"
 #include "settings.h"
+#include "updater.h"
 
 namespace {
 
 // TLS lives on this stack: mbedTLS handshake buffers are large, and an
 // under-sized stack here shows up as a crash inside the handshake rather than as
 // anything that looks like a stack problem.
+//
+// One size for both sources, even though a Modbus fetch needs nothing like it.
+// The update check runs on this task too (updater_service), and that is a TLS
+// request whichever source the device polls with — so the 6 KB this used to drop
+// to on the Modbus path would have overflowed inside the handshake the first
+// time anyone opened the settings page.
 constexpr uint32_t TASK_STACK_BYTES = 16384;
 
-// The Modbus path never runs a handshake, so it needs nothing like the above.
-// Sized for the register buffer and the usual call depth, with room to spare
-// (PLAN.md §D1).
-constexpr uint32_t TASK_STACK_BYTES_MODBUS = 6144;
 constexpr UBaseType_t TASK_PRIORITY = 3;
 // Core 0. Arduino's loop(), and so LVGL, owns core 1.
 constexpr BaseType_t TASK_CORE = 0;
@@ -101,6 +104,11 @@ void poll_task(void* /*argument*/) {
       }
     }
 
+    // Between fetches, with this task's own client already closed, so an update
+    // check never overlaps a poll's TLS session. That overlap is what exhausted
+    // the heap and made the check report a refused connection.
+    updater_service();
+
     uint32_t wait_ms = settings_get().poll_interval_s * 1000;
     const uint32_t backoff_ms = backoff_for(status.consecutive_failures);
     if (backoff_ms > wait_ms) {
@@ -131,11 +139,10 @@ void poller_begin() {
   }
   s_lock = xSemaphoreCreateMutex();
   const bool modbus = settings_get().source == DataSource::Modbus;
-  const uint32_t stack = modbus ? TASK_STACK_BYTES_MODBUS : TASK_STACK_BYTES;
-  xTaskCreatePinnedToCore(poll_task, "puck_poll", stack, nullptr, TASK_PRIORITY, nullptr,
-                          TASK_CORE);
+  xTaskCreatePinnedToCore(poll_task, "puck_poll", TASK_STACK_BYTES, nullptr, TASK_PRIORITY,
+                          nullptr, TASK_CORE);
   Serial.printf("[poll] task started on core %d, source %s, stack %u\n",
-                static_cast<int>(TASK_CORE), modbus ? "modbus" : "server", stack);
+                static_cast<int>(TASK_CORE), modbus ? "modbus" : "server", TASK_STACK_BYTES);
 }
 
 // Both readers wait for the lock rather than giving up after a timeout.

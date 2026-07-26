@@ -566,14 +566,14 @@ void handle_updates() {
 }
 
 void handle_update_apply() {
-  // Answer first: applying reboots the device, so a reply sent afterwards never
-  // arrives and the browser shows a connection error instead of an explanation.
+  // Answer first, then queue it. The download happens on the poll task, so this
+  // handler no longer has to stay alive through it — and the reply cannot be lost
+  // to the reboot that ends it.
   send_html(200,
             "<!doctype html><p>Installing and restarting. This page will stop "
             "responding for a minute or so.");
   s_server.client().flush();
-  delay(200);
-  updater_apply();
+  updater_request_apply();
 }
 
 void handle_source() {
