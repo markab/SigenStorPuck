@@ -25,8 +25,21 @@ struct UpdateStatus {
 
 void updater_begin();
 
-// Fetches the release manifest and compares versions. Safe to call at any time; it
-// is a network round trip, so not from a render path.
+// Starts a check in the background and returns at once.
+//
+// This is what the settings page calls when it is opened, and it must not block:
+// that handler runs on the same thread as LVGL, and the check's HTTPS round trip
+// would freeze the display for as long as it took — up to fifteen seconds
+// against an unreachable host.
+//
+// De-duplicated and rate-limited, so repeatedly loading or saving the page does
+// not become a burst of requests to GitHub. `force` skips the rate limit, for the
+// explicit "Check now" button.
+void updater_request_check(bool force);
+
+// Fetches the release manifest and compares versions, synchronously. Blocks for
+// as long as the network takes, so never call it from a render path — use
+// updater_request_check() there.
 void updater_check();
 
 // Downloads firmware.bin into the spare OTA slot and reboots into it. Only does

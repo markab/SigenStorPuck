@@ -6,21 +6,61 @@
 #include <WiFiClientSecure.h>
 
 #include <ArduinoJson.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+#include <freertos/task.h>
 
 #include "board_config.h"
 #include "settings.h"
 
 namespace {
 
-// "latest" rather than a pinned tag, so a new release is picked up with no change
-// here. GitHub redirects these to objects.githubusercontent.com, which is why
-// redirects have to be followed.
-constexpr const char* MANIFEST_URL =
-    "https://github.com/markab/SigenStorPuck/releases/latest/download/manifest.json";
-constexpr const char* FIRMWARE_URL =
-    "https://github.com/markab/SigenStorPuck/releases/latest/download/firmware.bin";
+// GitHub Pages, not the release assets.
+//
+// This repository is private, and `releases/latest/download/...` on a private
+// repository needs an authenticated request — an anonymous device gets a flat 404,
+// which is exactly what a fielded Puck reported. The alternative would be putting
+// a GitHub token on every device, which is a real credential guarding far more
+// than firmware, to read a file that is already published.
+//
+// Pages is public and already serves both files, because the installer needs them
+// on one origin anyway (GitHub's release assets send no CORS header, so the web
+// flasher could not fetch them cross-origin either). The device and the installer
+// now read the same manifest from the same place.
+//
+// One consequence worth knowing: Pages deploys from main, so what a device sees as
+// "the latest release" is whatever version main advertises, not the newest tag.
+// The version bump is the gate — pushing code to main without bumping
+// PUCK_FW_VERSION publishes nothing a device will act on.
+//
+// Redirects are still followed: Pages serves these through a CDN.
+constexpr const char* MANIFEST_URL = "https://markab.github.io/SigenStorPuck/manifest.json";
+constexpr const char* FIRMWARE_URL = "https://markab.github.io/SigenStorPuck/firmware.bin";
 
+// Opening the settings page starts a check, and saving any form re-renders it, so
+// without a floor a few minutes of fiddling with settings would be a few dozen
+// requests to GitHub. The "Check now" button bypasses this.
+constexpr uint32_t CHECK_MIN_INTERVAL_MS = 10 * 60 * 1000;
+
+// TLS lives on this stack, for the same reason the poll task's is this size: an
+// under-sized stack shows up as a crash inside the mbedTLS handshake rather than
+// as anything resembling a stack problem.
+constexpr uint32_t CHECK_TASK_STACK = 16384;
+// Below the poll task. A late update check is a non-event; a late reading is what
+// the device is for.
+constexpr UBaseType_t CHECK_TASK_PRIORITY = 2;
+// Core 0, with the other network work. Core 1 belongs to LVGL.
+constexpr BaseType_t CHECK_TASK_CORE = 0;
+
+// Guards s_status, which the background check writes and the settings page reads.
+// Without it the page could copy a String mid-assignment, which is a use-after-free
+// rather than merely a stale reading.
+SemaphoreHandle_t s_lock = nullptr;
 UpdateStatus s_status;
+
+volatile bool s_in_flight = false;
+uint32_t s_last_check_ms = 0;
+bool s_ever_checked = false;
 
 extern "C" const uint8_t rootca_crt_bundle_start[] asm("_binary_x509_crt_bundle_start");
 extern "C" const uint8_t rootca_crt_bundle_end[] asm("_binary_x509_crt_bundle_end");
@@ -56,29 +96,27 @@ bool is_newer(const String& candidate, const String& current) {
   return false;
 }
 
-}  // namespace
-
-void updater_begin() {
-  s_status.state = UpdateState::Idle;
-}
-
-bool updater_enabled() {
-  return settings_get().check_updates;
-}
-
-void updater_check() {
-  if (!updater_enabled()) {
-    s_status.state = UpdateState::Idle;
-    s_status.message = "update checks are turned off";
+void publish(const UpdateStatus& status) {
+  if (s_lock == nullptr) {
+    s_status = status;
     return;
   }
+  if (xSemaphoreTake(s_lock, portMAX_DELAY) == pdTRUE) {
+    s_status = status;
+    xSemaphoreGive(s_lock);
+  }
+}
+
+// Builds a status rather than mutating the shared one, so the whole result becomes
+// visible in a single assignment and the page never sees a half-updated check.
+UpdateStatus perform_check() {
+  UpdateStatus result;
+
   if (WiFi.status() != WL_CONNECTED) {
-    s_status.state = UpdateState::Failed;
-    s_status.message = "no network";
-    return;
+    result.state = UpdateState::Failed;
+    result.message = "no network";
+    return result;
   }
-
-  s_status.state = UpdateState::Checking;
 
   WiFiClientSecure client;
   attach_bundle(client);
@@ -88,17 +126,17 @@ void updater_check() {
   http.setTimeout(10000);
   http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
   if (!http.begin(client, MANIFEST_URL)) {
-    s_status.state = UpdateState::Failed;
-    s_status.message = "could not reach GitHub";
-    return;
+    result.state = UpdateState::Failed;
+    result.message = "could not reach GitHub";
+    return result;
   }
 
   const int code = http.GET();
   if (code != HTTP_CODE_OK) {
     http.end();
-    s_status.state = UpdateState::Failed;
-    s_status.message = String("manifest HTTP ") + code;
-    return;
+    result.state = UpdateState::Failed;
+    result.message = String("manifest HTTP ") + code;
+    return result;
   }
 
   const String body = http.getString();
@@ -106,31 +144,94 @@ void updater_check() {
 
   JsonDocument doc;
   if (deserializeJson(doc, body) != DeserializationError::Ok) {
-    s_status.state = UpdateState::Failed;
-    s_status.message = "manifest did not parse";
+    result.state = UpdateState::Failed;
+    result.message = "manifest did not parse";
+    return result;
+  }
+
+  result.latest_version = doc["version"] | "";
+  if (result.latest_version.isEmpty()) {
+    result.state = UpdateState::Failed;
+    result.message = "manifest has no version";
+    return result;
+  }
+
+  const bool newer = is_newer(result.latest_version, String(PUCK_FW_VERSION));
+  result.state = newer ? UpdateState::Available : UpdateState::UpToDate;
+  result.message = newer ? "" : "This is the latest release.";
+  Serial.printf("[update] latest %s, running %s: %s\n", result.latest_version.c_str(),
+                PUCK_FW_VERSION, newer ? "newer available" : "up to date");
+  return result;
+}
+
+void check_task(void* /*argument*/) {
+  publish(perform_check());
+  s_last_check_ms = millis();
+  s_ever_checked = true;
+  s_in_flight = false;
+  // One check per task. A permanent task would hold 16 KB of stack all day for
+  // something that runs for a second or two when a page is opened.
+  vTaskDelete(nullptr);
+}
+
+}  // namespace
+
+void updater_begin() {
+  if (s_lock == nullptr) {
+    s_lock = xSemaphoreCreateMutex();
+  }
+  UpdateStatus initial;
+  initial.state = UpdateState::Idle;
+  publish(initial);
+}
+
+bool updater_enabled() {
+  return settings_get().check_updates;
+}
+
+void updater_request_check(bool force) {
+  if (!updater_enabled() || s_in_flight) {
+    return;
+  }
+  if (WiFi.status() != WL_CONNECTED) {
+    return;
+  }
+  if (!force && s_ever_checked && (millis() - s_last_check_ms) < CHECK_MIN_INTERVAL_MS) {
     return;
   }
 
-  s_status.latest_version = doc["version"] | "";
-  if (s_status.latest_version.isEmpty()) {
-    s_status.state = UpdateState::Failed;
-    s_status.message = "manifest has no version";
-    return;
-  }
+  // Set before the task exists, so a second page load arriving in the meantime is
+  // turned away by the guard above rather than starting a second check.
+  s_in_flight = true;
+  UpdateStatus checking = updater_status();
+  checking.state = UpdateState::Checking;
+  checking.message = "";
+  publish(checking);
 
-  const bool newer = is_newer(s_status.latest_version, String(PUCK_FW_VERSION));
-  s_status.state = newer ? UpdateState::Available : UpdateState::UpToDate;
-  s_status.message = newer ? "a newer release is available" : "running the latest release";
-  Serial.printf("[update] latest %s, running %s: %s\n", s_status.latest_version.c_str(),
-                PUCK_FW_VERSION, s_status.message.c_str());
+  if (xTaskCreatePinnedToCore(check_task, "puck_update", CHECK_TASK_STACK, nullptr,
+                              CHECK_TASK_PRIORITY, nullptr, CHECK_TASK_CORE) != pdPASS) {
+    s_in_flight = false;
+    UpdateStatus failed;
+    failed.state = UpdateState::Failed;
+    failed.message = "not enough memory to check";
+    publish(failed);
+  }
+}
+
+void updater_check() {
+  publish(perform_check());
+  s_last_check_ms = millis();
+  s_ever_checked = true;
 }
 
 void updater_apply() {
-  if (s_status.state != UpdateState::Available) {
+  if (updater_status().state != UpdateState::Available) {
     return;
   }
-  Serial.printf("[update] downloading %s\n", s_status.latest_version.c_str());
-  s_status.state = UpdateState::Downloading;
+  UpdateStatus status = updater_status();
+  Serial.printf("[update] downloading %s\n", status.latest_version.c_str());
+  status.state = UpdateState::Downloading;
+  publish(status);
 
   WiFiClientSecure client;
   attach_bundle(client);
@@ -145,21 +246,27 @@ void updater_apply() {
   switch (result) {
     case HTTP_UPDATE_OK:
       // Not reached: rebootOnUpdate restarts us.
-      s_status.state = UpdateState::UpToDate;
+      status.state = UpdateState::UpToDate;
       break;
     case HTTP_UPDATE_NO_UPDATES:
-      s_status.state = UpdateState::UpToDate;
-      s_status.message = "server had no update to give";
+      status.state = UpdateState::UpToDate;
+      status.message = "the release had no update to give";
       break;
     case HTTP_UPDATE_FAILED:
     default:
-      s_status.state = UpdateState::Failed;
-      s_status.message = httpUpdate.getLastErrorString();
-      Serial.printf("[update] failed: %s\n", s_status.message.c_str());
+      status.state = UpdateState::Failed;
+      status.message = httpUpdate.getLastErrorString();
+      Serial.printf("[update] failed: %s\n", status.message.c_str());
       break;
   }
+  publish(status);
 }
 
 UpdateStatus updater_status() {
-  return s_status;
+  UpdateStatus copy;
+  if (s_lock != nullptr && xSemaphoreTake(s_lock, portMAX_DELAY) == pdTRUE) {
+    copy = s_status;
+    xSemaphoreGive(s_lock);
+  }
+  return copy;
 }

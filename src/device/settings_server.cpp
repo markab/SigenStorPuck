@@ -86,10 +86,23 @@ String page(const String& message, bool message_is_error) {
   const Settings& settings = settings_get();
   const PollStatus status = poller_status();
 
+  // Kicked off before anything is rendered, so the answer is usually waiting by
+  // the time the page refreshes itself a couple of seconds later. Returns
+  // immediately — the check runs on its own task, because this handler shares a
+  // thread with LVGL and a blocking HTTPS round trip here would freeze the
+  // display.
+  updater_request_check(/*force=*/false);
+  const UpdateStatus update = updater_status();
+
   String html;
   html.reserve(4096);
   html += "<!doctype html><html><head><meta charset=utf-8>";
   html += "<meta name=viewport content='width=device-width,initial-scale=1'>";
+  // Come back for the answer, but only while there is one coming. Any other state
+  // is final, so the page settles instead of reloading under you while you type.
+  if (update.state == UpdateState::Checking || update.state == UpdateState::Downloading) {
+    html += "<meta http-equiv=refresh content=3>";
+  }
   html += "<title>SigenStorPuck</title><style>";
   html += PAGE_STYLE;
   html += "</style></head><body>";
@@ -287,27 +300,57 @@ String page(const String& message, bool message_is_error) {
   html += "></div></div>";
   html += "<button type=submit>Apply</button></form>";
 
-  html += "<h2>Firmware</h2><p>Running <code>" PUCK_FW_VERSION "</code>.";
-  const UpdateStatus update = updater_status();
-  if (!update.latest_version.isEmpty()) {
-    html += " Latest release <code>";
-    html += escape_html(update.latest_version);
-    html += "</code>.";
+  html += "<h2>Firmware</h2><p>Running <code>" PUCK_FW_VERSION "</code>.</p>";
+
+  // The result gets its own paragraph rather than a <br> after the version. A line
+  // break butts the two together; what is running and what is available are two
+  // separate facts and want a gap between them.
+  switch (update.state) {
+    case UpdateState::Checking:
+      html += "<p>Checking GitHub for a newer release&hellip;</p>";
+      break;
+    case UpdateState::Available:
+      // The one state worth shouting about, and the only one that offers a button
+      // that reboots the device.
+      html += "<p class=ok><b>Version ";
+      html += escape_html(update.latest_version);
+      html += " is available.</b></p>";
+      break;
+    case UpdateState::UpToDate:
+      html += "<p>This is the latest release.</p>";
+      break;
+    case UpdateState::Downloading:
+      html += "<p>Downloading&hellip;</p>";
+      break;
+    case UpdateState::Failed:
+      html += "<p class=bad>Could not check: ";
+      html += escape_html(update.message);
+      html += "</p>";
+      break;
+    case UpdateState::Idle:
+      html += updater_enabled() ? "" : "<p>Update checks are turned off.</p>";
+      break;
   }
-  if (update.message.length() > 0) {
-    html += "<br>";
-    html += escape_html(update.message);
-  }
-  html += "</p>";
-  html += "<form method=post action=/update-check><button class=secondary type=submit>";
-  html += updater_enabled() ? "Check for updates" : "Enable update checks and check now";
-  html += "</button></form>";
+
   if (update.state == UpdateState::Available) {
     html += "<form method=post action=/update-apply><button type=submit>";
     html += "Install ";
     html += escape_html(update.latest_version);
     html += " and restart</button></form>";
   }
+
+  html += "<form method=post action=/update-check><button class=secondary type=submit>";
+  html += "Check now</button></form>";
+
+  html += "<form method=post action=/updates>";
+  html += "<label class=opt><input type=checkbox name=enabled value=1";
+  html += updater_enabled() ? " checked" : "";
+  html += "> Check for a newer release when this page is opened</label>";
+  // Said plainly because it is the only thing on this page that talks to anywhere
+  // other than your own network.
+  html += "<p class='hint gap'>The only outbound call this device makes. "
+          "Installing is always manual, and always reboots.</p>";
+  html += "<button type=submit>Save</button></form>";
 
   html += "<h2>Danger</h2>";
   // First of the three, and ordered by what each costs you: a restart loses nothing,
@@ -497,13 +540,29 @@ void handle_display() {
 }
 
 void handle_update_check() {
-  // Ticking the box is implied by asking: someone pressing "check for updates" has
-  // consented to the outbound call that requires.
+  // Pressing the button is asking for a check whether or not the automatic one is
+  // switched on, so it is honoured either way — but it no longer flips the setting
+  // as a side effect. That behaviour changed a stored preference from a button
+  // labelled as doing something else, and left no way to change it back.
   if (!updater_enabled()) {
-    settings_set_check_updates(true);
+    updater_check();  // synchronous: nothing else will do it for us
+    send_page("", false);
+    return;
   }
-  updater_check();
+  updater_request_check(/*force=*/true);
   send_page("", false);
+}
+
+void handle_updates() {
+  const bool enabled = s_server.arg("enabled") == "1";
+  if (!settings_set_check_updates(enabled)) {
+    send_page("Could not store the update setting.", true);
+    return;
+  }
+  send_page(enabled ? "This page will check for a newer release when it is opened."
+                    : "Update checks turned off. This device now makes no outbound calls "
+                      "beyond your own network.",
+            false);
 }
 
 void handle_update_apply() {
@@ -619,6 +678,7 @@ void settings_server_begin() {
   s_server.on("/test", HTTP_POST, handle_test);
   s_server.on("/display", HTTP_POST, handle_display);
   s_server.on("/update-check", HTTP_POST, handle_update_check);
+  s_server.on("/updates", HTTP_POST, handle_updates);
   s_server.on("/update-apply", HTTP_POST, handle_update_apply);
   s_server.on("/forget-server", HTTP_POST, handle_forget_server);
   s_server.on("/forget-wifi", HTTP_POST, handle_forget_wifi);

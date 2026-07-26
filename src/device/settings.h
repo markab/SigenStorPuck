@@ -78,9 +78,16 @@ struct Settings {
   uint32_t rotate_s = 0;
   // How often the sweep band runs, in minutes; 0 = off.
   uint32_t sweep_min = 240;
-  // Off by default: with this false the device makes no outbound call beyond your
-  // own server (PLAN.md §C3).
-  bool check_updates = false;
+  // Whether opening the settings page checks GitHub for a newer release.
+  //
+  // On by default. It was off, guarding a check that only ever happened when you
+  // pressed a button — consent for something you were already asking for. Now the
+  // page checks on its own, so the setting finally means something, and it is a
+  // real switch you can turn back off rather than a one-way flag (PLAN.md §C3).
+  //
+  // Turning it off stops every outbound call beyond your own server. Installing
+  // is a separate, manual act either way.
+  bool check_updates = true;
 };
 
 // Loads from NVS, falling back to defaults. Safe to call before WiFi is up.
