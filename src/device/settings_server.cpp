@@ -146,7 +146,7 @@ String page(const String& message, bool message_is_error) {
   // riddle to anyone who had not just written settings_clean_hostname(). The
   // constraint still holds — that function strips anything else — and the reader
   // still finds out, because saving reports the name it actually stored.
-  html += "</code>. Takes effect after a restart.</p>";
+  html += "</code>.<br>Takes effect after a restart.</p>";
   html += "<button type=submit>Save</button></form>";
 
   // Both sources are configurable whichever one is running, so the other can be
