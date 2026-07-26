@@ -217,6 +217,20 @@ String page(const String& message, bool message_is_error) {
   }
   html += "</p>";
 
+  html += "<h2>Network</h2><form method=post action=/hostname>";
+  html += "<label for=host>Device name</label>";
+  html += "<input id=host name=host maxlength=32 value='";
+  html += escape_html(settings.hostname);
+  html += "' placeholder='sigenstorpuck'>";
+  html += "<p class=hint>Reachable at <code>";
+  html += escape_html(settings.hostname);
+  html += ".local</code> and at <code>";
+  html += escape_html(net_ip());
+  // Worth stating plainly: the name on this page is the stored one, which is not
+  // necessarily the one answering right now.
+  html += "</code>. Letters, digits and hyphens; takes effect after a restart.</p>";
+  html += "<button type=submit>Save name</button></form>";
+
   html += "<h2>Display</h2><form method=post action=/display><div class=row>";
   html += "<div><label for=bright>Brightness (0-255)</label><input id=bright name=bright type=number min=10 max=255 value=";
   html += settings.brightness;
@@ -464,6 +478,22 @@ void handle_source() {
   send_page("Data source saved. Restart to apply it.", false);
 }
 
+void handle_hostname() {
+  const String cleaned = settings_clean_hostname(s_server.arg("host"));
+  if (cleaned.isEmpty()) {
+    send_page("A device name needs at least one letter or digit.", true);
+    return;
+  }
+  if (!settings_set_hostname(cleaned)) {
+    send_page("Could not store the device name.", true);
+    return;
+  }
+  // Echoing the cleaned name back matters: "Front Room" is stored as
+  // "front-room", and someone who is not told that will look for the wrong
+  // address after the restart.
+  send_page("Device name saved as \"" + cleaned + "\". Restart to apply it.", false);
+}
+
 void handle_modbus() {
   const String host = s_server.arg("mbhost");
   const long port = s_server.arg("mbport").toInt();
@@ -529,6 +559,7 @@ void settings_server_begin() {
   s_server.on("/", HTTP_GET, handle_root);
   s_server.on("/save", HTTP_POST, handle_save);
   s_server.on("/source", HTTP_POST, handle_source);
+  s_server.on("/hostname", HTTP_POST, handle_hostname);
   s_server.on("/modbus", HTTP_POST, handle_modbus);
   s_server.on("/restart", HTTP_POST, handle_restart);
   s_server.on("/test", HTTP_POST, handle_test);

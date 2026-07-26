@@ -27,10 +27,11 @@ The EV leg only appears when something is charging, so nothing moves around when
 1. Plug the Puck into a computer and open the link above in **Chrome or Edge**. It
    flashes over WebSerial — nothing to download, no drivers. Safari and Firefox cannot
    do it, and neither can anything on iOS.
-2. On first boot it raises a WiFi access point called `SigenStorPuck-Setup`. Join it and
-   pick your network.
-3. Open `http://sigenstorpuck.local/` and paste the enrolment URL from SigenStor
-   Display's **Admin → Kiosk devices**.
+2. On first boot it raises a WiFi access point named after the device, like
+   `SigenStorPuck-DB41E4`. The screen shows which one. Join it, pick your network, and —
+   if this is your second Puck — give it a name of its own while you are there.
+3. Open `http://sigenstorpuck.local/`, or the IP address shown on the screen, and paste
+   the enrolment URL from SigenStor Display's **Admin → Kiosk devices**.
 
 After that it updates itself from releases.
 

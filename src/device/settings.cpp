@@ -20,6 +20,7 @@ constexpr const char* KEY_ROTATE = "rotate_s";
 constexpr const char* KEY_SWEEP = "sweep_min";
 constexpr const char* KEY_UPDATES = "updates";
 constexpr const char* KEY_SOURCE = "source";
+constexpr const char* KEY_HOSTNAME = "hostname";
 constexpr const char* KEY_MB_HOST = "mb_host";
 constexpr const char* KEY_MB_PORT = "mb_port";
 constexpr const char* KEY_MB_PLANT = "mb_plant";
@@ -57,6 +58,12 @@ void settings_begin() {
   s_settings.check_updates = prefs.getBool(KEY_UPDATES, s_settings.check_updates);
 
   s_settings.source = prefs.getUChar(KEY_SOURCE, 0) == 1 ? DataSource::Modbus : DataSource::Server;
+  if (prefs.isKey(KEY_HOSTNAME)) {
+    const String stored = prefs.getString(KEY_HOSTNAME, "");
+    if (!stored.isEmpty()) {
+      s_settings.hostname = stored;
+    }
+  }
   // Guarded by isKey rather than left to the default argument: Preferences logs a
   // missing key at ERROR level, and two red lines on the first boot of every
   // device that has never used Modbus look like a fault when they are not.
@@ -150,6 +157,47 @@ bool settings_set_source(DataSource source) {
   s_settings.source = source;
   Serial.printf("[settings] source set to %s (applies on next boot)\n",
                 source == DataSource::Modbus ? "modbus" : "server");
+  return true;
+}
+
+String settings_clean_hostname(const String& raw) {
+  String out;
+  out.reserve(raw.length());
+  for (size_t i = 0; i < raw.length() && out.length() < SETTINGS_MAX_HOSTNAME; ++i) {
+    char c = raw[i];
+    if (c >= 'A' && c <= 'Z') {
+      c = static_cast<char>(c - 'A' + 'a');
+    }
+    const bool allowed = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9');
+    if (allowed) {
+      out += c;
+    } else if (!out.isEmpty() && out[out.length() - 1] != '-') {
+      // Any other character becomes a single separator, so "Front Room  Puck"
+      // does not come out as "front-room--puck".
+      out += '-';
+    }
+  }
+  while (!out.isEmpty() && out[out.length() - 1] == '-') {
+    out.remove(out.length() - 1);
+  }
+  return out;
+}
+
+bool settings_set_hostname(const String& hostname) {
+  if (hostname.isEmpty() || hostname.length() > SETTINGS_MAX_HOSTNAME) {
+    return false;
+  }
+  Preferences prefs;
+  if (!prefs.begin(NAMESPACE, /*readOnly=*/false)) {
+    return false;
+  }
+  const bool ok = prefs.putString(KEY_HOSTNAME, hostname) > 0;
+  prefs.end();
+  if (!ok) {
+    return false;
+  }
+  s_settings.hostname = hostname;
+  Serial.printf("[settings] hostname set to %s (applies on next boot)\n", hostname.c_str());
   return true;
 }
 

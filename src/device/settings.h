@@ -35,8 +35,20 @@ struct ModbusDevice {
 // a fixed shape rather than a list that grows.
 static constexpr size_t SETTINGS_MAX_MODBUS_DEVICES = 4;
 
+// Enough for a descriptive name without running past what mDNS is comfortable
+// advertising, and short enough to read off a 466 px screen.
+static constexpr size_t SETTINGS_MAX_HOSTNAME = 32;
+
 struct Settings {
   DataSource source = DataSource::Server;
+
+  // The device's name on the network: `<hostname>.local` and the WiFi DHCP name.
+  //
+  // Default unchanged from when it was hardcoded, so an existing device keeps
+  // answering on sigenstorpuck.local and every bookmark and doc reference still
+  // works. A second Puck on the same LAN is the reason this is editable at all —
+  // two devices claiming one mDNS name is a coin toss over which you reach.
+  String hostname = "sigenstorpuck";
 
   // "https://host" or "http://192.168.1.10:8000", no trailing slash.
   String base_url;
@@ -82,6 +94,21 @@ bool settings_set_server(const String& base_url, const String& token);
 
 // Which data source to use on the next boot.
 bool settings_set_source(DataSource source);
+
+// The device's network name. Takes effect on the next boot: mDNS and the DHCP
+// hostname are both registered once, when the network comes up.
+//
+// Returns false if NVS rejected the write or the name was unusable. Use
+// settings_clean_hostname() first if the text came from a human.
+bool settings_set_hostname(const String& hostname);
+
+// Reduces free text to something that can be a DNS label: lowercased, anything
+// that is not a letter, digit or hyphen turned into a hyphen, runs collapsed,
+// leading and trailing hyphens removed, truncated to SETTINGS_MAX_HOSTNAME.
+//
+// Returns an empty string when nothing usable is left, which the caller should
+// treat as a rejection rather than silently storing.
+String settings_clean_hostname(const String& raw);
 
 // Stores the Modbus endpoint and device list. `count` slots are taken from
 // `devices`; the rest are cleared, so removing a device is a matter of sending
