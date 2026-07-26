@@ -26,7 +26,14 @@ bool s_running = false;
 const char* PAGE_STYLE =
     "body{font-family:system-ui,sans-serif;max-width:34rem;margin:2rem auto;padding:0 1rem;"
     "background:#111;color:#eee}"
-    "h1{font-size:1.3rem}h2{font-size:1rem;margin-top:2rem;color:#9ab}"
+    "h1{font-size:1.3rem}"
+    // A hairline above every heading. Sections are runs of sibling elements rather
+    // than wrapped blocks, so the heading is the only place a divider can go without
+    // adding a div around each of the seven sections. #333 is the secondary-button
+    // grey already in use, so it reads as part of the palette rather than a new
+    // colour. Uniform, which also separates the header block from the first section.
+    "h2{font-size:1rem;margin-top:2.2rem;padding-top:1.2rem;"
+    "border-top:1px solid #333;color:#9ab}"
     // `select` belongs here with the text fields. Left out, it falls back to
     // inline flow and lands on the same line as its own label, which is what put
     // the Type dropdown on top of the labels either side of it.
@@ -53,7 +60,11 @@ const char* PAGE_STYLE =
     ".row{display:flex;gap:.75rem;align-items:end}.row>*{flex:1}.row>.wide{flex:2}"
     "code{background:#000;padding:.15rem .35rem;border-radius:.25rem}"
     ".ok{color:#30d158}.bad{color:#ff9f0a}"
-    "p.hint{font-size:.8rem;color:#888;margin-top:-.6rem}";
+    "p.hint{font-size:.8rem;color:#888;margin-top:-.6rem}"
+    // The negative margin above is what makes a hint hug the field it describes.
+    // A hint that follows a group of controls rather than a single one needs the
+    // opposite, or it clings to the last label and looks like part of it.
+    "p.hint.gap{margin-top:.6rem}";
 
 String escape_html(const String& text) {
   String out;
@@ -87,6 +98,28 @@ String page(const String& message, bool message_is_error) {
   html += escape_html(net_ip());
   html += "</p>";
 
+  // The device's own condition, as header context rather than a section of its own.
+  // Neither line is about reaching the server — the clock exists so TLS can be
+  // validated, and this is the Puck's battery, not the house's — so they belong
+  // beside the version and the address rather than next to the poll result.
+  html += "<p class=hint>Clock: ";
+  html += net_time_synced() ? "set from NTP" : "not set (HTTPS will fail)";
+  const PowerStatus power = power_status();
+  html += " &middot; power: ";
+  if (!power.pmic_ok) {
+    html += "PMIC not detected";
+  } else if (!power.battery_present) {
+    html += power.usb_present ? "USB, no battery fitted" : "no battery fitted";
+  } else {
+    if (power.percent >= 0) {
+      html += String(power.percent) + "% (" + power.millivolts + " mV)";
+    } else {
+      html += String(power.millivolts) + " mV (gauge not reporting)";
+    }
+    html += power.charging ? ", charging" : (power.usb_present ? ", on USB" : ", on battery");
+  }
+  html += "</p>";
+
   if (message.length() > 0) {
     html += "<p class=";
     html += message_is_error ? "bad" : "ok";
@@ -94,6 +127,27 @@ String page(const String& message, bool message_is_error) {
     html += escape_html(message);
     html += "</p>";
   }
+
+  // First, because it is what tells you which Puck you are looking at — worth
+  // settling before anything else when two of them are being set up together.
+  html += "<h2>Network</h2><form method=post action=/hostname>";
+  html += "<label for=host>Device name</label>";
+  html += "<input id=host name=host maxlength=32 value='";
+  html += escape_html(settings.hostname);
+  html += "' placeholder='sigenstorpuck'>";
+  html += "<p class=hint>Reachable at <code>";
+  html += escape_html(settings.hostname);
+  html += ".local</code> and at <code>";
+  html += escape_html(net_ip());
+  // Worth stating plainly: the name on this page is the stored one, which is not
+  // necessarily the one answering right now.
+  //
+  // The old hint also spelled out "Letters, digits and hyphens", which read as a
+  // riddle to anyone who had not just written settings_clean_hostname(). The
+  // constraint still holds — that function strips anything else — and the reader
+  // still finds out, because saving reports the name it actually stored.
+  html += "</code>. Takes effect after a restart.</p>";
+  html += "<button type=submit>Save</button></form>";
 
   // Both sources are configurable whichever one is running, so the other can be
   // set up before switching to it — a device that had to be switched first and
@@ -105,12 +159,9 @@ String page(const String& message, bool message_is_error) {
   html += "> SigenStor Display server</label>";
   html += "<label class=opt><input type=radio name=src value=modbus";
   html += modbus ? " checked" : "";
-  html += "> Plant over Modbus (LAN only, no cost screen)</label>";
-  html += "<p class=hint>Takes effect after a restart, like orientation.</p>";
+  html += "> Plant over Modbus (LAN only)</label>";
+  html += "<p class='hint gap'>Takes effect after a restart.</p>";
   html += "<button type=submit>Save</button></form>";
-  html += "<form method=post action=/restart><button class=secondary type=submit>";
-  html += "Restart now</button></form>";
-
   html += "<h2>Server</h2>";
   if (modbus) {
     html += "<p class=hint>Not in use: the data source is set to Modbus.</p>";
@@ -133,6 +184,25 @@ String page(const String& message, bool message_is_error) {
   html += "'>";
   html += "<p class=hint>Leave blank to keep the stored token.</p>";
   html += "<button type=submit>Save</button></form>";
+
+  // Between the two buttons, which is where it is wanted: pressing Test connection
+  // and then scrolling three sections down to find out what happened was the whole
+  // problem with keeping this in a Status section of its own.
+  html += "<p class='hint gap'>Last poll: <code>";
+  html += fetch_result_name(status.last_result);
+  html += "</code>";
+  if (status.last_http_status != 0) {
+    html += " (HTTP ";
+    html += status.last_http_status;
+    html += ")";
+  }
+  if (status.consecutive_failures > 0) {
+    // Only when there are any. A permanent "0" is noise directly under a button.
+    html += ", ";
+    html += status.consecutive_failures;
+    html += " consecutive failures";
+  }
+  html += "</p>";
 
   html += "<form method=post action=/test><button class=secondary type=submit>";
   html += "Test connection</button></form>";
@@ -186,50 +256,7 @@ String page(const String& message, bool message_is_error) {
     html += device.dc_charger ? " checked" : "";
     html += "> fitted</div></div></div>";
   }
-  html += "<button type=submit>Save plant</button></form>";
-
-  html += "<h2>Status</h2><p>";
-  html += "Last poll: <code>";
-  html += fetch_result_name(status.last_result);
-  html += "</code>";
-  if (status.last_http_status != 0) {
-    html += " (HTTP ";
-    html += status.last_http_status;
-    html += ")";
-  }
-  html += "<br>Consecutive failures: ";
-  html += status.consecutive_failures;
-  html += "<br>Clock: ";
-  html += net_time_synced() ? "set from NTP" : "not set (HTTPS will fail)";
-  const PowerStatus power = power_status();
-  html += "<br>Puck power: ";
-  if (!power.pmic_ok) {
-    html += "PMIC not detected";
-  } else if (!power.battery_present) {
-    html += power.usb_present ? "USB, no battery fitted" : "no battery fitted";
-  } else {
-    if (power.percent >= 0) {
-      html += String(power.percent) + "% (" + power.millivolts + " mV)";
-    } else {
-      html += String(power.millivolts) + " mV (gauge not reporting)";
-    }
-    html += power.charging ? ", charging" : (power.usb_present ? ", on USB" : ", on battery");
-  }
-  html += "</p>";
-
-  html += "<h2>Network</h2><form method=post action=/hostname>";
-  html += "<label for=host>Device name</label>";
-  html += "<input id=host name=host maxlength=32 value='";
-  html += escape_html(settings.hostname);
-  html += "' placeholder='sigenstorpuck'>";
-  html += "<p class=hint>Reachable at <code>";
-  html += escape_html(settings.hostname);
-  html += ".local</code> and at <code>";
-  html += escape_html(net_ip());
-  // Worth stating plainly: the name on this page is the stored one, which is not
-  // necessarily the one answering right now.
-  html += "</code>. Letters, digits and hyphens; takes effect after a restart.</p>";
-  html += "<button type=submit>Save name</button></form>";
+  html += "<button type=submit>Save</button></form>";
 
   html += "<h2>Display</h2><form method=post action=/display><div class=row>";
   html += "<div><label for=bright>Brightness (0-255)</label><input id=bright name=bright type=number min=10 max=255 value=";
@@ -283,6 +310,11 @@ String page(const String& message, bool message_is_error) {
   }
 
   html += "<h2>Danger</h2>";
+  // First of the three, and ordered by what each costs you: a restart loses nothing,
+  // forgetting the token means re-enrolling, forgetting WiFi means starting over at
+  // the captive portal.
+  html += "<form method=post action=/restart><button class=secondary type=submit>";
+  html += "Restart Device</button></form>";
   html += "<form method=post action=/forget-server><button class=secondary type=submit>";
   html += "Forget server and token</button></form>";
   html += "<form method=post action=/forget-wifi><button class=secondary type=submit>";
@@ -344,7 +376,8 @@ void handle_save() {
   }
   // Try the new details straight away rather than after a backoff.
   poller_wake();
-  send_page("Saved. Testing in the background — see Status.", false);
+  send_page("Saved. Testing in the background — the result appears above Test connection.",
+            false);
 }
 
 void handle_test() {
