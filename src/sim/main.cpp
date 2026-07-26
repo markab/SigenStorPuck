@@ -375,8 +375,11 @@ void build_debug_view() {
   lv_obj_t* hint = lv_label_create(screen);
   lv_obj_set_style_text_font(hint, PUCK_FONT_SMALL, LV_PART_MAIN);
   lv_obj_set_style_text_color(hint, lv_color_hex(COLOUR_MUTED), LV_PART_MAIN);
-  lv_label_set_text(hint, "n/p fixture  [ ] screen  , . tilt  d dump  esc quit");
-  lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -40);
+  lv_obj_set_style_text_align(hint, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+  lv_label_set_text(hint,
+                    "n/p fixture   [ ] screen   , . tilt\n"
+                    "o overlay   d dump   esc quit");
+  lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -34);
 }
 
 // Builds both views once and swaps visibility, rather than tearing down and
@@ -387,6 +390,10 @@ void build_views() {
   lv_obj_clear_flag(screen, LV_OBJ_FLAG_SCROLLABLE);
 
   ui_create(screen, s_with_cost);
+
+  // A stand-in for what net_hostname()/net_ip() return on the device, so the
+  // settings screen and its QR code render here rather than only on hardware.
+  ui_set_address("sigenstorpuck.local", "192.168.1.100");
 
   s_debug_root = lv_obj_create(screen);
   lv_obj_remove_style_all(s_debug_root);
@@ -408,8 +415,35 @@ void apply_view_visibility() {
   }
 }
 
+// The overlays are driven by device state — WiFi, provisioning, a revoked token
+// — none of which a fixture can express. Cycling them from the keyboard is the
+// only way to lay them out without flashing a deliberately broken device.
+void cycle_overlay() {
+  static int which = 0;
+  which = (which + 1) % 3;
+  switch (which) {
+    case 1:
+      ui_set_overlay("Not configured",
+                     "Scan, or open http://sigenstorpuck.local/\n"
+                     "or http://192.168.1.100/\n"
+                     "and paste the enrolment URL",
+                     true);
+      break;
+    case 2:
+      ui_set_overlay("WiFi setup", "Join the WiFi network\nSigenStorPuck setup");
+      break;
+    default:
+      ui_set_overlay(nullptr, nullptr);
+      break;
+  }
+}
+
 void handle_key(int key) {
   const size_t count = s_fixture_paths.size();
+  if (key == 'o') {
+    cycle_overlay();
+    return;
+  }
   if (key == 'd') {
     s_show_debug = !s_show_debug;
     apply_view_visibility();
@@ -479,6 +513,23 @@ int run_screenshot_pass(const std::string& output_directory) {
       }
     }
   }
+
+  // The overlays are not screens, but they are full-screen layouts with a QR
+  // code and three lines of text to fit on a circle — exactly the thing this
+  // pass exists to check. Once each, over whichever fixture is loaded.
+  for (int i = 1; i <= 2; ++i) {
+    cycle_overlay();
+    lv_refr_now(nullptr);
+    char path[512];
+    snprintf(path, sizeof(path), "%s/overlay_%d.bmp", output_directory.c_str(), i);
+    if (sim_backend_save_bmp(path)) {
+      printf("[sim] wrote %s\n", path);
+    } else {
+      ++failures;
+    }
+  }
+  cycle_overlay();
+
   return failures;
 }
 

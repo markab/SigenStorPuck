@@ -36,18 +36,21 @@ constexpr uint32_t POWER_POLL_MS = 5000;
 // rewritten into LVGL 4 times a second.
 char s_overlay_title[48] = {};
 char s_overlay_detail[96] = {};
+bool s_overlay_qr = false;
 
-void set_overlay(const char* title, const char* detail) {
+void set_overlay(const char* title, const char* detail, bool with_qr = false) {
   const bool same = strncmp(s_overlay_title, title == nullptr ? "" : title,
                             sizeof(s_overlay_title)) == 0 &&
                     strncmp(s_overlay_detail, detail == nullptr ? "" : detail,
-                            sizeof(s_overlay_detail)) == 0;
+                            sizeof(s_overlay_detail)) == 0 &&
+                    with_qr == s_overlay_qr;
   if (same) {
     return;
   }
   snprintf(s_overlay_title, sizeof(s_overlay_title), "%s", title == nullptr ? "" : title);
   snprintf(s_overlay_detail, sizeof(s_overlay_detail), "%s", detail == nullptr ? "" : detail);
-  ui_set_overlay(title, detail);
+  s_overlay_qr = with_qr;
+  ui_set_overlay(title, detail, with_qr);
 
   // Logged because it is the one part of the UI you cannot ask the device about
   // over the network, and it is exactly what you want to know when someone says
@@ -66,6 +69,20 @@ void set_overlay(const char* title, const char* detail) {
 void refresh_overlay(bool have_snapshot, const PollStatus& status) {
   static String detail;
 
+  // Both addresses, not whichever one happens to be available.
+  //
+  // The .local name is the nicer one to type, but mDNS resolution is not
+  // universal — Android has never supported it properly, and plenty of routers
+  // drop multicast between bands or VLANs. Showing only the name strands anyone
+  // whose phone cannot resolve it, on the one screen whose entire job is to tell
+  // them where to go. The IP always works, so it is always shown.
+  const String host = net_hostname();
+  const String ip = net_ip();
+
+  // Fed to the UI before the switch below: the last screen shows this whether or
+  // not an overlay is up, and both are empty strings until WiFi is joined.
+  ui_set_address(host.c_str(), ip.c_str());
+
   switch (net_state()) {
     case NetState::Portal:
       detail = String("Join the WiFi network\n") + net_setup_ap_name();
@@ -81,15 +98,6 @@ void refresh_overlay(bool have_snapshot, const PollStatus& status) {
 
   const bool modbus = settings_get().source == DataSource::Modbus;
 
-  // Both addresses, not whichever one happens to be available.
-  //
-  // The .local name is the nicer one to type, but mDNS resolution is not
-  // universal — Android has never supported it properly, and plenty of routers
-  // drop multicast between bands or VLANs. Showing only the name strands anyone
-  // whose phone cannot resolve it, on the one screen whose entire job is to tell
-  // them where to go. The IP always works, so it is always shown.
-  const String host = net_hostname();
-  const String ip = net_ip();
   String where = "http://";
   if (!host.isEmpty()) {
     where += host;
@@ -99,13 +107,15 @@ void refresh_overlay(bool have_snapshot, const PollStatus& status) {
   where += "/";
 
   if (!settings_is_provisioned()) {
-    detail = "Open ";
+    // The code carries the same address as the text under it, so a phone can
+    // skip the typing and everyone else still has something to read.
+    detail = "Scan, or open ";
     detail += where;
     // Different instruction per source: there is no enrolment URL to paste when
     // the Puck talks to the plant directly, and telling someone to find one
     // would send them looking for something that does not exist.
     detail += modbus ? "\nand set the plant's IP address" : "\nand paste the enrolment URL";
-    set_overlay("Not configured", detail.c_str());
+    set_overlay("Not configured", detail.c_str(), true);
     return;
   }
 

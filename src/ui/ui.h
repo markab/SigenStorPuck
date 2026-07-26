@@ -1,5 +1,6 @@
-// The whole user interface: four screens in a horizontally-swiped tileview,
-// with a page-dot indicator (docs/PLAN.md §B4).
+// The whole user interface: the data screens in a horizontally-swiped tileview
+// followed by the settings-address screen, with a page-dot indicator
+// (docs/PLAN.md §B4).
 //
 // One entry point in and one snapshot in, so neither the device's main loop nor
 // the simulator needs to know how many screens there are.
@@ -26,9 +27,17 @@ void ui_update(const Snapshot& snapshot);
 // A full-screen message covering the tileview: WiFi setup, "not configured",
 // "re-enrol needed", "waiting for data". Pass nullptr as the title to hide it.
 //
-// An overlay rather than a fifth screen, because these states are not something
-// to swipe to — they are the only thing worth showing while they last.
-void ui_set_overlay(const char* title, const char* detail);
+// An overlay rather than a screen of its own, because these states are not
+// something to swipe to — they are the only thing worth showing while they last.
+//
+// `with_qr` adds the settings-page QR code from ui_set_address(), for the states
+// whose instruction is "go to the settings page".
+void ui_set_overlay(const char* title, const char* detail, bool with_qr = false);
+
+// Where this device's own settings page lives, for the QR code and the address
+// lines on the last screen. `host` is the mDNS name and may be empty; `ip` is
+// the dotted address, empty until WiFi is up. Cheap to call every refresh.
+void ui_set_address(const char* host, const char* ip);
 
 // The Puck's own battery, as opposed to the house battery. Hidden unless the
 // device is genuinely running on battery.

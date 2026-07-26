@@ -25,7 +25,7 @@ constexpr lv_coord_t ROWS_TOP = 8;
 // in to about 266 px by the bottom of this strip.
 constexpr lv_coord_t BAND_WIDTH = 258;
 constexpr lv_coord_t BAND_HEIGHT = 38;
-constexpr lv_coord_t BAND_Y = 172;
+constexpr lv_coord_t BAND_Y = 164;
 
 // Solar is the headline; the rest are a breakdown beneath it. Colours match the
 // legs on screen 1, so a figure means the same thing on both.

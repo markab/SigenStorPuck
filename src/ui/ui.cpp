@@ -1,10 +1,15 @@
 #include "ui.h"
 
+#include <stdio.h>
+#include <string.h>
+
 #include "board_config.h"
 #include "history.h"
+#include "qr_block.h"
 #include "screen_battery.h"
 #include "screen_cost.h"
 #include "screen_power.h"
+#include "screen_settings.h"
 #include "screen_today.h"
 #include "theme.h"
 
@@ -17,13 +22,15 @@ namespace {
 //
 // Every caller outside this file already goes through ui_screen_count(), which
 // is what makes this a contained change.
-constexpr int MAX_SCREENS = 4;
+constexpr int MAX_SCREENS = 5;
 int s_screen_count = MAX_SCREENS;
 bool s_has_cost = true;
 
-// Just above the bottom of the bezel, below everything the screens draw. Screen
-// 1's state-of-charge readout was moved inboard to make room.
-constexpr lv_coord_t DOTS_Y = 212;
+// Below everything the screens draw, but held clear of the bezel: the outermost
+// dot of a five-dot row sits at x=42, where screen 1's state-of-charge arc has
+// curved in to y=218. Any lower and the row runs into the end of the arc — which
+// is what it used to do. Screen 3's day band was raised to keep its own clearance.
+constexpr lv_coord_t DOTS_Y = 202;
 constexpr lv_coord_t DOT_SIZE = 7;
 constexpr lv_coord_t DOT_GAP = 10;
 
@@ -37,6 +44,15 @@ uint32_t s_sweep_minutes = 0;
 lv_obj_t* s_overlay = nullptr;
 lv_obj_t* s_overlay_title = nullptr;
 lv_obj_t* s_overlay_detail = nullptr;
+lv_obj_t* s_overlay_qr = nullptr;
+
+// The address the overlay's QR points at, kept so the code is re-encoded when
+// the address changes rather than every time the overlay text is set.
+char s_qr_url[80] = {};
+
+// The overlay's own QR card, small enough to leave room for a title above and
+// three lines of instruction below.
+constexpr lv_coord_t OVERLAY_QR_PX = 132;
 
 void highlight_active_dot() {
   lv_obj_t* active = lv_tileview_get_tile_act(s_tileview);
@@ -132,9 +148,13 @@ lv_obj_t* ui_create(lv_obj_t* parent, bool with_cost_screen) {
   screen_power_create(s_tiles[0]);
   screen_battery_create(s_tiles[1]);
   screen_today_create(s_tiles[2]);
+  int next = 3;
   if (s_has_cost) {
-    screen_cost_create(s_tiles[3]);
+    screen_cost_create(s_tiles[next++]);
   }
+  // Always last, and always present: it is how you get back to the settings page
+  // on a device that is working, when nothing is covering the screen to tell you.
+  screen_settings_create(s_tiles[next++]);
 
   // Dots are siblings of the tileview, not children, so they stay put while the
   // screens slide underneath them.
@@ -174,6 +194,9 @@ lv_obj_t* ui_create(lv_obj_t* parent, bool with_cost_screen) {
   lv_obj_set_width(s_overlay_title, PUCK_SAFE_SQUARE);
   lv_label_set_long_mode(s_overlay_title, LV_LABEL_LONG_WRAP);
   lv_obj_align(s_overlay_title, LV_ALIGN_CENTER, 0, -40);
+
+  s_overlay_qr = puck_qr_block_create(s_overlay, OVERLAY_QR_PX);
+  lv_obj_align(s_overlay_qr, LV_ALIGN_CENTER, 0, -5);
 
   s_overlay_detail = lv_label_create(s_overlay);
   lv_obj_set_style_text_font(s_overlay_detail, PUCK_FONT_SMALL, LV_PART_MAIN);
@@ -257,7 +280,7 @@ void ui_set_device_battery(bool show, int percent, bool charging) {
   screen_power_set_device_battery(show, percent, charging);
 }
 
-void ui_set_overlay(const char* title, const char* detail) {
+void ui_set_overlay(const char* title, const char* detail, bool with_qr) {
   if (s_overlay == nullptr) {
     return;
   }
@@ -267,7 +290,44 @@ void ui_set_overlay(const char* title, const char* detail) {
   }
   lv_label_set_text(s_overlay_title, title);
   lv_label_set_text(s_overlay_detail, detail != nullptr ? detail : "");
+
+  // Two layouts, not one with a gap left for a code that is usually absent: most
+  // overlays are two lines and belong in the middle of the screen.
+  const bool qr = with_qr && s_qr_url[0] != '\0';
+  if (qr) {
+    puck_qr_block_set_url(s_overlay_qr, s_qr_url);
+    lv_obj_align(s_overlay_title, LV_ALIGN_CENTER, 0, -135);
+    lv_obj_align(s_overlay_detail, LV_ALIGN_CENTER, 0, 125);
+  } else {
+    lv_obj_add_flag(s_overlay_qr, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_align(s_overlay_title, LV_ALIGN_CENTER, 0, -40);
+    lv_obj_align(s_overlay_detail, LV_ALIGN_CENTER, 0, 30);
+  }
+
   lv_obj_clear_flag(s_overlay, LV_OBJ_FLAG_HIDDEN);
+}
+
+void ui_set_address(const char* host, const char* ip) {
+  screen_settings_set_address(host, ip);
+
+  // Same address, same reasoning as the settings screen: the IP is the form a
+  // phone can always reach.
+  char url[sizeof(s_qr_url)];
+  if (ip == nullptr || ip[0] == '\0') {
+    url[0] = '\0';
+  } else {
+    snprintf(url, sizeof(url), "http://%s/", ip);
+  }
+  if (strncmp(s_qr_url, url, sizeof(s_qr_url)) == 0) {
+    return;
+  }
+  snprintf(s_qr_url, sizeof(s_qr_url), "%s", url);
+
+  // Only touch the card if it is currently showing one — otherwise this would
+  // reveal a QR on an overlay that did not ask for it.
+  if (s_overlay_qr != nullptr && !lv_obj_has_flag(s_overlay_qr, LV_OBJ_FLAG_HIDDEN)) {
+    puck_qr_block_set_url(s_overlay_qr, s_qr_url);
+  }
 }
 
 int ui_screen_count() {

@@ -43,12 +43,13 @@ constexpr lv_coord_t RING_INNER_RADIUS = (RING_DIAMETER / 2) - RING_WIDTH;
 constexpr lv_coord_t LEG_RADIUS = 160;
 constexpr lv_coord_t LEG_BOX_WIDTH = 100;
 
-// The plant node, now holding a name, its total power and a status line. Still
-// small enough that the flow channel starts outside it.
-constexpr lv_coord_t HUB_DIAMETER = 132;
+// The plant node, holding a name, its total power and a status line. Sized to
+// the widest text it has to hold and no wider — every pixel taken off the disc
+// is a pixel of flow channel gained.
+constexpr lv_coord_t HUB_DIAMETER = 108;
 
 // The channel the flow dots travel down: outside the hub, inside the leg text.
-constexpr lv_coord_t FLOW_INNER = 72;
+constexpr lv_coord_t FLOW_INNER = 60;
 constexpr lv_coord_t FLOW_OUTER = 112;
 constexpr int FLOW_DOTS = 3;
 constexpr lv_coord_t FLOW_DOT_SIZE = 7;
@@ -149,6 +150,11 @@ void build_leg(LegId id, const char* name, uint32_t colour, float degrees) {
 
   leg.box = make_group(s_root);
   lv_obj_set_size(leg.box, LEG_BOX_WIDTH, LV_SIZE_CONTENT);
+  // The box width is what centres the three lines on the leg's bearing, not a
+  // limit on them: "kW generating" is wider than it and would otherwise be
+  // clipped at both ends. Widening the box instead would push the battery and
+  // grid blocks into the ring, which is what fixes LEG_RADIUS at 160.
+  lv_obj_add_flag(leg.box, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
   lv_obj_set_flex_flow(leg.box, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_align(leg.box, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
                         LV_FLEX_ALIGN_CENTER);
@@ -236,16 +242,23 @@ void set_leg(LegId id, const MaybeFloat& power, FlowDirection direction, const c
   }
   lv_obj_clear_flag(leg.box, LV_OBJ_FLAG_HIDDEN);
 
-  char text[16];
-  puck_format_magnitude(power, PUCK_KW_DECIMALS, text, sizeof(text));
-  lv_label_set_text(leg.value, text);
-
   // Only claim a direction when there is a value to derive one from. An unread
   // register makes `value > 0` false, which would otherwise render as a
   // confident "export" or "discharge" for a leg we know nothing about — and a
   // true 0.00 kW is not flowing either way.
   const bool moving = power.known && fabsf(power.value) > 0.0f;
-  lv_label_set_text(leg.detail, moving ? detail : "");
+
+  // A known zero is a leg that is genuinely doing nothing, and saying so is
+  // worth more than "0.00 kW". One dash and "idle", against the two dashes an
+  // unknown gets — a leg we cannot read is not the same as a leg at rest.
+  char text[16];
+  if (power.known && !moving) {
+    lv_label_set_text(leg.value, "-");
+  } else {
+    puck_format_magnitude(power, PUCK_KW_DECIMALS, text, sizeof(text));
+    lv_label_set_text(leg.value, text);
+  }
+  lv_label_set_text(leg.detail, moving ? detail : (power.known ? "idle" : ""));
 
   const bool flowing = moving && direction != FLOW_IDLE;
   leg.direction = flowing ? direction : FLOW_IDLE;
@@ -400,7 +413,7 @@ void screen_power_update(const Snapshot& snapshot) {
     set_leg(LEG_SOLAR, unknown, FLOW_IDLE, "", true);
     set_leg(LEG_BATTERY, unknown, FLOW_IDLE, "", true);
     set_leg(LEG_HOME, unknown, FLOW_IDLE, "", true);
-    set_leg(LEG_EV, unknown, FLOW_IDLE, "", false);
+    set_leg(LEG_EV, unknown, FLOW_IDLE, "", true);
     set_leg(LEG_GRID, unknown, FLOW_IDLE, "", true);
     return;
   }
@@ -417,7 +430,7 @@ void screen_power_update(const Snapshot& snapshot) {
   }
 
   // Generation only ever flows into the plant.
-  set_leg(LEG_SOLAR, snapshot.power.pv, FLOW_INWARD, "kW", true);
+  set_leg(LEG_SOLAR, snapshot.power.pv, FLOW_INWARD, "kW generating", true);
 
   // Charging takes power out of the plant; discharging returns it.
   const bool charging = snapshot.power.batt.known && snapshot.power.batt.value > 0.0f;
@@ -425,11 +438,11 @@ void screen_power_update(const Snapshot& snapshot) {
           charging ? "kW charge" : "kW discharge", true);
 
   // Consumers always draw outward.
-  set_leg(LEG_HOME, snapshot.power.home, FLOW_OUTWARD, "kW", true);
+  set_leg(LEG_HOME, snapshot.power.home, FLOW_OUTWARD, "kW on load", true);
 
-  // The EV leg exists only while something is actually charging.
-  const bool ev_active = snapshot.power.ev.known && snapshot.power.ev.value > 0.0f;
-  set_leg(LEG_EV, snapshot.power.ev, FLOW_OUTWARD, "kW charging", ev_active);
+  // The EV leg is always drawn, idle or not: a point of the star that comes and
+  // goes makes the shape itself flicker, and "EV / - / idle" is information.
+  set_leg(LEG_EV, snapshot.power.ev, FLOW_OUTWARD, "kW charge", true);
 
   // Off grid: the leg is suppressed rather than drawn as a real zero, but it is
   // labelled so the gap reads as a state and not a fault.

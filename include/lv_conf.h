@@ -71,6 +71,15 @@
 
 #define LV_FONT_DEFAULT &puck_font_20
 
+// --------------------------------------------------------------- widgets ----
+
+// LVGL's own QR encoder, for the settings-page address on screen 5 and on the
+// "Not configured" overlay. Off by default in lv_conf_internal.h. It draws into
+// a 1-bit indexed canvas out of LV_MEM_SIZE, which is a couple of KB at the
+// sizes used here — cheaper than carrying a second encoder, and it means the
+// simulator renders exactly what the device does.
+#define LV_USE_QRCODE 1
+
 // ----------------------------------------------------------------- debug ----
 
 // LVGL's own warnings go to the USB-CDC serial log. Raise to _INFO while
