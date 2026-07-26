@@ -138,12 +138,24 @@ void poller_begin() {
                 static_cast<int>(TASK_CORE), modbus ? "modbus" : "server", stack);
 }
 
+// Both readers wait for the lock rather than giving up after a timeout.
+//
+// A timeout here cannot be handled honestly: there is nothing truthful to return
+// when the answer is simply not available yet. The old 20 ms limit made
+// poller_status() fall back to a default-constructed PollStatus, which reads as
+// "not configured, 0 failures" — indistinguishable from a device nobody has set
+// up, and observed on a working device. poller_snapshot() had the same flaw and
+// would blank a good screen to "Waiting for data".
+//
+// Waiting is safe: the lock is only ever held for a struct copy, by code that
+// does no I/O and cannot block, and publish() already takes it with
+// portMAX_DELAY. There is no path that can hold it long enough to matter.
 bool poller_snapshot(Snapshot* out) {
   if (s_lock == nullptr || out == nullptr) {
     return false;
   }
   bool have = false;
-  if (xSemaphoreTake(s_lock, pdMS_TO_TICKS(20)) == pdTRUE) {
+  if (xSemaphoreTake(s_lock, portMAX_DELAY) == pdTRUE) {
     if (s_snapshot.valid) {
       *out = s_snapshot;
       have = true;
@@ -155,7 +167,7 @@ bool poller_snapshot(Snapshot* out) {
 
 PollStatus poller_status() {
   PollStatus copy;
-  if (s_lock != nullptr && xSemaphoreTake(s_lock, pdMS_TO_TICKS(20)) == pdTRUE) {
+  if (s_lock != nullptr && xSemaphoreTake(s_lock, portMAX_DELAY) == pdTRUE) {
     copy = s_status;
     xSemaphoreGive(s_lock);
   }
