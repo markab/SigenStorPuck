@@ -324,8 +324,30 @@ String page(const String& message, bool message_is_error) {
   return html;
 }
 
+// Every response goes through here so none of them can be cached.
+//
+// WebServer sends no cache headers at all, which leaves a browser free to apply
+// its own heuristics — and it does. Two things then go wrong. The page is built
+// per request out of live values, so a cached copy shows a stale poll result and
+// settings that are no longer stored. Worse, a firmware update changes the page's
+// own markup: a browser holding the previous version renders controls that no
+// longer exist and hides ones that now do, at the exact moment someone has just
+// flashed a device and gone looking to configure it.
+//
+// There is nothing to lose by refusing to cache. The CSS is inline and there are
+// no other assets, so the whole page is one request either way.
+void send_html(int code, const String& body) {
+  s_server.sendHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+  // For anything in the path that predates Cache-Control. Captive-portal
+  // interceptors and older Android webviews are the realistic cases, and both are
+  // on the likely route to this page.
+  s_server.sendHeader("Pragma", "no-cache");
+  s_server.sendHeader("Expires", "0");
+  s_server.send(code, "text/html; charset=utf-8", body);
+}
+
 void send_page(const String& message = String(), bool error = false) {
-  s_server.send(200, "text/html; charset=utf-8", page(message, error));
+  send_html(200, page(message, error));
 }
 
 void handle_root() {
@@ -487,9 +509,9 @@ void handle_update_check() {
 void handle_update_apply() {
   // Answer first: applying reboots the device, so a reply sent afterwards never
   // arrives and the browser shows a connection error instead of an explanation.
-  s_server.send(200, "text/html; charset=utf-8",
-                "<!doctype html><p>Installing and restarting. This page will stop "
-                "responding for a minute or so.");
+  send_html(200,
+            "<!doctype html><p>Installing and restarting. This page will stop "
+            "responding for a minute or so.");
   s_server.client().flush();
   delay(200);
   updater_apply();
@@ -562,9 +584,9 @@ void handle_modbus() {
 }
 
 void handle_restart() {
-  s_server.send(200, "text/html; charset=utf-8",
-                "<!doctype html><p>Restarting. This page will stop responding for a "
-                "few seconds.");
+  send_html(200,
+            "<!doctype html><p>Restarting. This page will stop responding for a "
+            "few seconds.");
   s_server.client().flush();
   delay(200);
   ESP.restart();
@@ -576,9 +598,8 @@ void handle_forget_server() {
 }
 
 void handle_forget_wifi() {
-  s_server.send(200, "text/html; charset=utf-8",
-                "<!doctype html><p>Forgetting WiFi and restarting. Join \"" +
-                    String(net_setup_ap_name()) + "\" to set it up again.");
+  send_html(200, "<!doctype html><p>Forgetting WiFi and restarting. Join \"" +
+                     String(net_setup_ap_name()) + "\" to set it up again.");
   delay(200);
   net_forget_wifi();
 }
