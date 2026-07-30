@@ -82,7 +82,26 @@ bool snapshot_parse(const char* json, size_t length, Snapshot* out) {
     parsed.today.load = maybe_float(today["load"]);
     parsed.today.charge = maybe_float(today["charge"]);
     parsed.today.discharge = maybe_float(today["discharge"]);
+
+    JsonVariantConst flows = today["flows"];
+    parsed.today.flows.solar_load = maybe_float(flows["solar_load"]);
+    parsed.today.flows.solar_batt = maybe_float(flows["solar_batt"]);
+    parsed.today.flows.solar_grid = maybe_float(flows["solar_grid"]);
+    parsed.today.flows.grid_load = maybe_float(flows["grid_load"]);
+    parsed.today.flows.grid_batt = maybe_float(flows["grid_batt"]);
+    parsed.today.flows.batt_load = maybe_float(flows["batt_load"]);
+    parsed.today.flows.batt_grid = maybe_float(flows["batt_grid"]);
   }
+
+  // Absent entirely from a server older than 0.15.0, which leaves configured
+  // false and every figure unknown — exactly the state the Modbus source is in
+  // permanently, so the screen needs no separate "old server" path.
+  JsonVariantConst solar = doc["solar"];
+  parsed.solar.configured = solar["configured"] | false;
+  parsed.solar.forecast_kwh = maybe_float(solar["forecast"]);
+  parsed.solar.remaining_kwh = maybe_float(solar["remaining"]);
+  parsed.solar.vs_forecast_pct = maybe_float(solar["vs_forecast"]);
+  parsed.solar.peak_kw = maybe_float(solar["peak_kw"]);
 
   JsonVariantConst cost = doc["cost"];
   parsed.cost.configured = cost["configured"] | false;

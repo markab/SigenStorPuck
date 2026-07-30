@@ -26,6 +26,11 @@ lv_obj_t* chart_band_create(lv_obj_t* parent, HistorySeries series, uint32_t col
 // means the same thing every time you look at it.
 void chart_band_set_range(lv_obj_t* band, float min_value, float max_value);
 
+// Scales all three of the band's weights at once. LV_OPA_COVER is the normal
+// strength, for a band drawn in a clear strip of its own; lower values ghost it
+// back far enough to carry text on top without the two fighting.
+void chart_band_set_intensity(lv_obj_t* band, lv_opa_t intensity);
+
 // Recomputes the reduced columns from the history ring.
 //
 // Cheap to call every poll: it returns immediately unless the newest sample has

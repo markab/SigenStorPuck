@@ -38,9 +38,10 @@ std::vector<std::string> s_fixture_paths;
 size_t s_current = 0;
 int16_t s_startup_tilt = 0;
 
-// --no-cost previews the three-screen arrangement the Modbus source gets (§D1),
-// which is otherwise only visible on a device configured for it.
-bool s_with_cost = true;
+// --modbus previews the reduced arrangement that data source gets: no cost
+// screen and no flows screen (§D1), which is otherwise only visible on a device
+// configured for it.
+bool s_with_server_screens = true;
 
 // The real screen, plus the raw field dump kept behind the 'd' key. Keeping the
 // dump around is worth its few lines: when a screen shows something surprising,
@@ -173,6 +174,17 @@ std::string describe(const Snapshot& snapshot) {
              number(snapshot.today.load, "", 1).c_str(),
              number(snapshot.today.charge, "", 1).c_str(),
              number(snapshot.today.discharge, "", 1).c_str());
+    text += line;
+  }
+
+  if (!snapshot.solar.configured) {
+    text += "SOLAR  no forecast configured\n\n";
+  } else {
+    snprintf(line, sizeof(line), "SOLAR  fc %s  left %s  vs %s  peak %s\n\n",
+             number(snapshot.solar.forecast_kwh, "", 1).c_str(),
+             number(snapshot.solar.remaining_kwh, "", 1).c_str(),
+             number(snapshot.solar.vs_forecast_pct, "%", 0).c_str(),
+             number(snapshot.solar.peak_kw, "", 1).c_str());
     text += line;
   }
 
@@ -389,7 +401,7 @@ void build_views() {
   lv_obj_set_style_bg_color(screen, lv_color_hex(COLOUR_BACKGROUND), LV_PART_MAIN);
   lv_obj_clear_flag(screen, LV_OBJ_FLAG_SCROLLABLE);
 
-  ui_create(screen, s_with_cost);
+  ui_create(screen, s_with_server_screens);
 
   // A stand-in for what net_hostname()/net_ip() return on the device, so the
   // settings screen and its QR code render here rather than only on hardware.
@@ -530,6 +542,17 @@ int run_screenshot_pass(const std::string& output_directory) {
   }
   cycle_overlay();
 
+  // How close LV_MEM_SIZE is to its limit, after a pass that has built every
+  // screen and drawn every fixture through them — which is as hard as the pool
+  // is ever worked. Reported here because the failure mode is not a clear "pool
+  // full": it surfaces as whatever allocates next, and the sixth screen turned
+  // it into an out-of-memory assert inside the anti-aliased corner mask.
+  lv_mem_monitor_t mem;
+  lv_mem_monitor(&mem);
+  printf("[sim] LVGL pool: %u%% of %u KB used, %u%% fragmented, largest free block %u B\n",
+         mem.used_pct, static_cast<unsigned>(mem.total_size / 1024), mem.frag_pct,
+         static_cast<unsigned>(mem.free_biggest_size));
+
   return failures;
 }
 
@@ -538,15 +561,15 @@ int run_screenshot_pass(const std::string& output_directory) {
 int run_selftest();
 
 int main(int argc, char** argv) {
-  // sim [fixture-dir] [--shot output-dir] [--selftest] [--no-cost]
+  // sim [fixture-dir] [--shot output-dir] [--selftest] [--modbus]
   std::string directory = "test/fixtures";
   std::string shot_directory;
   for (int i = 1; i < argc; ++i) {
     const std::string argument = argv[i];
     if (argument == "--selftest") {
       return run_selftest();
-    } else if (argument == "--no-cost") {
-      s_with_cost = false;
+    } else if (argument == "--modbus") {
+      s_with_server_screens = false;
     } else if (argument == "--shot" && i + 1 < argc) {
       shot_directory = argv[++i];
     } else if (argument == "--tilt" && i + 1 < argc) {

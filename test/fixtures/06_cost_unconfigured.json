@@ -21,11 +21,20 @@
   },
   "today": {
     "solar": 12.4,
-    "import": 3.1,
-    "export": 5.2,
-    "load": 9.8,
-    "charge": 6.0,
-    "discharge": 4.2
+    "import": 2.2,
+    "export": 2.2,
+    "load": 9.4,
+    "charge": 7.6,
+    "discharge": 4.6,
+    "flows": {
+      "solar_load": 4.0,
+      "solar_batt": 6.2,
+      "solar_grid": 2.2,
+      "grid_load": 0.8,
+      "grid_batt": 1.4,
+      "batt_load": 4.6,
+      "batt_grid": 0.0
+    }
   },
   "cost": {
     "configured": false

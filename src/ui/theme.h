@@ -29,6 +29,13 @@ static constexpr uint32_t PUCK_COLOUR_EV = 0xBF5AF2;
 static constexpr uint32_t PUCK_COLOUR_WARN = 0xFF9F0A;
 static constexpr uint32_t PUCK_COLOUR_ALARM = 0xFF453A;
 
+// The state-of-charge ring at the bezel. Here rather than in either screen
+// because screens 1 and 2 both draw it, and a ring that changes weight or radius
+// as you swipe between them reads as two different rings rather than the same
+// one seen twice.
+static constexpr lv_coord_t PUCK_RING_DIAMETER = 456;
+static constexpr lv_coord_t PUCK_RING_WIDTH = 6;
+
 // Montserrat subsets from src/ui/fonts/, declared by LV_FONT_CUSTOM_DECLARE in
 // include/lv_conf.h. Named by role so a size change is one edit here.
 #define PUCK_FONT_SMALL (&puck_font_14)

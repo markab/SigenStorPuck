@@ -13,10 +13,11 @@
 
 // Builds the tileview and every screen under `parent`, returning the tileview.
 //
-// `with_cost_screen` is false on the Modbus data source, which has no tariff
-// behind it (PLAN.md §D1). Everything downstream asks ui_screen_count() rather
-// than assuming four.
-lv_obj_t* ui_create(lv_obj_t* parent, bool with_cost_screen);
+// `with_server_screens` is false on the Modbus data source, which has neither
+// the tariff behind the cost screen (PLAN.md §D1) nor the flow decomposition
+// behind the flows screen. Everything downstream asks ui_screen_count() rather
+// than assuming a number.
+lv_obj_t* ui_create(lv_obj_t* parent, bool with_server_screens);
 
 // Pushes a snapshot to every screen that exists. This is the single "here is a
 // new reading" call PLAN.md §B3 asks for: the WebSocket path of §A4 can replace

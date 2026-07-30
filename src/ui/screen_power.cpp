@@ -33,10 +33,6 @@ namespace {
 
 constexpr lv_coord_t CENTRE = PUCK_LCD_WIDTH / 2;
 
-constexpr lv_coord_t RING_DIAMETER = 456;  // state-of-charge ring at the bezel
-constexpr lv_coord_t RING_WIDTH = 6;
-constexpr lv_coord_t RING_INNER_RADIUS = (RING_DIAMETER / 2) - RING_WIDTH;
-
 // 160 is the largest radius at which a leg's text block still clears the ring.
 // The binding case is battery and grid at 72 deg and 288 deg, whose blocks sit
 // furthest out horizontally while still being well above the vertical centre.
@@ -326,7 +322,7 @@ lv_obj_t* screen_power_create(lv_obj_t* parent) {
 
   // State of charge around the bezel: always visible, never in the way.
   s_ring = lv_arc_create(s_root);
-  lv_obj_set_size(s_ring, RING_DIAMETER, RING_DIAMETER);
+  lv_obj_set_size(s_ring, PUCK_RING_DIAMETER, PUCK_RING_DIAMETER);
   lv_obj_center(s_ring);
   lv_arc_set_rotation(s_ring, 270);  // zero at the top
   lv_arc_set_bg_angles(s_ring, 0, 360);
@@ -334,8 +330,8 @@ lv_obj_t* screen_power_create(lv_obj_t* parent) {
   lv_arc_set_value(s_ring, 0);
   lv_obj_remove_style(s_ring, nullptr, LV_PART_KNOB);
   lv_obj_clear_flag(s_ring, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_set_style_arc_width(s_ring, RING_WIDTH, LV_PART_MAIN);
-  lv_obj_set_style_arc_width(s_ring, RING_WIDTH, LV_PART_INDICATOR);
+  lv_obj_set_style_arc_width(s_ring, PUCK_RING_WIDTH, LV_PART_MAIN);
+  lv_obj_set_style_arc_width(s_ring, PUCK_RING_WIDTH, LV_PART_INDICATOR);
   lv_obj_set_style_arc_color(s_ring, lv_color_hex(PUCK_COLOUR_TRACK), LV_PART_MAIN);
   lv_obj_set_style_arc_color(s_ring, lv_color_hex(PUCK_COLOUR_BATTERY), LV_PART_INDICATOR);
 

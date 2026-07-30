@@ -38,6 +38,7 @@ struct Band {
   float range_min = 0.0f;
   float range_max = 0.0f;
   bool autoscale = true;
+  lv_opa_t intensity = LV_OPA_COVER;
 
   // The reduced window, cached.
   //
@@ -83,20 +84,43 @@ void draw_band(lv_event_t* event) {
   const float span = band->drawn_max - band->drawn_min;
   const float scale = static_cast<float>(height - 1) / (span < MIN_SPAN ? MIN_SPAN : span);
 
+  // One multiplier over all three weights, so ghosting a band keeps the
+  // relationship between wash, spread and cap that makes it read as an envelope.
+  const auto scaled = [band](lv_opa_t base) {
+    return static_cast<lv_opa_t>((static_cast<uint16_t>(base) * band->intensity) / 255);
+  };
+
   lv_draw_rect_dsc_t fill;
   lv_draw_rect_dsc_init(&fill);
   fill.bg_color = lv_color_hex(band->colour);
-  fill.bg_opa = FILL_OPA;
+  fill.bg_opa = scaled(FILL_OPA);
+
+  // A ghosted band is a backdrop, and a backdrop must not have edges. Left as a
+  // flat wash it reads as a translucent rectangle sitting behind the text —
+  // which is what it is — so instead each column fades to the background colour
+  // on the way down and the block has no foot to notice.
+  //
+  // A gradient in the colour rather than in the alpha because LVGL 8's gradient
+  // stops carry no opacity. On a true-black AMOLED background the two are the
+  // same picture.
+  if (band->intensity < LV_OPA_COVER) {
+    fill.bg_grad.dir = LV_GRAD_DIR_VER;
+    fill.bg_grad.stops_count = 2;
+    fill.bg_grad.stops[0].color = lv_color_hex(band->colour);
+    fill.bg_grad.stops[0].frac = 0;
+    fill.bg_grad.stops[1].color = lv_color_hex(PUCK_COLOUR_BG);
+    fill.bg_grad.stops[1].frac = 255;
+  }
 
   lv_draw_rect_dsc_t spread;
   lv_draw_rect_dsc_init(&spread);
   spread.bg_color = lv_color_hex(band->colour);
-  spread.bg_opa = SPREAD_OPA;
+  spread.bg_opa = scaled(SPREAD_OPA);
 
   lv_draw_rect_dsc_t edge;
   lv_draw_rect_dsc_init(&edge);
   edge.bg_color = lv_color_hex(band->colour);
-  edge.bg_opa = LV_OPA_COVER;
+  edge.bg_opa = scaled(LV_OPA_COVER);
 
   for (size_t c = 0; c < band->columns; ++c) {
     if (!band->column[c].known) {
@@ -182,6 +206,7 @@ lv_obj_t* chart_band_create(lv_obj_t* parent, HistorySeries series, uint32_t col
   band->series = series;
   band->colour = colour;
   band->autoscale = true;
+  band->intensity = LV_OPA_COVER;
   band->last_minute = UINT32_MAX;
 
   lv_obj_set_user_data(obj, band);
@@ -198,6 +223,15 @@ void chart_band_set_range(lv_obj_t* obj, float min_value, float max_value) {
   band->range_min = min_value;
   band->range_max = max_value;
   band->last_minute = UINT32_MAX;  // the picture changes even if the data has not
+}
+
+void chart_band_set_intensity(lv_obj_t* obj, lv_opa_t intensity) {
+  Band* band = band_for(obj);
+  if (band == nullptr) {
+    return;
+  }
+  band->intensity = intensity;
+  lv_obj_invalidate(obj);
 }
 
 void chart_band_refresh(lv_obj_t* obj) {

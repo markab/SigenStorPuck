@@ -85,8 +85,49 @@ struct Snapshot {
     MaybeFloat load;
     MaybeFloat charge;
     MaybeFloat discharge;
+
+    // The day's source->sink split, as the server's Sankey decomposes it.
+    //
+    // Sent rather than derived because it cannot be derived: the six totals
+    // above are six equations in these seven flows, and the one thing they
+    // cannot pin down is how imports divide between serving load and charging
+    // the battery. Assuming the battery never charges from the grid would be
+    // wrong on exactly the days a scheduler makes it do so.
+    //
+    // Unknown throughout on the Modbus source — the plant exposes daily
+    // counters, not a decomposition — which is why the flows screen is one of
+    // the two that source does not get.
+    struct Flows {
+      MaybeFloat solar_load;
+      MaybeFloat solar_batt;
+      MaybeFloat solar_grid;
+      MaybeFloat grid_load;
+      MaybeFloat grid_batt;
+      MaybeFloat batt_load;
+      MaybeFloat batt_grid;
+    };
+    Flows flows;
   };
   Today today;
+
+  // Today's PV forecast, from the server's Open-Meteo model.
+  //
+  // No `generated` field: that is `today.solar`, which the Modbus path fills
+  // from the pv_daily registers. One number that cannot disagree with itself,
+  // and the screen's headline figure works on both data sources.
+  //
+  // `configured` is false when the server has no location or no array with a
+  // kWp set, and on the Modbus source there is no server to ask — so it is also
+  // false for the whole of §D. Same shape as Cost, for the same reason: a client
+  // should prompt rather than render a misleading zero.
+  struct Solar {
+    bool configured = false;
+    MaybeFloat forecast_kwh;    // the whole of today
+    MaybeFloat remaining_kwh;   // still to come between now and dusk
+    MaybeFloat vs_forecast_pct; // actual against forecast-so-far; >100 is ahead
+    MaybeFloat peak_kw;         // highest forecast slot today
+  };
+  Solar solar;
 
   struct Cost {
     bool configured = false;  // false when no tariff is set on the server

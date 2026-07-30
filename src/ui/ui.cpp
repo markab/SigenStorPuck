@@ -8,27 +8,32 @@
 #include "qr_block.h"
 #include "screen_battery.h"
 #include "screen_cost.h"
+#include "screen_flows.h"
 #include "screen_power.h"
 #include "screen_settings.h"
-#include "screen_today.h"
+#include "screen_solar.h"
 #include "theme.h"
 
 namespace {
 
-// The cost screen only exists when a SigenStor Display server is behind us: it
-// needs the tariff tables, the Octopus API and a priced integration over the
-// day, none of which a plant exposes over Modbus (§D1). So the count is decided
-// at build-the-UI time rather than compiled in.
+// Two screens exist only when a SigenStor Display server is behind us, so the
+// count is decided at build-the-UI time rather than compiled in:
+//
+//   cost   needs the tariff tables, the Octopus API and a priced integration
+//          over the day (§D1).
+//   flows  needs the Sankey decomposition, which cannot be recovered from the
+//          daily totals a plant exposes — see Snapshot::Today::Flows.
 //
 // Every caller outside this file already goes through ui_screen_count(), which
 // is what makes this a contained change.
-constexpr int MAX_SCREENS = 5;
+constexpr int MAX_SCREENS = 6;
+constexpr int SERVER_ONLY_SCREENS = 2;
 int s_screen_count = MAX_SCREENS;
-bool s_has_cost = true;
+bool s_has_server = true;
 
 // Below everything the screens draw, but held clear of the bezel: the outermost
-// dot of a five-dot row sits at x=42, where screen 1's state-of-charge arc has
-// curved in to y=218. Any lower and the row runs into the end of the arc — which
+// dot of a six-dot row sits at x=51, where screen 1's state-of-charge arc has
+// curved in to y=216. Any lower and the row runs into the end of the arc — which
 // is what it used to do. Screen 3's day band was raised to keep its own clearance.
 constexpr lv_coord_t DOTS_Y = 202;
 constexpr lv_coord_t DOT_SIZE = 7;
@@ -118,9 +123,9 @@ void on_tile_changed(lv_event_t* /*event*/) {
 
 }  // namespace
 
-lv_obj_t* ui_create(lv_obj_t* parent, bool with_cost_screen) {
-  s_has_cost = with_cost_screen;
-  s_screen_count = with_cost_screen ? MAX_SCREENS : MAX_SCREENS - 1;
+lv_obj_t* ui_create(lv_obj_t* parent, bool with_server_screens) {
+  s_has_server = with_server_screens;
+  s_screen_count = with_server_screens ? MAX_SCREENS : MAX_SCREENS - SERVER_ONLY_SCREENS;
 
   lv_obj_set_style_bg_color(parent, lv_color_hex(PUCK_COLOUR_BG), LV_PART_MAIN);
 
@@ -147,9 +152,10 @@ lv_obj_t* ui_create(lv_obj_t* parent, bool with_cost_screen) {
 
   screen_power_create(s_tiles[0]);
   screen_battery_create(s_tiles[1]);
-  screen_today_create(s_tiles[2]);
+  screen_solar_create(s_tiles[2]);
   int next = 3;
-  if (s_has_cost) {
+  if (s_has_server) {
+    screen_flows_create(s_tiles[next++]);
     screen_cost_create(s_tiles[next++]);
   }
   // Always last, and always present: it is how you get back to the settings page
@@ -234,8 +240,9 @@ void ui_update(const Snapshot& snapshot) {
   // reading than the one you just swiped away from.
   screen_power_update(snapshot);
   screen_battery_update(snapshot);
-  screen_today_update(snapshot);
-  if (s_has_cost) {
+  screen_solar_update(snapshot);
+  if (s_has_server) {
+    screen_flows_update(snapshot);
     screen_cost_update(snapshot);
   }
 }

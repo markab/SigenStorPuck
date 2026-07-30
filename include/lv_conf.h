@@ -25,8 +25,15 @@
 
 // LVGL's own object/style pool. Large bitmaps are allocated separately in PSRAM
 // rather than being sized into this (docs/PLAN.md §B1).
+//
+// Raised from 64 KB when the sixth screen went in. 64 KB no longer covered six
+// screens' objects and styles plus the two QR canvases (~5.7 KB of 1-bit indexed
+// image between them), and the way it failed is worth knowing: the pool does not
+// report itself full, it fails inside whatever asks for memory next. Here that
+// was circ_calc_aa4 — the anti-aliased corner mask behind a rounded rectangle —
+// asserting "Out of memory" on a 9 px radius it had drawn a hundred times before.
 #define LV_MEM_CUSTOM 0
-#define LV_MEM_SIZE (64U * 1024U)
+#define LV_MEM_SIZE (96U * 1024U)
 
 // ------------------------------------------------------------------ time ----
 

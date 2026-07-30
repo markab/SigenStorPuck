@@ -20,12 +20,28 @@
     "eta_min": 74
   },
   "today": {
-    "solar": 12.4,
-    "import": 3.1,
-    "export": 5.2,
-    "load": 9.8,
-    "charge": 6.0,
-    "discharge": 4.2
+    "solar": 11.4,
+    "import": 6.8,
+    "export": 0.0,
+    "load": 20.4,
+    "charge": 3.0,
+    "discharge": 5.2,
+    "flows": {
+      "solar_load": 8.4,
+      "solar_batt": 3.0,
+      "solar_grid": 0.0,
+      "grid_load": 6.8,
+      "grid_batt": 0.0,
+      "batt_load": 5.2,
+      "batt_grid": 0.0
+    }
+  },
+  "solar": {
+    "configured": true,
+    "forecast": 24.0,
+    "remaining": 11.9,
+    "vs_forecast": 94,
+    "peak_kw": 6.2
   },
   "cost": {
     "configured": true,
