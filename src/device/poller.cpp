@@ -99,8 +99,17 @@ void poll_task(void* /*argument*/) {
                                  (status.consecutive_failures == 1 ||
                                   status.consecutive_failures % 10 == 0);
       if (worth_logging) {
-        Serial.printf("[poll] %s (http %d), failure %u\n", fetch_result_name(result), http_status,
-                      status.consecutive_failures);
+        // Free heap alongside the reason, because the reason on its own is not
+        // enough to act on. HTTPClient folds every transport failure into one
+        // negative code, so sigen_api.cpp reports "TLS failed" for a genuine
+        // certificate problem, for a server that is not answering, and for an
+        // mbedTLS allocation that could not be satisfied — and those want three
+        // different responses. The handshake needs tens of kilobytes at once, so
+        // the largest free block separates the last case from the other two.
+        Serial.printf("[poll] %s (http %d), failure %u, heap %u B free, largest block %u B\n",
+                      fetch_result_name(result), http_status, status.consecutive_failures,
+                      static_cast<unsigned>(ESP.getFreeHeap()),
+                      static_cast<unsigned>(ESP.getMaxAllocHeap()));
       }
     }
 

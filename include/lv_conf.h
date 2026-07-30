@@ -26,14 +26,29 @@
 // LVGL's own object/style pool. Large bitmaps are allocated separately in PSRAM
 // rather than being sized into this (docs/PLAN.md §B1).
 //
-// Raised from 64 KB when the sixth screen went in. 64 KB no longer covered six
-// screens' objects and styles plus the two QR canvases (~5.7 KB of 1-bit indexed
-// image between them), and the way it failed is worth knowing: the pool does not
-// report itself full, it fails inside whatever asks for memory next. Here that
-// was circ_calc_aa4 — the anti-aliased corner mask behind a rounded rectangle —
-// asserting "Out of memory" on a 9 px radius it had drawn a hundred times before.
+// On the device the pool itself now lives in PSRAM too — see puck_lv_mem.h for
+// why, which is a story about the TLS handshake rather than about LVGL. There is
+// no LV_MEM_SIZE on that path: the pool grows into 8 MB instead of being reserved
+// out of 320 KB.
+//
+// The simulator keeps LVGL's own allocator, so `--shot` can still report how full
+// the pool would be. It needed 96 KB once there were six screens: 64 KB no longer
+// covered six screens' objects and styles plus the two QR canvases (~5.7 KB of
+// 1-bit indexed image between them), and the way it failed is worth knowing —
+// the pool does not report itself full, it fails inside whatever asks for memory
+// next. Here that was circ_calc_aa4, the anti-aliased corner mask behind a
+// rounded rectangle, asserting "Out of memory" on a 9 px radius it had drawn a
+// hundred times before.
+#if defined(ARDUINO)
+#define LV_MEM_CUSTOM 1
+#define LV_MEM_CUSTOM_INCLUDE "puck_lv_mem.h"
+#define LV_MEM_CUSTOM_ALLOC puck_lv_malloc
+#define LV_MEM_CUSTOM_FREE puck_lv_free
+#define LV_MEM_CUSTOM_REALLOC puck_lv_realloc
+#else
 #define LV_MEM_CUSTOM 0
 #define LV_MEM_SIZE (96U * 1024U)
+#endif
 
 // ------------------------------------------------------------------ time ----
 
