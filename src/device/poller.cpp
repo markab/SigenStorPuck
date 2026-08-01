@@ -6,6 +6,7 @@
 
 #include "modbus_api.h"
 #include "settings.h"
+#include "sigen_api.h"
 #include "updater.h"
 
 namespace {
@@ -29,10 +30,21 @@ constexpr BaseType_t TASK_CORE = 0;
 // instead of every few seconds forever.
 constexpr uint32_t BACKOFF_CEILING_MS = 60000;
 
+// How often to refetch today's curve from the server. A shape that has already
+// happened does not change, and the newest few minutes are covered by the live
+// poll writing into the ring meanwhile — so this only has to be often enough
+// that a reboot's empty chart fills promptly.
+constexpr uint32_t DAY_REFRESH_MS = 5 * 60 * 1000;
+
 SemaphoreHandle_t s_lock = nullptr;
 Snapshot s_snapshot;
 PollStatus s_status;
 volatile bool s_wake = false;
+
+// Task-local in practice — only poll_task touches these — but kept here with the
+// rest of the task's state rather than as statics buried in the loop.
+uint32_t s_last_day_ms = 0;
+bool s_day_complained = false;
 
 uint32_t backoff_for(uint32_t failures) {
   if (failures == 0) {
@@ -110,6 +122,33 @@ void poll_task(void* /*argument*/) {
                       fetch_result_name(result), http_status, status.consecutive_failures,
                       static_cast<unsigned>(ESP.getFreeHeap()),
                       static_cast<unsigned>(ESP.getMaxAllocHeap()));
+      }
+    }
+
+    // Today's curve from the server, on its own slow cadence. Same reasoning as
+    // updater_service() below: between fetches, with this task's client closed,
+    // so two TLS sessions never overlap.
+    //
+    // Deliberately not folded into the failure counting above — this is the
+    // chart's backdrop, not the reading. A server too old to have the endpoint
+    // 404s here forever, and that must not make a working device look broken.
+    if (!modbus) {
+      const uint32_t now = millis();
+      const bool due = s_last_day_ms == 0 || now - s_last_day_ms >= DAY_REFRESH_MS;
+      if (due && status.ever_succeeded) {
+        s_last_day_ms = now;
+        int day_status = 0;
+        const FetchResult day = sigen_api_fetch_day(&day_status);
+        if (day != FetchResult::Ok && !s_day_complained) {
+          // Once, not every time: an old server would otherwise print this every
+          // five minutes for the life of the device.
+          s_day_complained = true;
+          Serial.printf("[poll] day series unavailable: %s (http %d) — charts will fill "
+                        "from live polls only\n",
+                        fetch_result_name(day), day_status);
+        } else if (day == FetchResult::Ok) {
+          s_day_complained = false;
+        }
       }
     }
 

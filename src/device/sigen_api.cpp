@@ -7,11 +7,17 @@
 #include <time.h>
 
 #include "board_config.h"
+#include "day_series.h"
 #include "settings.h"
 
 namespace {
 
 constexpr const char* SUMMARY_PATH = "/api/summary";
+
+// Five-minute slots: 288 a series, about three chart columns each, which is the
+// resolution the min/max envelope needs to show broken cloud as a band rather
+// than a line. ~3.5 KB, fetched every few minutes rather than every poll.
+constexpr const char* DAY_SERIES_PATH = "/api/day/series?slot_minutes=5";
 
 // Identifies the device in the server's logs. Version included so an old device
 // misbehaving in the field can be recognised from the access log alone.
@@ -69,7 +75,12 @@ const char* fetch_result_name(FetchResult result) {
   return "unknown";
 }
 
-FetchResult sigen_api_fetch(Snapshot* out, int* status_code) {
+// One GET against the configured server, returning the body on success.
+//
+// Shared by the summary poll and the day-series backfill: they differ only in
+// the path and what they do with the bytes, and the part worth having in one
+// place is the certificate bundle, the cookie pair and the timeout budget.
+static FetchResult fetch_path(const char* path, String* body, int* status_code) {
   if (status_code != nullptr) {
     *status_code = 0;
   }
@@ -126,7 +137,7 @@ FetchResult sigen_api_fetch(Snapshot* out, int* status_code) {
   // by the self-update path later.
   http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
 
-  const String url = settings.base_url + SUMMARY_PATH;
+  const String url = settings.base_url + path;
   if (!http.begin(*client, url)) {
     return secure ? FetchResult::TlsFailed : FetchResult::ConnectFailed;
   }
@@ -158,13 +169,42 @@ FetchResult sigen_api_fetch(Snapshot* out, int* status_code) {
     return FetchResult::HttpError;
   }
 
-  const String body = http.getString();
+  *body = http.getString();
   http.end();
+  return FetchResult::Ok;
+}
+
+FetchResult sigen_api_fetch(Snapshot* out, int* status_code) {
+  String body;
+  const FetchResult result = fetch_path(SUMMARY_PATH, &body, status_code);
+  if (result != FetchResult::Ok) {
+    return result;
+  }
 
   Snapshot parsed;
   if (!snapshot_parse(body.c_str(), body.length(), &parsed)) {
     return FetchResult::BadPayload;
   }
   *out = parsed;
+  return FetchResult::Ok;
+}
+
+FetchResult sigen_api_fetch_day(int* status_code) {
+  // The clock is what places the payload in the ring, and TLS already refuses to
+  // run without one, so this is only reachable on a plain-HTTP LAN server that
+  // has not seen NTP yet.
+  const time_t now = time(nullptr);
+  if (now <= 0 || !clock_is_plausible()) {
+    return FetchResult::ClockUnset;
+  }
+
+  String body;
+  const FetchResult result = fetch_path(DAY_SERIES_PATH, &body, status_code);
+  if (result != FetchResult::Ok) {
+    return result;
+  }
+  if (!day_series_parse(body.c_str(), body.length(), static_cast<uint32_t>(now / 60))) {
+    return FetchResult::BadPayload;
+  }
   return FetchResult::Ok;
 }

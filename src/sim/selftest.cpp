@@ -11,7 +11,9 @@
 
 #include <math.h>
 #include <stdio.h>
+#include <string.h>
 
+#include "day_series.h"
 #include "history.h"
 #include "modbus_regs.h"
 
@@ -285,6 +287,59 @@ void test_history() {
   history_reset();
 }
 
+// A day payload straight from /api/day/series, at the shape the device asks for.
+// Four 15-minute slots is enough to exercise every branch and short enough to
+// read; the device uses 5-minute slots and 288 of them.
+void test_day_series() {
+  printf("day series\n");
+  history_reset();
+
+  // A real local midnight for the +60 offset below: minute % 1440 must be 1380,
+  // so that adding the offset lands on a UTC midnight. Picking a round-looking
+  // number instead just tests that the window code disagrees with the fixture.
+  const uint32_t midnight_minute = 28928100;
+  const uint32_t day_start = midnight_minute * 60;
+  char json[512];
+  snprintf(json, sizeof(json),
+           "{\"slot_minutes\":15,\"day_start\":%u,\"tz_offset_min\":60,"
+           "\"solar_kw\":[0.0,1.5,3.0,4.5],"
+           "\"soc_pct\":[null,40.0,55.0,70.0]}",
+           static_cast<unsigned>(day_start));
+
+  // "Now" is 40 minutes into the day: slots 0 and 1 are fully elapsed, slot 2 is
+  // part way through, slot 3 has not started.
+  const uint32_t now = midnight_minute + 40;
+  check(day_series_parse(json, strlen(json), now), "day payload parses");
+
+  check(history_head_minute() == now, "the ring stops at now, not at the end of the day");
+  check(history_sample_count(HistorySeries::Pv) == 41,
+        "every elapsed minute filled, and none beyond");
+
+  // A null slot is a gap, not a zero: SoC was not recorded for the first quarter
+  // hour, and drawing that as 0 % would claim the battery was flat at midnight.
+  check(history_sample_count(HistorySeries::Soc) == 26, "null slots leave gaps");
+
+  HistoryColumn columns[4];
+  history_reduce(HistorySeries::Pv, midnight_minute, midnight_minute + 60, columns, 4);
+  check(columns[0].known && columns[0].max_value == 0.0f, "slot 0 is a recorded zero");
+  check(columns[1].known && columns[1].max_value == 1.5f, "slot 1 carries its value");
+  check(columns[2].known && columns[2].max_value == 3.0f, "the part-elapsed slot is filled");
+  check(!columns[3].known, "the slot that has not happened stays empty");
+
+  // The timezone came from the payload, which is the only place the server path
+  // gets a trustworthy one.
+  uint32_t from = 0;
+  uint32_t to = 0;
+  check(history_window(&from, &to), "window available");
+  check(from == midnight_minute && to == midnight_minute + 1440,
+        "window anchors to the day the payload named");
+
+  check(!day_series_parse("{\"slot_minutes\":15}", 19, now), "a payload with no day is rejected");
+  check(!day_series_parse(json, strlen(json), 0), "no clock means nothing is filed");
+
+  history_reset();
+}
+
 }  // namespace
 
 int run_selftest() {
@@ -295,6 +350,7 @@ int run_selftest() {
   test_snapshot();
   test_day_baseline();
   test_history();
+  test_day_series();
   printf("\n%d checks, %d failed\n", s_checks, s_failures);
   return s_failures == 0 ? 0 : 1;
 }
