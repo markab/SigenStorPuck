@@ -1,5 +1,6 @@
 #include "screen_flows.h"
 
+#include <math.h>
 #include <stdio.h>
 
 #include "board_config.h"
@@ -10,160 +11,213 @@ namespace {
 
 // ------------------------------------------------------------------ layout ---
 //
-//   ring   self-sufficiency: the share of the day's load that never came off
-//          the grid. The natural headline for this screen and the same motif
-//          screens 1-3 use.
-//   bar 1  where the solar went:      house | battery | grid
-//   bar 2  where the load came from:  solar | battery | grid
+// Three source nodes down the left, three sink nodes down the right, joined by
+// one ribbon per flow whose thickness is the energy that took that path.
 //
-// No legend. The three colours are the same ones the legs on screen 1 carry, so
-// by the time anyone swipes this far they have been learned — and the key line
-// under each bar names them anyway, in their own colour.
+// The rule that makes it readable: **a colour is always a node, and a ribbon
+// takes the colour of the node it leaves**. Direction is carried by position —
+// left is out, right is in — and by the ribbon itself. The stacked bars this
+// replaced coloured segments by their counterpart, so green meant "into the
+// battery" in one bar and "out of it" in the other, and blue meant export then
+// import. Whatever rule the eye learned from one was wrong for the next.
+//
+// Nodes sit at fixed rows rather than stacked contiguously as a true Sankey
+// would. A contiguous stack makes the column height mean the day's total, which
+// is a fact nobody reads off a 466 px circle, and it moves every label whenever
+// the split changes. Fixed rows keep the six labels in the same place all day,
+// which is what makes it glanceable.
 
-constexpr lv_coord_t BAR_WIDTH = 300;
-constexpr lv_coord_t BAR_HEIGHT = 18;
-constexpr int BAR_SEGMENTS = 3;
+constexpr lv_coord_t ROW_Y[3] = {-42, 28, 98};
 
-// A segment thinner than this is a rounding error wearing a colour. Below it the
-// segment is dropped rather than drawn as a sliver that cannot be identified.
-constexpr lv_coord_t MIN_SEGMENT_PX = 2;
+// The node bars, and the channel the ribbons run down between them.
+constexpr lv_coord_t NODE_X = 132;
+constexpr lv_coord_t NODE_WIDTH = 9;
+constexpr lv_coord_t RIBBON_X = NODE_X - NODE_WIDTH / 2 - 1;  // inner edge
 
-constexpr lv_coord_t GROUP_ONE_Y = -34;   // header; bar and key follow it
-constexpr lv_coord_t GROUP_TWO_Y = 72;
-constexpr lv_coord_t BAR_DY = 26;         // header -> bar
-constexpr lv_coord_t KEY_DY = 52;         // header -> key line
+// Labels outboard of the bars. 162 rather than further out because the bottom
+// row's label reaches y = 116, where the bezel has closed in to 184 px.
+constexpr lv_coord_t LABEL_X = 162;
 
-struct Bar {
-  lv_obj_t* header = nullptr;
-  lv_obj_t* title = nullptr;
-  lv_obj_t* total = nullptr;
-  lv_obj_t* track = nullptr;
-  lv_obj_t* segment[BAR_SEGMENTS] = {};
-  lv_obj_t* key = nullptr;
+// The tallest a node bar may be drawn. Rows are 70 apart, so this leaves a clear
+// gap between neighbours at the busiest.
+constexpr lv_coord_t MAX_NODE_PX = 54;
+
+// A flow that happened must be visible, however small its share. Below a pixel
+// or two it would round away and the diagram would claim it never happened.
+constexpr lv_coord_t MIN_FLOW_PX = 2;
+
+// Ribbons are drawn as a run of vertical slices. Three pixels is fine for a shape
+// this size and keeps the slice count — and so the draw cost — to about a third
+// of what one-pixel columns would need.
+constexpr lv_coord_t SLICE_PX = 3;
+
+// Translucent so overlaps read as overlaps. Solid ribbons crossing each other
+// would look like one shape with a corner in it.
+constexpr lv_opa_t RIBBON_OPA = LV_OPA_60;
+
+enum Source { SRC_SOLAR = 0, SRC_BATTERY, SRC_GRID, SRC_COUNT };
+enum Sink { SNK_HOME = 0, SNK_BATTERY, SNK_GRID, SNK_COUNT };
+
+// Declared source-major, which is also the order ribbons stack at each end: it
+// keeps the same flow in the same place on both nodes and cuts the crossings.
+struct FlowSpec {
+  Source from;
+  Sink to;
 };
+constexpr FlowSpec FLOWS[] = {
+    {SRC_SOLAR, SNK_HOME},   {SRC_SOLAR, SNK_BATTERY}, {SRC_SOLAR, SNK_GRID},
+    {SRC_BATTERY, SNK_HOME}, {SRC_BATTERY, SNK_GRID},  {SRC_GRID, SNK_HOME},
+    {SRC_GRID, SNK_BATTERY},
+};
+constexpr size_t FLOW_COUNT = sizeof(FLOWS) / sizeof(FLOWS[0]);
+
+constexpr uint32_t SOURCE_COLOUR[SRC_COUNT] = {PUCK_COLOUR_SOLAR, PUCK_COLOUR_BATTERY,
+                                               PUCK_COLOUR_GRID};
+constexpr uint32_t SINK_COLOUR[SNK_COUNT] = {PUCK_COLOUR_HOME, PUCK_COLOUR_BATTERY,
+                                             PUCK_COLOUR_GRID};
+
+// Everything the draw callback needs, computed once per reading rather than per
+// buffer slice: LVGL calls the callback once for every slice the object crosses,
+// and at ~210 px tall against a 40-line buffer that is six times.
+struct Geometry {
+  bool valid = false;
+  struct Ribbon {
+    bool drawn = false;
+    uint32_t colour = 0;
+    lv_coord_t left_top = 0;
+    lv_coord_t right_top = 0;
+    lv_coord_t thickness = 0;
+  };
+  Ribbon ribbon[FLOW_COUNT];
+};
+Geometry s_geometry;
 
 lv_obj_t* s_root = nullptr;
+lv_obj_t* s_canvas = nullptr;
 lv_obj_t* s_arc = nullptr;
 lv_obj_t* s_hero = nullptr;
 lv_obj_t* s_caption = nullptr;
-Bar s_from_solar;   // 22.6 kWh of solar, split by where it went
-Bar s_to_load;      // 14.8 kWh of load, split by where it came from
 
-lv_obj_t* make_group(lv_obj_t* parent) {
-  lv_obj_t* group = lv_obj_create(parent);
-  lv_obj_remove_style_all(group);
-  lv_obj_clear_flag(group, LV_OBJ_FLAG_SCROLLABLE);
-  return group;
-}
+struct NodeUi {
+  lv_obj_t* bar = nullptr;
+  lv_obj_t* name = nullptr;
+  lv_obj_t* value = nullptr;
+};
+NodeUi s_source[SRC_COUNT];
+NodeUi s_sink[SNK_COUNT];
 
-lv_obj_t* make_label(lv_obj_t* parent, const lv_font_t* font, uint32_t colour) {
+lv_obj_t* make_label(lv_obj_t* parent, const lv_font_t* font, uint32_t colour, lv_coord_t x,
+                     lv_coord_t y) {
   lv_obj_t* label = lv_label_create(parent);
   lv_obj_set_style_text_font(label, font, LV_PART_MAIN);
   lv_obj_set_style_text_color(label, lv_color_hex(colour), LV_PART_MAIN);
+  lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+  lv_obj_align(label, LV_ALIGN_CENTER, x, y);
   return label;
 }
 
-void build_bar(Bar* bar, const char* title, const uint32_t colour[BAR_SEGMENTS],
-               lv_coord_t y) {
-  // Header: the name on the left, the total on the right, both pinned to the
-  // bar's own ends so the block reads as one object.
-  bar->header = make_group(s_root);
-  lv_obj_set_size(bar->header, BAR_WIDTH, LV_SIZE_CONTENT);
-  lv_obj_set_flex_flow(bar->header, LV_FLEX_FLOW_ROW);
-  lv_obj_set_flex_align(bar->header, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_END,
-                        LV_FLEX_ALIGN_CENTER);
-  lv_obj_align(bar->header, LV_ALIGN_CENTER, 0, y);
+void build_node(NodeUi* node, const char* name, uint32_t colour, lv_coord_t x, lv_coord_t y) {
+  node->bar = lv_obj_create(s_root);
+  lv_obj_remove_style_all(node->bar);
+  lv_obj_clear_flag(node->bar, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_clear_flag(node->bar, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_size(node->bar, NODE_WIDTH, MAX_NODE_PX);
+  lv_obj_set_style_radius(node->bar, NODE_WIDTH / 2, LV_PART_MAIN);
+  lv_obj_set_style_bg_color(node->bar, lv_color_hex(colour), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(node->bar, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_align(node->bar, LV_ALIGN_CENTER, x, y);
 
-  bar->title = make_label(bar->header, PUCK_FONT_SMALL, PUCK_COLOUR_MUTED);
-  lv_obj_set_style_text_letter_space(bar->title, 2, LV_PART_MAIN);
-  lv_label_set_text(bar->title, title);
-
-  bar->total = make_label(bar->header, PUCK_FONT_BODY, PUCK_COLOUR_TEXT);
-  lv_label_set_text(bar->total, "--");
-
-  bar->track = make_group(s_root);
-  lv_obj_set_size(bar->track, BAR_WIDTH, BAR_HEIGHT);
-  lv_obj_set_style_radius(bar->track, BAR_HEIGHT / 2, LV_PART_MAIN);
-  lv_obj_set_style_bg_color(bar->track, lv_color_hex(PUCK_COLOUR_TRACK), LV_PART_MAIN);
-  lv_obj_set_style_bg_opa(bar->track, LV_OPA_COVER, LV_PART_MAIN);
-  // The segments are square-ended and the track rounds them off, so the bar has
-  // one silhouette rather than three.
-  lv_obj_set_style_clip_corner(bar->track, true, LV_PART_MAIN);
-  lv_obj_align(bar->track, LV_ALIGN_CENTER, 0, y + BAR_DY);
-
-  for (int i = 0; i < BAR_SEGMENTS; ++i) {
-    lv_obj_t* segment = make_group(bar->track);
-    lv_obj_set_size(segment, 0, BAR_HEIGHT);
-    lv_obj_set_style_bg_color(segment, lv_color_hex(colour[i]), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(segment, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_add_flag(segment, LV_OBJ_FLAG_HIDDEN);
-    bar->segment[i] = segment;
-  }
-
-  // One recoloured line, so each figure is named in the colour of the block it
-  // belongs to without a separate legend to look up.
-  bar->key = make_label(s_root, PUCK_FONT_SMALL, PUCK_COLOUR_MUTED);
-  lv_label_set_recolor(bar->key, true);
-  lv_obj_set_style_text_align(bar->key, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-  lv_label_set_text(bar->key, "");
-  lv_obj_align(bar->key, LV_ALIGN_CENTER, 0, y + KEY_DY);
+  const lv_coord_t label_x = x < 0 ? -LABEL_X : LABEL_X;
+  node->name = make_label(s_root, PUCK_FONT_SMALL, colour, label_x, y - 11);
+  lv_label_set_text(node->name, name);
+  node->value = make_label(s_root, PUCK_FONT_BODY, PUCK_COLOUR_TEXT, label_x, y + 11);
+  lv_label_set_text(node->value, "--");
 }
 
-// Lays out one bar from three values. Widths are apportioned by share of their
-// own sum rather than of a fixed scale, so both bars run the full width and the
-// screen compares *proportions* — the thing a Sankey is read for. The absolute
-// totals are on the header line for anyone who wants them.
-void set_bar(Bar* bar, const MaybeFloat value[BAR_SEGMENTS], const char* name[BAR_SEGMENTS],
-             const uint32_t colour[BAR_SEGMENTS]) {
-  float total = 0.0f;
-  bool any = false;
-  for (int i = 0; i < BAR_SEGMENTS; ++i) {
-    if (value[i].known && value[i].value > 0.0f) {
-      total += value[i].value;
-      any = true;
+void show_node(const NodeUi& node, bool visible) {
+  lv_obj_t* const parts[] = {node.bar, node.name, node.value};
+  for (lv_obj_t* part : parts) {
+    if (visible) {
+      lv_obj_clear_flag(part, LV_OBJ_FLAG_HIDDEN);
+    } else {
+      lv_obj_add_flag(part, LV_OBJ_FLAG_HIDDEN);
     }
   }
+}
 
-  if (!any || total <= 0.0f) {
-    lv_label_set_text(bar->total, "--");
-    lv_label_set_text(bar->key, "");
-    for (lv_obj_t* segment : bar->segment) {
-      lv_obj_add_flag(segment, LV_OBJ_FLAG_HIDDEN);
-    }
+// Eases the ribbon into and out of its endpoints so it leaves each node square
+// on. A straight line between two offset nodes reads as a wire; this reads as a
+// flow, which is the only reason to draw it as a ribbon at all.
+float smoothstep(float t) {
+  return t * t * (3.0f - 2.0f * t);
+}
+
+void draw_ribbons(lv_event_t* event) {
+  if (!s_geometry.valid) {
+    return;
+  }
+  lv_obj_t* obj = lv_event_get_target(event);
+  lv_draw_ctx_t* ctx = lv_event_get_draw_ctx(event);
+  lv_area_t coords;
+  lv_obj_get_coords(obj, &coords);
+
+  const lv_coord_t x0 = coords.x1;
+  const lv_coord_t x1 = coords.x2;
+  const float span = static_cast<float>(x1 - x0);
+  if (span <= 0.0f) {
     return;
   }
 
-  char text[16];
-  snprintf(text, sizeof(text), "%.1f kWh", total);
-  lv_label_set_text(bar->total, text);
+  lv_draw_rect_dsc_t dsc;
+  lv_draw_rect_dsc_init(&dsc);
+  dsc.bg_opa = RIBBON_OPA;
 
-  lv_coord_t x = 0;
-  char key[128] = {};
-  size_t used = 0;
-  for (int i = 0; i < BAR_SEGMENTS; ++i) {
-    const float share = value[i].known && value[i].value > 0.0f ? value[i].value : 0.0f;
-    lv_coord_t width = static_cast<lv_coord_t>(share / total * BAR_WIDTH);
-    // The last drawn segment takes whatever the rounding left, so the bar always
-    // ends flush with its track.
-    if (i == BAR_SEGMENTS - 1 && width > 0) {
-      width = BAR_WIDTH - x;
-    }
-    if (width < MIN_SEGMENT_PX) {
-      lv_obj_add_flag(bar->segment[i], LV_OBJ_FLAG_HIDDEN);
+  for (const Geometry::Ribbon& ribbon : s_geometry.ribbon) {
+    if (!ribbon.drawn) {
       continue;
     }
-    lv_obj_set_size(bar->segment[i], width, BAR_HEIGHT);
-    lv_obj_set_pos(bar->segment[i], x, 0);
-    lv_obj_clear_flag(bar->segment[i], LV_OBJ_FLAG_HIDDEN);
-    x += width;
+    dsc.bg_color = lv_color_hex(ribbon.colour);
+    const float rise = static_cast<float>(ribbon.right_top - ribbon.left_top);
+    for (lv_coord_t x = x0; x <= x1; x += SLICE_PX) {
+      lv_coord_t next = x + SLICE_PX;
+      if (next > x1) {
+        next = x1;
+      }
+      // Each slice spans its own height *and* the next one's, so the ribbon has
+      // no steps down a steep diagonal. A slice drawn flat at its own height is
+      // fine where the flow runs level, but where it climbs, consecutive slices
+      // are several pixels apart and the edge turns into a staircase.
+      const float here = static_cast<float>(ribbon.left_top) +
+                         rise * smoothstep(static_cast<float>(x - x0) / span);
+      const float there = static_cast<float>(ribbon.left_top) +
+                          rise * smoothstep(static_cast<float>(next - x0) / span);
+      const lv_coord_t top = static_cast<lv_coord_t>(lroundf(here < there ? here : there));
+      const lv_coord_t bottom = static_cast<lv_coord_t>(lroundf(here < there ? there : here));
 
-    used += snprintf(key + used, sizeof(key) - used, "%s#%06X %s %.1f#",
-                     used ? "  " : "", static_cast<unsigned>(colour[i]), name[i], share);
-    if (used >= sizeof(key)) {
-      break;
+      lv_area_t area;
+      area.x1 = x;
+      area.x2 = x + SLICE_PX - 1;
+      if (area.x2 > x1) {
+        area.x2 = x1;
+      }
+      area.y1 = top;
+      area.y2 = bottom + ribbon.thickness - 1;
+      lv_draw_rect(ctx, &dsc, &area);
     }
   }
-  lv_label_set_text(bar->key, key);
+}
+
+void clear_geometry() {
+  s_geometry.valid = false;
+  for (Geometry::Ribbon& ribbon : s_geometry.ribbon) {
+    ribbon.drawn = false;
+  }
+}
+
+void set_node_value(const NodeUi& node, float kwh) {
+  char text[16];
+  snprintf(text, sizeof(text), "%.1f", kwh);
+  lv_label_set_text(node.value, text);
 }
 
 }  // namespace
@@ -191,25 +245,35 @@ lv_obj_t* screen_flows_create(lv_obj_t* parent) {
   lv_obj_set_style_arc_color(s_arc, lv_color_hex(PUCK_COLOUR_HOME), LV_PART_INDICATOR);
   lv_obj_add_flag(s_arc, LV_OBJ_FLAG_HIDDEN);
 
-  lv_obj_t* title = make_label(s_root, PUCK_FONT_SMALL, PUCK_COLOUR_MUTED);
+  // The ribbon channel, drawn before the node bars so the bars cap the ends.
+  s_canvas = lv_obj_create(s_root);
+  lv_obj_remove_style_all(s_canvas);
+  lv_obj_clear_flag(s_canvas, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_clear_flag(s_canvas, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_size(s_canvas, RIBBON_X * 2, PUCK_LCD_HEIGHT);
+  lv_obj_center(s_canvas);
+  lv_obj_add_event_cb(s_canvas, draw_ribbons, LV_EVENT_DRAW_MAIN_END, nullptr);
+
+  lv_obj_t* title = make_label(s_root, PUCK_FONT_SMALL, PUCK_COLOUR_MUTED, 0, -186);
   lv_obj_set_style_text_letter_space(title, 3, LV_PART_MAIN);
-  lv_label_set_text(title, "FLOWS");
-  lv_obj_align(title, LV_ALIGN_CENTER, 0, -166);
+  lv_label_set_text(title, "FLOWS  ·  kWh");
 
-  s_hero = make_label(s_root, PUCK_FONT_HERO, PUCK_COLOUR_TEXT);
+  s_hero = make_label(s_root, PUCK_FONT_HERO, PUCK_COLOUR_TEXT, 0, -140);
   lv_label_set_text(s_hero, "--");
-  lv_obj_align(s_hero, LV_ALIGN_CENTER, 0, -118);
 
-  s_caption = make_label(s_root, PUCK_FONT_SMALL, PUCK_COLOUR_MUTED);
+  s_caption = make_label(s_root, PUCK_FONT_SMALL, PUCK_COLOUR_MUTED, 0, -100);
   lv_label_set_text(s_caption, "self-sufficient today");
-  lv_obj_align(s_caption, LV_ALIGN_CENTER, 0, -80);
 
-  static const uint32_t FROM_SOLAR[BAR_SEGMENTS] = {
-      PUCK_COLOUR_HOME, PUCK_COLOUR_BATTERY, PUCK_COLOUR_GRID};
-  static const uint32_t TO_LOAD[BAR_SEGMENTS] = {
-      PUCK_COLOUR_SOLAR, PUCK_COLOUR_BATTERY, PUCK_COLOUR_GRID};
-  build_bar(&s_from_solar, "SOLAR", FROM_SOLAR, GROUP_ONE_Y);
-  build_bar(&s_to_load, "USED", TO_LOAD, GROUP_TWO_Y);
+  // Short names on purpose: the labels sit where the bezel has already closed in,
+  // and "BATTERY" twice over would not fit beside the bars.
+  static const char* const SOURCE_NAME[SRC_COUNT] = {"SOLAR", "BATT", "GRID"};
+  static const char* const SINK_NAME[SNK_COUNT] = {"HOME", "BATT", "GRID"};
+  for (int i = 0; i < SRC_COUNT; ++i) {
+    build_node(&s_source[i], SOURCE_NAME[i], SOURCE_COLOUR[i], -NODE_X, ROW_Y[i]);
+  }
+  for (int i = 0; i < SNK_COUNT; ++i) {
+    build_node(&s_sink[i], SINK_NAME[i], SINK_COLOUR[i], NODE_X, ROW_Y[i]);
+  }
 
   return s_root;
 }
@@ -220,43 +284,108 @@ void screen_flows_update(const Snapshot& snapshot) {
   }
 
   const bool have = snapshot.valid && snapshot.today.present;
-  const Snapshot::Today::Flows& flows = snapshot.today.flows;
-  const MaybeFloat unknown;
+  const Snapshot::Today::Flows& f = snapshot.today.flows;
 
-  const MaybeFloat from_solar[BAR_SEGMENTS] = {
-      have ? flows.solar_load : unknown,
-      have ? flows.solar_batt : unknown,
-      have ? flows.solar_grid : unknown,
+  // Source-major, matching FLOWS above.
+  const MaybeFloat* value[FLOW_COUNT] = {
+      &f.solar_load, &f.solar_batt, &f.solar_grid, &f.batt_load,
+      &f.batt_grid,  &f.grid_load,  &f.grid_batt,
   };
-  static const char* FROM_SOLAR_NAMES[BAR_SEGMENTS] = {"home", "batt", "grid"};
-  static const uint32_t FROM_SOLAR_COLOURS[BAR_SEGMENTS] = {
-      PUCK_COLOUR_HOME, PUCK_COLOUR_BATTERY, PUCK_COLOUR_GRID};
-  set_bar(&s_from_solar, from_solar, FROM_SOLAR_NAMES, FROM_SOLAR_COLOURS);
 
-  const MaybeFloat to_load[BAR_SEGMENTS] = {
-      have ? flows.solar_load : unknown,
-      have ? flows.batt_load : unknown,
-      have ? flows.grid_load : unknown,
-  };
-  static const char* TO_LOAD_NAMES[BAR_SEGMENTS] = {"solar", "batt", "grid"};
-  static const uint32_t TO_LOAD_COLOURS[BAR_SEGMENTS] = {
-      PUCK_COLOUR_SOLAR, PUCK_COLOUR_BATTERY, PUCK_COLOUR_GRID};
-  set_bar(&s_to_load, to_load, TO_LOAD_NAMES, TO_LOAD_COLOURS);
+  float amount[FLOW_COUNT] = {};
+  float source_total[SRC_COUNT] = {};
+  float sink_total[SNK_COUNT] = {};
+  float largest = 0.0f;
+  bool any = false;
+  for (size_t i = 0; i < FLOW_COUNT; ++i) {
+    const float v = have && value[i]->known && value[i]->value > 0.0f ? value[i]->value : 0.0f;
+    amount[i] = v;
+    source_total[FLOWS[i].from] += v;
+    sink_total[FLOWS[i].to] += v;
+    if (v > 0.0f) {
+      any = true;
+    }
+  }
+  for (float total : source_total) {
+    largest = total > largest ? total : largest;
+  }
+  for (float total : sink_total) {
+    largest = total > largest ? total : largest;
+  }
+
+  if (!any || largest <= 0.0f) {
+    clear_geometry();
+    lv_obj_invalidate(s_canvas);
+    lv_label_set_text(s_hero, "--");
+    lv_obj_add_flag(s_arc, LV_OBJ_FLAG_HIDDEN);
+    for (const NodeUi& node : s_source) {
+      show_node(node, false);
+    }
+    for (const NodeUi& node : s_sink) {
+      show_node(node, false);
+    }
+    return;
+  }
+
+  // One scale for both columns — the two sides carry the same total, so scaling
+  // them separately would make a kWh mean two different heights on one screen.
+  const float scale = static_cast<float>(MAX_NODE_PX) / largest;
+
+  lv_coord_t source_top[SRC_COUNT];
+  lv_coord_t sink_top[SNK_COUNT];
+  for (int i = 0; i < SRC_COUNT; ++i) {
+    const lv_coord_t height = static_cast<lv_coord_t>(lroundf(source_total[i] * scale));
+    lv_obj_set_height(s_source[i].bar, height > 0 ? height : 1);
+    lv_obj_align(s_source[i].bar, LV_ALIGN_CENTER, -NODE_X, ROW_Y[i]);
+    source_top[i] = PUCK_LCD_HEIGHT / 2 + ROW_Y[i] - height / 2;
+    show_node(s_source[i], source_total[i] > 0.0f);
+    set_node_value(s_source[i], source_total[i]);
+  }
+  for (int i = 0; i < SNK_COUNT; ++i) {
+    const lv_coord_t height = static_cast<lv_coord_t>(lroundf(sink_total[i] * scale));
+    lv_obj_set_height(s_sink[i].bar, height > 0 ? height : 1);
+    lv_obj_align(s_sink[i].bar, LV_ALIGN_CENTER, NODE_X, ROW_Y[i]);
+    sink_top[i] = PUCK_LCD_HEIGHT / 2 + ROW_Y[i] - height / 2;
+    show_node(s_sink[i], sink_total[i] > 0.0f);
+    set_node_value(s_sink[i], sink_total[i]);
+  }
+
+  // Stack the ribbons up each node in declaration order, so a flow sits at the
+  // same rank on the node it leaves and the node it enters.
+  lv_coord_t source_used[SRC_COUNT] = {};
+  lv_coord_t sink_used[SNK_COUNT] = {};
+  clear_geometry();
+  for (size_t i = 0; i < FLOW_COUNT; ++i) {
+    if (amount[i] <= 0.0f) {
+      continue;
+    }
+    lv_coord_t thickness = static_cast<lv_coord_t>(lroundf(amount[i] * scale));
+    if (thickness < MIN_FLOW_PX) {
+      thickness = MIN_FLOW_PX;
+    }
+    Geometry::Ribbon& ribbon = s_geometry.ribbon[i];
+    ribbon.drawn = true;
+    ribbon.colour = SOURCE_COLOUR[FLOWS[i].from];
+    ribbon.thickness = thickness;
+    ribbon.left_top = source_top[FLOWS[i].from] + source_used[FLOWS[i].from];
+    ribbon.right_top = sink_top[FLOWS[i].to] + sink_used[FLOWS[i].to];
+    source_used[FLOWS[i].from] += thickness;
+    sink_used[FLOWS[i].to] += thickness;
+  }
+  s_geometry.valid = true;
+  lv_obj_invalidate(s_canvas);
 
   // Self-sufficiency: the share of the day's load that did not come off the
   // grid. Derived here rather than sent, on the same footing as the battery
   // screen's stored-kWh figure — one division between two numbers already in the
   // payload, not a piece of the server's business logic.
-  const bool can_derive = have && snapshot.today.load.known &&
-                          snapshot.today.load.value > 0.0f && flows.grid_load.known;
-  if (!can_derive) {
+  const float load = sink_total[SNK_HOME];
+  if (load <= 0.0f) {
     lv_label_set_text(s_hero, "--");
     lv_obj_add_flag(s_arc, LV_OBJ_FLAG_HIDDEN);
     return;
   }
-
-  float pct = (snapshot.today.load.value - flows.grid_load.value) /
-              snapshot.today.load.value * 100.0f;
+  float pct = (load - amount[5]) / load * 100.0f;  // amount[5] is grid -> home
   if (pct < 0.0f) {
     pct = 0.0f;
   }
