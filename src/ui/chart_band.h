@@ -33,6 +33,20 @@ void chart_band_set_range(lv_obj_t* band, float min_value, float max_value);
 // strong so the shape of the day still reads through the text on top.
 void chart_band_set_intensity(lv_obj_t* band, lv_opa_t intensity);
 
+// Confines the band to a circle centred on the display, radius `radius`; 0 (the
+// default) leaves it rectangular.
+//
+// This is what lets a band be drawn full width on a round panel. A rectangle
+// wide enough to reach both edges has corners well outside the glass, and one
+// narrow enough to keep them inside stops in open screen with a hard vertical
+// edge at each end. Clipped to the bezel instead, the curve runs off under the
+// ring on both sides and the ends simply are not there to notice.
+//
+// Only the drawing is clipped. The value-to-height mapping stays the same across
+// the whole band, so a reading means the same thing at midnight as at noon —
+// what varies is how much of the column is visible, not where it sits.
+void chart_band_set_bezel_clip(lv_obj_t* band, lv_coord_t radius);
+
 // Smooths the reduced curve over `columns` columns, centred; 1 (the default)
 // leaves it alone. Even windows are rounded up, because a blur through a window
 // with no centre shifts the curve half a column sideways.

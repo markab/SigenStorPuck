@@ -24,11 +24,13 @@ namespace {
 // hidden rather than drawn empty on the Modbus source — an unfilled track reads
 // as a confident zero.
 
-// Anchored on its bottom edge, which is the edge the round bezel binds: at
-// y = 174 the glass has closed in to 310 px.
-constexpr lv_coord_t BAND_WIDTH = 306;
+// Full width and clipped to the bezel, for the reasons set out on screen 2: a
+// rectangle either lies across the ring at its corners or ends in open screen.
+constexpr lv_coord_t BAND_WIDTH = PUCK_LCD_WIDTH;
 constexpr lv_coord_t BAND_HEIGHT = 156;
 constexpr lv_coord_t BAND_Y = 96;  // centre, so the band spans +18 to +174
+
+constexpr lv_coord_t BAND_CLIP_RADIUS = PUCK_RING_DIAMETER / 2 - PUCK_RING_WIDTH - 4;
 
 constexpr lv_opa_t BAND_GHOST = 110;
 
@@ -122,6 +124,7 @@ lv_obj_t* screen_solar_create(lv_obj_t* parent) {
     // capacity — so the band scales to the day it is drawing.
     chart_band_set_range(s_band, 0.0f, 0.0f);
     chart_band_set_intensity(s_band, BAND_GHOST);
+    chart_band_set_bezel_clip(s_band, BAND_CLIP_RADIUS);
     chart_band_set_smoothing(s_band, BAND_SMOOTHING);
   }
 

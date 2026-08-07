@@ -28,12 +28,21 @@ namespace {
 // Geometry from theme.h, shared with screen 1 — same ring, same place, so a
 // swipe between the two does not move it.
 
-// The curve is anchored on its *bottom* edge, because that is the edge the round
-// bezel binds: at y = 170 the glass has closed in to 318 px, and a wash drawn
-// wider than that is simply cut off mid-column.
-constexpr lv_coord_t BAND_WIDTH = 316;
+// Drawn the full width of the panel and clipped to the bezel, rather than sized
+// to a rectangle that fits inside it.
+//
+// A rectangle is the wrong shape here twice over. Wide enough to reach both
+// edges, its bottom corners land outside the ring — at y = +170 the ring's inner
+// edge only allows 286 px, so the old 316 px band was lying across it by 15 px a
+// side. Narrow enough to clear the ring, it stops in open screen and the day
+// ends at a hard vertical edge somewhere around 02:00 and 22:00. Clipped, the
+// curve runs off under the ring on both sides and its foot follows the glass.
+constexpr lv_coord_t BAND_WIDTH = PUCK_LCD_WIDTH;
 constexpr lv_coord_t BAND_HEIGHT = 148;
 constexpr lv_coord_t BAND_Y = 96;  // centre, so the band spans +22 to +170
+
+// Just inside the ring's own inner edge, so the two never touch.
+constexpr lv_coord_t BAND_CLIP_RADIUS = PUCK_RING_DIAMETER / 2 - PUCK_RING_WIDTH - 4;
 
 // The strength of the fill just under the curve; the gradient takes it to nothing
 // by the foot, and the cap is drawn about twice this. Tuned by eye in the
@@ -132,6 +141,7 @@ lv_obj_t* screen_battery_create(lv_obj_t* parent) {
     // cycle.
     chart_band_set_range(s_band, 0.0f, 100.0f);
     chart_band_set_intensity(s_band, BAND_GHOST);
+    chart_band_set_bezel_clip(s_band, BAND_CLIP_RADIUS);
     chart_band_set_smoothing(s_band, BAND_SMOOTHING);
   }
 

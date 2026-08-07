@@ -1,5 +1,8 @@
 #include "chart_band.h"
 
+#include <math.h>
+
+#include "board_config.h"
 #include "theme.h"
 
 namespace {
@@ -9,8 +12,9 @@ namespace {
 // bar chart rather than a curve.
 constexpr lv_coord_t COLUMN_PX = 2;
 
-// Enough for the full usable width inside PUCK_SAFE_SQUARE at COLUMN_PX.
-constexpr size_t MAX_COLUMNS = 208;
+// Enough for a band spanning the whole panel, not just the safe square: a
+// bezel-clipped band is drawn edge to edge and lets the glass cut the ends.
+constexpr size_t MAX_COLUMNS = 240;  // a full-width band at COLUMN_PX
 
 // Three weights, which is what makes this an envelope rather than a silhouette:
 // a faint wash under the curve, the column's own min-to-max spread picked out a
@@ -32,6 +36,14 @@ constexpr float MIN_SPAN = 0.1f;
 // a day's shape stops being a curve and becomes a hill.
 constexpr uint8_t MAX_SMOOTHING = 15;
 
+// The clip circle is concentric with the panel, which is also where the
+// state-of-charge ring is drawn — so a radius just inside the ring keeps every
+// band clear of it. Rotation happens in display.cpp's flush callback, so LVGL's
+// coordinates are always the unrotated panel and this stays true at any
+// orientation.
+constexpr lv_coord_t CENTRE_X = PUCK_LCD_WIDTH / 2;
+constexpr lv_coord_t CENTRE_Y = PUCK_LCD_HEIGHT / 2;
+
 constexpr size_t MAX_BANDS = 4;
 
 struct Band {
@@ -44,6 +56,7 @@ struct Band {
   bool autoscale = true;
   lv_opa_t intensity = LV_OPA_COVER;
   uint8_t smoothing = 1;
+  lv_coord_t clip_radius = 0;
 
   // The reduced window, cached.
   //
@@ -154,6 +167,29 @@ void draw_band(lv_event_t* event) {
       break;
     }
 
+    // How far down this column may be drawn. Normally the foot of the band; on a
+    // bezel-clipped band, wherever the circle cuts it, so the fill lands on an
+    // arc rather than on a straight edge lying across the ring.
+    lv_coord_t floor_y = coords.y2;
+    if (band->clip_radius > 0) {
+      // Measured at whichever edge of the column is further from the centre, not
+      // at its midpoint: a column is COLUMN_PX wide, and clipping to the middle
+      // lets its outer pixel sit a pixel beyond the radius — which on this screen
+      // is a pixel into the ring.
+      const int32_t left = static_cast<int32_t>(x) - CENTRE_X;
+      const int32_t right = static_cast<int32_t>(x + COLUMN_PX - 1) - CENTRE_X;
+      const int32_t dx = (left < 0 ? -left : left) > (right < 0 ? -right : right) ? left : right;
+      const int32_t inside = static_cast<int32_t>(band->clip_radius) * band->clip_radius - dx * dx;
+      if (inside <= 0) {
+        bridge_from = -1;  // wholly behind the bezel
+        continue;
+      }
+      const lv_coord_t reach = static_cast<lv_coord_t>(sqrtf(static_cast<float>(inside)));
+      if (CENTRE_Y + reach < floor_y) {
+        floor_y = CENTRE_Y + reach;
+      }
+    }
+
     const float low = band->column[c].min_value - band->drawn_min;
     const float high = band->column[c].max_value - band->drawn_min;
     // y grows downwards, so the larger value gets the smaller y.
@@ -168,6 +204,16 @@ void draw_band(lv_event_t* event) {
     if (y_bottom < y_top) {
       y_bottom = y_top;
     }
+    // The curve itself is below the arc here: there is nothing of this column on
+    // the glass, and drawing the cap alone would leave a line hanging under the
+    // ring with no fill beneath it.
+    if (y_top > floor_y) {
+      bridge_from = -1;
+      continue;
+    }
+    if (y_bottom > floor_y) {
+      y_bottom = floor_y;
+    }
 
     lv_area_t area;
     area.x1 = x;
@@ -179,7 +225,7 @@ void draw_band(lv_event_t* event) {
     // The wash: from the column's high down to the baseline, so the band sits on
     // the floor of the chart rather than floating as a detached ribbon.
     area.y1 = y_top;
-    area.y2 = coords.y2;
+    area.y2 = floor_y;
     lv_draw_rect(ctx, &fill, &area);
 
     // The spread between this column's min and max. Only worth drawing when the
@@ -214,8 +260,8 @@ void draw_band(lv_event_t* event) {
     if (area.y1 < coords.y1) {
       area.y1 = coords.y1;
     }
-    if (area.y2 > coords.y2) {
-      area.y2 = coords.y2;
+    if (area.y2 > floor_y) {
+      area.y2 = floor_y;
     }
     lv_draw_rect(ctx, &edge, &area);
     bridge_from = y_top;
@@ -294,6 +340,7 @@ lv_obj_t* chart_band_create(lv_obj_t* parent, HistorySeries series, uint32_t col
   band->autoscale = true;
   band->intensity = LV_OPA_COVER;
   band->smoothing = 1;
+  band->clip_radius = 0;
   band->last_minute = UINT32_MAX;
 
   lv_obj_set_user_data(obj, band);
@@ -312,6 +359,15 @@ void chart_band_set_range(lv_obj_t* obj, float min_value, float max_value) {
   band->last_minute = UINT32_MAX;  // the picture changes even if the data has not
 }
 
+
+void chart_band_set_bezel_clip(lv_obj_t* obj, lv_coord_t radius) {
+  Band* band = band_for(obj);
+  if (band == nullptr) {
+    return;
+  }
+  band->clip_radius = radius < 0 ? 0 : radius;
+  lv_obj_invalidate(obj);
+}
 
 void chart_band_set_smoothing(lv_obj_t* obj, uint8_t columns) {
   Band* band = band_for(obj);
