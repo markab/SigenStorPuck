@@ -28,6 +28,10 @@ constexpr lv_coord_t EDGE_PX = 2;
 // somewhere sensible rather than collapsing or exploding.
 constexpr float MIN_SPAN = 0.1f;
 
+// The widest smoothing window a band may ask for, in columns. Beyond about this
+// a day's shape stops being a curve and becomes a hill.
+constexpr uint8_t MAX_SMOOTHING = 15;
+
 constexpr size_t MAX_BANDS = 4;
 
 struct Band {
@@ -39,6 +43,7 @@ struct Band {
   float range_max = 0.0f;
   bool autoscale = true;
   lv_opa_t intensity = LV_OPA_COVER;
+  uint8_t smoothing = 1;
 
   // The reduced window, cached.
   //
@@ -84,16 +89,17 @@ void draw_band(lv_event_t* event) {
   const float span = band->drawn_max - band->drawn_min;
   const float scale = static_cast<float>(height - 1) / (span < MIN_SPAN ? MIN_SPAN : span);
 
-  // One multiplier over all three weights, so ghosting a band keeps the
-  // relationship between wash, spread and cap that makes it read as an envelope.
+  const bool ghosted = band->intensity < LV_OPA_COVER;
   const auto scaled = [band](lv_opa_t base) {
     return static_cast<lv_opa_t>((static_cast<uint16_t>(base) * band->intensity) / 255);
+  };
+  const auto lifted = [](uint16_t value) {
+    return static_cast<lv_opa_t>(value > LV_OPA_COVER ? LV_OPA_COVER : value);
   };
 
   lv_draw_rect_dsc_t fill;
   lv_draw_rect_dsc_init(&fill);
   fill.bg_color = lv_color_hex(band->colour);
-  fill.bg_opa = scaled(FILL_OPA);
 
   // A ghosted band is a backdrop, and a backdrop must not have edges. Left as a
   // flat wash it reads as a translucent rectangle sitting behind the text —
@@ -103,27 +109,44 @@ void draw_band(lv_event_t* event) {
   // A gradient in the colour rather than in the alpha because LVGL 8's gradient
   // stops carry no opacity. On a true-black AMOLED background the two are the
   // same picture.
-  if (band->intensity < LV_OPA_COVER) {
+  //
+  // Because the gradient is what does the fading, the fill's own opacity does not
+  // also have to be tiny — which is the mistake the first version made, dimming
+  // twice and leaving a curve nobody could see. Ghosted, the intensity *is* the
+  // fill's strength just under the cap, and the gradient takes it to nothing by
+  // the foot.
+  if (ghosted) {
+    fill.bg_opa = band->intensity;
     fill.bg_grad.dir = LV_GRAD_DIR_VER;
     fill.bg_grad.stops_count = 2;
     fill.bg_grad.stops[0].color = lv_color_hex(band->colour);
     fill.bg_grad.stops[0].frac = 0;
     fill.bg_grad.stops[1].color = lv_color_hex(PUCK_COLOUR_BG);
     fill.bg_grad.stops[1].frac = 255;
+  } else {
+    fill.bg_opa = FILL_OPA;
   }
 
   lv_draw_rect_dsc_t spread;
   lv_draw_rect_dsc_init(&spread);
   spread.bg_color = lv_color_hex(band->colour);
-  spread.bg_opa = scaled(SPREAD_OPA);
+  spread.bg_opa = ghosted ? scaled(SPREAD_OPA) : SPREAD_OPA;
 
+  // The cap is the one part that should stay crisp however far back the rest is
+  // pushed: it is the line the eye follows, and a gradient fill with no outline
+  // reads as a smudge rather than as a day.
   lv_draw_rect_dsc_t edge;
   lv_draw_rect_dsc_init(&edge);
   edge.bg_color = lv_color_hex(band->colour);
-  edge.bg_opa = scaled(LV_OPA_COVER);
+  edge.bg_opa = ghosted ? lifted(static_cast<uint16_t>(band->intensity) * 2) : LV_OPA_COVER;
+
+  // The previous column's cap height, so the outline can be drawn as a connected
+  // line; -1 whenever the run breaks, because a gap must not be spanned.
+  lv_coord_t bridge_from = -1;
 
   for (size_t c = 0; c < band->columns; ++c) {
     if (!band->column[c].known) {
+      bridge_from = -1;
       continue;  // a gap stays a gap; bridging it would invent readings
     }
     const lv_coord_t x = coords.x1 + static_cast<lv_coord_t>(c) * COLUMN_PX;
@@ -160,8 +183,11 @@ void draw_band(lv_event_t* event) {
     lv_draw_rect(ctx, &fill, &area);
 
     // The spread between this column's min and max. Only worth drawing when the
-    // column actually covers more than the cap will.
-    if (y_bottom - y_top > EDGE_PX) {
+    // column actually covers more than the cap will — and not at all on a
+    // backdrop, where a second darker shape inside the gradient reads as two
+    // overlapping charts rather than as one. A ghosted band is an area chart:
+    // one curve, one fill under it.
+    if (!ghosted && y_bottom - y_top > EDGE_PX) {
       area.y1 = y_top;
       area.y2 = y_bottom;
       lv_draw_rect(ctx, &spread, &area);
@@ -169,12 +195,72 @@ void draw_band(lv_event_t* event) {
 
     // The cap along the top, solid and thin, so the outline of the day reads at
     // a glance even where the wash behind it is faint.
+    //
+    // Stretched to meet the previous column rather than drawn flat at this
+    // column's own height. A 2 px cap per 2 px column is fine on a gentle slope,
+    // but on a steep one consecutive columns are tens of pixels apart and the
+    // line breaks into a row of dashes climbing the screen. Bridging the gap is
+    // what makes it a curve.
     area.y1 = y_top;
     area.y2 = y_top + EDGE_PX - 1;
+    if (bridge_from >= 0) {
+      if (bridge_from < area.y1) {
+        area.y1 = bridge_from;
+      }
+      if (bridge_from > area.y2) {
+        area.y2 = bridge_from;
+      }
+    }
+    if (area.y1 < coords.y1) {
+      area.y1 = coords.y1;
+    }
     if (area.y2 > coords.y2) {
       area.y2 = coords.y2;
     }
     lv_draw_rect(ctx, &edge, &area);
+    bridge_from = y_top;
+  }
+}
+
+// A centred box blur over the reduced columns.
+//
+// Applied after the reduction, not before: the ring holds a minute a sample and
+// the columns are already the picture, so smoothing here costs a pass over ~150
+// values rather than over 1440.
+//
+// Unknown columns are left unknown and contribute nothing to their neighbours. A
+// gap is a gap — bridging one would draw a curve across minutes nobody recorded,
+// which is the whole reason history_reduce reports `known` per column.
+void smooth_columns(Band* band) {
+  const int half = band->smoothing / 2;
+  if (half < 1 || band->columns == 0) {
+    return;
+  }
+  // Static rather than on the stack: this runs on the UI task, one band at a
+  // time, and 208 columns is 2.5 KB that has no business on a task stack.
+  static HistoryColumn source[MAX_COLUMNS];
+  for (size_t c = 0; c < band->columns; ++c) {
+    source[c] = band->column[c];
+  }
+
+  for (size_t c = 0; c < band->columns; ++c) {
+    if (!source[c].known) {
+      continue;
+    }
+    float lowest = 0.0f;
+    float highest = 0.0f;
+    int counted = 0;
+    for (int k = -half; k <= half; ++k) {
+      const long j = static_cast<long>(c) + k;
+      if (j < 0 || j >= static_cast<long>(band->columns) || !source[j].known) {
+        continue;
+      }
+      lowest += source[j].min_value;
+      highest += source[j].max_value;
+      ++counted;
+    }
+    band->column[c].min_value = lowest / static_cast<float>(counted);
+    band->column[c].max_value = highest / static_cast<float>(counted);
   }
 }
 
@@ -207,6 +293,7 @@ lv_obj_t* chart_band_create(lv_obj_t* parent, HistorySeries series, uint32_t col
   band->colour = colour;
   band->autoscale = true;
   band->intensity = LV_OPA_COVER;
+  band->smoothing = 1;
   band->last_minute = UINT32_MAX;
 
   lv_obj_set_user_data(obj, band);
@@ -222,6 +309,21 @@ void chart_band_set_range(lv_obj_t* obj, float min_value, float max_value) {
   band->autoscale = max_value <= min_value;
   band->range_min = min_value;
   band->range_max = max_value;
+  band->last_minute = UINT32_MAX;  // the picture changes even if the data has not
+}
+
+
+void chart_band_set_smoothing(lv_obj_t* obj, uint8_t columns) {
+  Band* band = band_for(obj);
+  if (band == nullptr) {
+    return;
+  }
+  if (columns > MAX_SMOOTHING) {
+    columns = MAX_SMOOTHING;
+  }
+  // Even windows have no centre, so a blur through one shifts the curve half a
+  // column sideways. Round up rather than reject.
+  band->smoothing = columns < 1 ? 1 : (columns | 1);
   band->last_minute = UINT32_MAX;  // the picture changes even if the data has not
 }
 
@@ -275,6 +377,7 @@ void chart_band_refresh(lv_obj_t* obj) {
 
   history_reduce(band->series, from, to, band->column, columns);
   band->columns = columns;
+  smooth_columns(band);
 
   float lowest = 0.0f;
   float highest = 0.0f;

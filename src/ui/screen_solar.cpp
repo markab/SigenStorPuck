@@ -30,7 +30,12 @@ constexpr lv_coord_t BAND_WIDTH = 306;
 constexpr lv_coord_t BAND_HEIGHT = 156;
 constexpr lv_coord_t BAND_Y = 96;  // centre, so the band spans +18 to +174
 
-constexpr lv_opa_t BAND_GHOST = 60;
+constexpr lv_opa_t BAND_GHOST = 110;
+
+// Wider than screen 2's: PV under broken cloud reduces to a picket fence, and
+// behind four figures that is noise rather than information. The day's shape is
+// what this is here to carry.
+constexpr uint8_t BAND_SMOOTHING = 13;
 
 constexpr lv_coord_t COLUMN_X = 88;
 constexpr lv_coord_t ROW_ONE_LABEL_Y = 44;
@@ -117,6 +122,7 @@ lv_obj_t* screen_solar_create(lv_obj_t* parent) {
     // capacity — so the band scales to the day it is drawing.
     chart_band_set_range(s_band, 0.0f, 0.0f);
     chart_band_set_intensity(s_band, BAND_GHOST);
+    chart_band_set_smoothing(s_band, BAND_SMOOTHING);
   }
 
   lv_obj_t* title = make_label(s_root, PUCK_FONT_SMALL, PUCK_COLOUR_MUTED, 0, -166);

@@ -26,10 +26,21 @@ lv_obj_t* chart_band_create(lv_obj_t* parent, HistorySeries series, uint32_t col
 // means the same thing every time you look at it.
 void chart_band_set_range(lv_obj_t* band, float min_value, float max_value);
 
-// Scales all three of the band's weights at once. LV_OPA_COVER is the normal
-// strength, for a band drawn in a clear strip of its own; lower values ghost it
-// back far enough to carry text on top without the two fighting.
+// How far back to push the band. LV_OPA_COVER is the normal strength, for a band
+// drawn in a clear strip of its own; anything lower switches it to backdrop
+// rendering, where the fill becomes a gradient running from this strength just
+// under the curve down to nothing at the foot, and the cap stays about twice as
+// strong so the shape of the day still reads through the text on top.
 void chart_band_set_intensity(lv_obj_t* band, lv_opa_t intensity);
+
+// Smooths the reduced curve over `columns` columns, centred; 1 (the default)
+// leaves it alone. Even windows are rounded up, because a blur through a window
+// with no centre shifts the curve half a column sideways.
+//
+// Worth having on a backdrop, where the point is the shape of the day rather
+// than any individual minute — a raw min/max envelope of PV under broken cloud
+// is a picket fence, and a picket fence behind text is just noise.
+void chart_band_set_smoothing(lv_obj_t* band, uint8_t columns);
 
 // Recomputes the reduced columns from the history ring.
 //

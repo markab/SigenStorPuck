@@ -35,10 +35,15 @@ constexpr lv_coord_t BAND_WIDTH = 316;
 constexpr lv_coord_t BAND_HEIGHT = 148;
 constexpr lv_coord_t BAND_Y = 96;  // centre, so the band spans +22 to +170
 
-// Faint enough that a value sitting on the cap of the curve still reads first.
-// Tuned by eye in the simulator against 02_evening_discharge, which is the
-// fixture whose curve runs highest and therefore crosses the most text.
-constexpr lv_opa_t BAND_GHOST = 60;
+// The strength of the fill just under the curve; the gradient takes it to nothing
+// by the foot, and the cap is drawn about twice this. Tuned by eye in the
+// simulator against 02_evening_discharge, which is the fixture whose curve runs
+// highest and therefore crosses the most text.
+constexpr lv_opa_t BAND_GHOST = 110;
+
+// A day of state of charge is a slow curve already, so this is only knocking the
+// corners off the reduction.
+constexpr uint8_t BAND_SMOOTHING = 7;
 
 // The two stat columns, either side of the middle.
 constexpr lv_coord_t COLUMN_X = 88;
@@ -127,6 +132,7 @@ lv_obj_t* screen_battery_create(lv_obj_t* parent) {
     // cycle.
     chart_band_set_range(s_band, 0.0f, 100.0f);
     chart_band_set_intensity(s_band, BAND_GHOST);
+    chart_band_set_smoothing(s_band, BAND_SMOOTHING);
   }
 
   lv_obj_t* title = make_label(s_root, PUCK_FONT_SMALL, PUCK_COLOUR_MUTED, 0, -166);
