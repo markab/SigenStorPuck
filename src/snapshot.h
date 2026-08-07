@@ -105,6 +105,18 @@ struct Snapshot {
       MaybeFloat grid_batt;
       MaybeFloat batt_load;
       MaybeFloat batt_grid;
+
+      // The EV's share of each *_load flow above — part of load, not a fourth
+      // thing the plant feeds, so what is left of *_load is the house.
+      //
+      // Sent as the EV part rather than as a home figure of its own so the
+      // addition stayed additive: a build that predates it reads *_load as the
+      // whole of load, which is exactly what it meant then. Unknown here has to
+      // mean "no split available", not "no EV", so the screen treats it as zero
+      // and leaves the whole flow on the house.
+      MaybeFloat solar_ev;
+      MaybeFloat grid_ev;
+      MaybeFloat batt_ev;
     };
     Flows flows;
   };

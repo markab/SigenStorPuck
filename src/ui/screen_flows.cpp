@@ -27,7 +27,13 @@ namespace {
 // the split changes. Fixed rows keep the six labels in the same place all day,
 // which is what makes it glanceable.
 
-constexpr lv_coord_t ROW_Y[3] = {-42, 28, 98};
+// Three sources, four sinks, so the two columns get their own rows. They share a
+// top and a bottom so the shape stays balanced; only the spacing differs.
+//
+// The bottom row is fixed by the bezel: a label reaches 21 px below its row and
+// sits 182 px out, and the glass has closed to that at y = 120.
+constexpr lv_coord_t LEFT_ROW_Y[3] = {-76, 5, 86};
+constexpr lv_coord_t RIGHT_ROW_Y[4] = {-76, -22, 32, 86};
 
 // The node bars, and the channel the ribbons run down between them.
 constexpr lv_coord_t NODE_X = 132;
@@ -38,9 +44,9 @@ constexpr lv_coord_t RIBBON_X = NODE_X - NODE_WIDTH / 2 - 1;  // inner edge
 // row's label reaches y = 116, where the bezel has closed in to 184 px.
 constexpr lv_coord_t LABEL_X = 162;
 
-// The tallest a node bar may be drawn. Rows are 70 apart, so this leaves a clear
-// gap between neighbours at the busiest.
-constexpr lv_coord_t MAX_NODE_PX = 54;
+// The tallest a node bar may be drawn. Set by the tighter of the two columns —
+// the sinks, 54 apart — so neighbours never touch.
+constexpr lv_coord_t MAX_NODE_PX = 44;
 
 // A flow that happened must be visible, however small its share. Below a pixel
 // or two it would round away and the diagram would claim it never happened.
@@ -56,7 +62,11 @@ constexpr lv_coord_t SLICE_PX = 3;
 constexpr lv_opa_t RIBBON_OPA = LV_OPA_60;
 
 enum Source { SRC_SOLAR = 0, SRC_BATTERY, SRC_GRID, SRC_COUNT };
-enum Sink { SNK_HOME = 0, SNK_BATTERY, SNK_GRID, SNK_COUNT };
+
+// EV is its own sink rather than part of the house. A 7 kW charger dwarfs a
+// house, so folding the two together leaves a "home" figure that says nothing
+// about the home — and screen 1 already draws the charger as a leg of its own.
+enum Sink { SNK_HOME = 0, SNK_EV, SNK_BATTERY, SNK_GRID, SNK_COUNT };
 
 // Declared source-major, which is also the order ribbons stack at each end: it
 // keeps the same flow in the same place on both nodes and cuts the crossings.
@@ -65,16 +75,17 @@ struct FlowSpec {
   Sink to;
 };
 constexpr FlowSpec FLOWS[] = {
-    {SRC_SOLAR, SNK_HOME},   {SRC_SOLAR, SNK_BATTERY}, {SRC_SOLAR, SNK_GRID},
-    {SRC_BATTERY, SNK_HOME}, {SRC_BATTERY, SNK_GRID},  {SRC_GRID, SNK_HOME},
+    {SRC_SOLAR, SNK_HOME},   {SRC_SOLAR, SNK_EV},   {SRC_SOLAR, SNK_BATTERY},
+    {SRC_SOLAR, SNK_GRID},   {SRC_BATTERY, SNK_HOME}, {SRC_BATTERY, SNK_EV},
+    {SRC_BATTERY, SNK_GRID}, {SRC_GRID, SNK_HOME},  {SRC_GRID, SNK_EV},
     {SRC_GRID, SNK_BATTERY},
 };
 constexpr size_t FLOW_COUNT = sizeof(FLOWS) / sizeof(FLOWS[0]);
 
 constexpr uint32_t SOURCE_COLOUR[SRC_COUNT] = {PUCK_COLOUR_SOLAR, PUCK_COLOUR_BATTERY,
                                                PUCK_COLOUR_GRID};
-constexpr uint32_t SINK_COLOUR[SNK_COUNT] = {PUCK_COLOUR_HOME, PUCK_COLOUR_BATTERY,
-                                             PUCK_COLOUR_GRID};
+constexpr uint32_t SINK_COLOUR[SNK_COUNT] = {PUCK_COLOUR_HOME, PUCK_COLOUR_EV,
+                                             PUCK_COLOUR_BATTERY, PUCK_COLOUR_GRID};
 
 // Everything the draw callback needs, computed once per reading rather than per
 // buffer slice: LVGL calls the callback once for every slice the object crosses,
@@ -258,21 +269,21 @@ lv_obj_t* screen_flows_create(lv_obj_t* parent) {
   lv_obj_set_style_text_letter_space(title, 3, LV_PART_MAIN);
   lv_label_set_text(title, "FLOWS  ·  kWh");
 
-  s_hero = make_label(s_root, PUCK_FONT_HERO, PUCK_COLOUR_TEXT, 0, -140);
+  s_hero = make_label(s_root, PUCK_FONT_HERO, PUCK_COLOUR_TEXT, 0, -152);
   lv_label_set_text(s_hero, "--");
 
-  s_caption = make_label(s_root, PUCK_FONT_SMALL, PUCK_COLOUR_MUTED, 0, -100);
+  s_caption = make_label(s_root, PUCK_FONT_SMALL, PUCK_COLOUR_MUTED, 0, -112);
   lv_label_set_text(s_caption, "self-sufficient today");
 
   // Short names on purpose: the labels sit where the bezel has already closed in,
   // and "BATTERY" twice over would not fit beside the bars.
   static const char* const SOURCE_NAME[SRC_COUNT] = {"SOLAR", "BATT", "GRID"};
-  static const char* const SINK_NAME[SNK_COUNT] = {"HOME", "BATT", "GRID"};
+  static const char* const SINK_NAME[SNK_COUNT] = {"HOME", "EV", "BATT", "GRID"};
   for (int i = 0; i < SRC_COUNT; ++i) {
-    build_node(&s_source[i], SOURCE_NAME[i], SOURCE_COLOUR[i], -NODE_X, ROW_Y[i]);
+    build_node(&s_source[i], SOURCE_NAME[i], SOURCE_COLOUR[i], -NODE_X, LEFT_ROW_Y[i]);
   }
   for (int i = 0; i < SNK_COUNT; ++i) {
-    build_node(&s_sink[i], SINK_NAME[i], SINK_COLOUR[i], NODE_X, ROW_Y[i]);
+    build_node(&s_sink[i], SINK_NAME[i], SINK_COLOUR[i], NODE_X, RIGHT_ROW_Y[i]);
   }
 
   return s_root;
@@ -286,23 +297,40 @@ void screen_flows_update(const Snapshot& snapshot) {
   const bool have = snapshot.valid && snapshot.today.present;
   const Snapshot::Today::Flows& f = snapshot.today.flows;
 
-  // Source-major, matching FLOWS above.
-  const MaybeFloat* value[FLOW_COUNT] = {
-      &f.solar_load, &f.solar_batt, &f.solar_grid, &f.batt_load,
-      &f.batt_grid,  &f.grid_load,  &f.grid_batt,
+  // Unknown counts as nothing here rather than as a dash: this screen draws a
+  // shape, and there is no shape for "unknown".
+  const auto amount_of = [have](const MaybeFloat& v) {
+    return have && v.known && v.value > 0.0f ? v.value : 0.0f;
+  };
+  // The EV's share is carved out of the matching load flow, so the house gets
+  // what is left. A server with no split sends no *_ev, which reads as zero and
+  // leaves the whole flow on the house — which is what such a server meant.
+  const auto to_home = [&amount_of](const MaybeFloat& load, const MaybeFloat& ev) {
+    const float home = amount_of(load) - amount_of(ev);
+    return home > 0.0f ? home : 0.0f;
   };
 
-  float amount[FLOW_COUNT] = {};
+  // Source-major, matching FLOWS above.
+  const float amount[FLOW_COUNT] = {
+      to_home(f.solar_load, f.solar_ev), amount_of(f.solar_ev),
+      amount_of(f.solar_batt),           amount_of(f.solar_grid),
+      to_home(f.batt_load, f.batt_ev),   amount_of(f.batt_ev),
+      amount_of(f.batt_grid),            to_home(f.grid_load, f.grid_ev),
+      amount_of(f.grid_ev),              amount_of(f.grid_batt),
+  };
+
   float source_total[SRC_COUNT] = {};
   float sink_total[SNK_COUNT] = {};
+  float from_grid = 0.0f;  // grid straight to consumption, for self-sufficiency
   float largest = 0.0f;
   bool any = false;
   for (size_t i = 0; i < FLOW_COUNT; ++i) {
-    const float v = have && value[i]->known && value[i]->value > 0.0f ? value[i]->value : 0.0f;
-    amount[i] = v;
-    source_total[FLOWS[i].from] += v;
-    sink_total[FLOWS[i].to] += v;
-    if (v > 0.0f) {
+    source_total[FLOWS[i].from] += amount[i];
+    sink_total[FLOWS[i].to] += amount[i];
+    if (FLOWS[i].from == SRC_GRID && (FLOWS[i].to == SNK_HOME || FLOWS[i].to == SNK_EV)) {
+      from_grid += amount[i];
+    }
+    if (amount[i] > 0.0f) {
       any = true;
     }
   }
@@ -336,16 +364,16 @@ void screen_flows_update(const Snapshot& snapshot) {
   for (int i = 0; i < SRC_COUNT; ++i) {
     const lv_coord_t height = static_cast<lv_coord_t>(lroundf(source_total[i] * scale));
     lv_obj_set_height(s_source[i].bar, height > 0 ? height : 1);
-    lv_obj_align(s_source[i].bar, LV_ALIGN_CENTER, -NODE_X, ROW_Y[i]);
-    source_top[i] = PUCK_LCD_HEIGHT / 2 + ROW_Y[i] - height / 2;
+    lv_obj_align(s_source[i].bar, LV_ALIGN_CENTER, -NODE_X, LEFT_ROW_Y[i]);
+    source_top[i] = PUCK_LCD_HEIGHT / 2 + LEFT_ROW_Y[i] - height / 2;
     show_node(s_source[i], source_total[i] > 0.0f);
     set_node_value(s_source[i], source_total[i]);
   }
   for (int i = 0; i < SNK_COUNT; ++i) {
     const lv_coord_t height = static_cast<lv_coord_t>(lroundf(sink_total[i] * scale));
     lv_obj_set_height(s_sink[i].bar, height > 0 ? height : 1);
-    lv_obj_align(s_sink[i].bar, LV_ALIGN_CENTER, NODE_X, ROW_Y[i]);
-    sink_top[i] = PUCK_LCD_HEIGHT / 2 + ROW_Y[i] - height / 2;
+    lv_obj_align(s_sink[i].bar, LV_ALIGN_CENTER, NODE_X, RIGHT_ROW_Y[i]);
+    sink_top[i] = PUCK_LCD_HEIGHT / 2 + RIGHT_ROW_Y[i] - height / 2;
     show_node(s_sink[i], sink_total[i] > 0.0f);
     set_node_value(s_sink[i], sink_total[i]);
   }
@@ -379,13 +407,16 @@ void screen_flows_update(const Snapshot& snapshot) {
   // grid. Derived here rather than sent, on the same footing as the battery
   // screen's stored-kWh figure — one division between two numbers already in the
   // payload, not a piece of the server's business logic.
-  const float load = sink_total[SNK_HOME];
-  if (load <= 0.0f) {
+  // Consumption is the house and the car together: charging one is still using
+  // energy, and a day spent filling the car off the grid is not self-sufficient
+  // however little the house drew.
+  const float consumed = sink_total[SNK_HOME] + sink_total[SNK_EV];
+  if (consumed <= 0.0f) {
     lv_label_set_text(s_hero, "--");
     lv_obj_add_flag(s_arc, LV_OBJ_FLAG_HIDDEN);
     return;
   }
-  float pct = (load - amount[5]) / load * 100.0f;  // amount[5] is grid -> home
+  float pct = (consumed - from_grid) / consumed * 100.0f;
   if (pct < 0.0f) {
     pct = 0.0f;
   }

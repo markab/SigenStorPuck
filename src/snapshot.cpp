@@ -91,6 +91,9 @@ bool snapshot_parse(const char* json, size_t length, Snapshot* out) {
     parsed.today.flows.grid_batt = maybe_float(flows["grid_batt"]);
     parsed.today.flows.batt_load = maybe_float(flows["batt_load"]);
     parsed.today.flows.batt_grid = maybe_float(flows["batt_grid"]);
+    parsed.today.flows.solar_ev = maybe_float(flows["solar_ev"]);
+    parsed.today.flows.grid_ev = maybe_float(flows["grid_ev"]);
+    parsed.today.flows.batt_ev = maybe_float(flows["batt_ev"]);
   }
 
   // Absent entirely from a server older than 0.15.0, which leaves configured

@@ -33,7 +33,10 @@
       "grid_load": 6.8,
       "grid_batt": 0.0,
       "batt_load": 5.2,
-      "batt_grid": 0.0
+      "batt_grid": 0.0,
+      "solar_ev": 5.6,
+      "batt_ev": 3.4,
+      "grid_ev": 5.9
     }
   },
   "solar": {
