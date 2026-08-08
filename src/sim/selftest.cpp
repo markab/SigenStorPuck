@@ -13,6 +13,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "button_gesture.h"
 #include "day_series.h"
 #include "history.h"
 #include "modbus_regs.h"
@@ -401,6 +402,113 @@ void test_history_banks() {
   history_reset(HistoryBank::Live);
 }
 
+// The button gesture recogniser, driven by synthetic timelines.
+//
+// Worth testing rather than eyeballing on hardware: it shipped with two bugs a
+// finger found and reading did not.
+namespace gesture {
+
+// Feeds a level for `ms` milliseconds at a 5 ms tick, the rate loop() polls at,
+// and records every gesture it produces.
+struct Recorder {
+  ButtonGestureState state;
+  uint32_t now = 1000;  // not zero, so an uninitialised timestamp would show up
+  int presses = 0;
+  int doubles = 0;
+  int holds = 0;
+
+  void feed(bool down, uint32_t ms) {
+    for (uint32_t elapsed = 0; elapsed < ms; elapsed += 5) {
+      switch (state.update(down, now)) {
+        case ButtonGesture::Press: ++presses; break;
+        case ButtonGesture::Double: ++doubles; break;
+        case ButtonGesture::Hold: ++holds; break;
+        default: break;
+      }
+      now += 5;
+    }
+  }
+  void tap(uint32_t ms) { feed(true, ms); feed(false, 5); }
+};
+
+}  // namespace gesture
+
+void test_button_gestures() {
+  printf("button gestures\n");
+  const ButtonGestureConfig boot{40, 400, 3000};
+
+  {  // One tap is a press, and only after the double window has closed.
+    gesture::Recorder r{{boot}};
+    r.tap(80);
+    r.feed(false, 200);
+    check(r.presses == 0, "a single press waits out the double window");
+    r.feed(false, 300);
+    check(r.presses == 1 && r.doubles == 0, "and then fires once");
+  }
+
+  {  // The bug this was written for: two unhurried taps must be one double.
+    //
+    // Each press is held 200 ms with a 250 ms gap. Measured release to release
+    // that is 450 ms and misses a 400 ms window, which is how a double came out
+    // as two singles; measured release to press it is 250 ms and lands.
+    gesture::Recorder r{{boot}};
+    r.tap(200);
+    r.feed(false, 250);
+    r.tap(200);
+    r.feed(false, 600);
+    check(r.doubles == 1, "unhurried taps still make a double");
+    check(r.presses == 0, "and no single press escapes with it");
+  }
+
+  {  // Genuinely separate taps stay separate.
+    gesture::Recorder r{{boot}};
+    r.tap(80);
+    r.feed(false, 600);
+    r.tap(80);
+    r.feed(false, 600);
+    check(r.presses == 2 && r.doubles == 0, "taps beyond the window are two presses");
+  }
+
+  {  // A hold fires while still down, once, and its release does nothing.
+    gesture::Recorder r{{boot}};
+    r.feed(true, 3200);
+    r.feed(false, 600);
+    check(r.holds == 1, "a long press holds exactly once");
+    check(r.presses == 0 && r.doubles == 0, "and is not also a press");
+  }
+
+  {  // Debounce rejects contact noise on the raw GPIO...
+    gesture::Recorder r{{boot}};
+    r.feed(true, 10);
+    r.feed(false, 600);
+    check(r.presses == 0, "a bounce is not a press");
+  }
+
+  {  // ...but the PMIC button has none, because power.cpp can only report a tap
+    // seen whole between two polls as lasting a single loop iteration.
+    gesture::Recorder r{{ButtonGestureConfig{0, 400, 3000}}};
+    r.feed(true, 5);
+    r.feed(false, 600);
+    check(r.presses == 1, "an undebounced button keeps its shortest tap");
+  }
+
+  {  // A tap and then a held second press is a double *and* a hold.
+    //
+    // Deciding the double at the press is what fixes the window, and the cost is
+    // that it cannot be taken back when that press turns out to be a hold. Both
+    // pairings are harmless: on PWR the auto-cycle toggles and then the device
+    // powers off, on BOOT a screen advances and then it restarts. What must not
+    // happen is a single press escaping as well, because that steps a day.
+    gesture::Recorder r{{boot}};
+    r.tap(80);
+    r.feed(false, 100);
+    r.feed(true, 3200);
+    r.feed(false, 600);
+    check(r.holds == 1 && r.doubles == 1, "tap-then-hold is both, and once each");
+    check(r.presses == 0, "and no day step escapes on the way");
+  }
+}
+
 }  // namespace
 
 int run_selftest() {
@@ -413,6 +521,7 @@ int run_selftest() {
   test_history();
   test_day_series();
   test_history_banks();
+  test_button_gestures();
   printf("\n%d checks, %d failed\n", s_checks, s_failures);
   return s_failures == 0 ? 0 : 1;
 }

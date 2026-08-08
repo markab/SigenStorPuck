@@ -68,6 +68,14 @@ void ui_update(const Snapshot& snapshot);
 void ui_update_day(const Snapshot& snapshot);
 void ui_clear_day();
 
+// A day has been asked for but has not arrived yet.
+//
+// The day-oriented screens blank to dashes and the indicator says LOADING,
+// rather than falling back to the live reading. Falling back was the first
+// attempt and it flashed *today's* figures under a past date every time you
+// stepped between days — briefly, confidently and wrongly.
+void ui_set_day_loading();
+
 // A full-screen message covering the tileview: WiFi setup, "not configured",
 // "re-enrol needed", "waiting for data". Pass nullptr as the title to hide it.
 //

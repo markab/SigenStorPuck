@@ -351,6 +351,9 @@ void show_current_fixture() {
   // fixture's day behind the new one's numbers.
   synthesise_history(snapshot);
   ui_update(snapshot);
+  if (ui_day_offset() != 0) {
+    ui_update_day(snapshot);
+  }
 
   const std::string title = "SigenStorPuck sim - " + name;
   sim_backend_set_title(title.c_str());
@@ -477,6 +480,23 @@ void handle_key(int key) {
   // fixture can express.
   if (key == '-' || key == '=') {
     ui_set_day_offset(ui_day_offset() + (key == '=' ? 1 : -1));
+    // The device fetches a dated payload for a past day; here the current fixture
+    // stands in for it, so the loaded state is what gets drawn. Shift-stepping
+    // shows the state before it arrives instead.
+    if (ui_day_offset() == 0) {
+      ui_clear_day();
+    } else {
+      show_current_fixture();
+    }
+    return;
+  }
+  if (key == '_' || key == '+') {
+    ui_set_day_offset(ui_day_offset() + (key == '+' ? 1 : -1));
+    if (ui_day_offset() == 0) {
+      ui_clear_day();
+    } else {
+      ui_set_day_loading();
+    }
     return;
   }
   if (key == 'r') {
@@ -559,8 +579,10 @@ int run_screenshot_pass(const std::string& output_directory) {
   // The day indicator and the toast, which the buttons drive on hardware and no
   // fixture can express — same reasoning as the overlays above.
   ui_show_screen(1);
-  show_current_fixture();
+  // Offset first, so show_current_fixture() feeds the day as well as the live
+  // reading and the screens draw the loaded state rather than the pending one.
   ui_set_day_offset(-2);
+  show_current_fixture();
   lv_refr_now(nullptr);
   {
     const std::string path = output_directory + "/day_back.bmp";
@@ -570,7 +592,8 @@ int run_screenshot_pass(const std::string& output_directory) {
       ++failures;
     }
   }
-  ui_set_day_offset(0);
+  // Still on a past day, and loaded: the whole point of moving the indicator
+  // down to the page dots is that a toast no longer blanks it.
   ui_toast("AUTO-CYCLE OFF");
   lv_refr_now(nullptr);
   {
@@ -581,6 +604,19 @@ int run_screenshot_pass(const std::string& output_directory) {
       ++failures;
     }
   }
+  ui_set_day_loading();
+  lv_refr_now(nullptr);
+  {
+    const std::string path = output_directory + "/day_loading.bmp";
+    if (sim_backend_save_bmp(path.c_str())) {
+      printf("[sim] wrote %s\n", path.c_str());
+    } else {
+      ++failures;
+    }
+  }
+
+  ui_set_day_offset(0);
+  ui_clear_day();
 
   // How close LV_MEM_SIZE is to its limit, after a pass that has built every
   // screen and drawn every fixture through them — which is as hard as the pool

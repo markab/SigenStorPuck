@@ -180,6 +180,11 @@ void refresh_ui() {
   Snapshot day;
   if (poller_day_snapshot(&day)) {
     ui_update_day(day);
+  } else if (ui_day_offset() != 0) {
+    // Asked for but not here yet. Dashes and LOADING, not the live reading:
+    // falling back to live flashed today's figures under a past date on every
+    // step between days.
+    ui_set_day_loading();
   } else {
     ui_clear_day();
   }

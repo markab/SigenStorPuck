@@ -38,8 +38,9 @@ PuckScreen s_screen_at[MAX_SCREENS] = {};
 // Below everything the screens draw, but held clear of the bezel: the outermost
 // dot of a six-dot row sits at x=51, where screen 1's state-of-charge arc has
 // curved in to y=216. Any lower and the row runs into the end of the arc — which
-// is what it used to do. Screen 3's day band was raised to keep its own clearance.
-constexpr lv_coord_t DOTS_Y = 202;
+// is what it used to do. Screen 3's day band was raised to keep its own
+// clearance, and this moved down two pixels to leave the day indicator a gap.
+constexpr lv_coord_t DOTS_Y = 204;
 constexpr lv_coord_t DOT_SIZE = 7;
 constexpr lv_coord_t DOT_GAP = 10;
 
@@ -68,13 +69,25 @@ bool s_day_stepping = true;
 Snapshot s_live;
 bool s_live_valid = false;
 Snapshot s_day;
-bool s_day_valid = false;
 
-// Above every screen's own title and inside the ring: at y = 208 the ring's inner
-// edge has closed in to 154 px across, and the longest message put here —
-// "AUTO-CYCLE OFF" — measures 119 px at a letter spacing of 1. The date the chip
-// shows is much shorter, so that one keeps the wider spacing.
-constexpr lv_coord_t CHIP_Y = -208;
+// What the day-oriented screens are looking at.
+enum class DayState : uint8_t {
+  Live,     // no day chosen; they follow the live reading
+  Loading,  // one chosen, not arrived — dashes, not a stale or wrong day
+  Loaded,
+};
+DayState s_day_state = DayState::Live;
+
+// The toast owns the top of the screen. At y = 208 the ring's inner edge has
+// closed in to 154 px across, and the longest message put there — "AUTO-CYCLE
+// OFF" — measures 119 px at a letter spacing of 1.
+constexpr lv_coord_t TOAST_Y = -208;
+
+// The day indicator sits just above the page dots instead, because it is the
+// same kind of thing they are: persistent state, not an interruption. Sharing
+// the top with the toast meant "OLDEST DAY" blanked the very date it was
+// answering about. Screen 1's state-of-charge readout moved up to make room.
+constexpr lv_coord_t CHIP_Y = 189;
 constexpr uint32_t TOAST_MS = 1600;
 
 // The address the overlay's QR points at, kept so the code is re-encoded when
@@ -162,6 +175,14 @@ void refresh_day_chip() {
     lv_obj_add_flag(s_day_chip, LV_OBJ_FLAG_HIDDEN);
     return;
   }
+  // No date until there is a day behind it. Naming the day while the screens
+  // below are still dashes would label an empty screen with a date it has not
+  // got yet.
+  if (s_day_state == DayState::Loading) {
+    lv_label_set_text(s_day_chip, "LOADING");
+    lv_obj_clear_flag(s_day_chip, LV_OBJ_FLAG_HIDDEN);
+    return;
+  }
   const time_t when = static_cast<time_t>(s_last_ts) + s_day_offset * 86400;
   struct tm parts = {};
   char text[24];
@@ -179,7 +200,6 @@ void refresh_day_chip() {
 
 void toast_expired(lv_timer_t* timer) {
   lv_obj_add_flag(s_toast, LV_OBJ_FLAG_HIDDEN);
-  refresh_day_chip();
   lv_timer_del(timer);
   s_toast_timer = nullptr;
 }
@@ -295,7 +315,7 @@ lv_obj_t* ui_create(lv_obj_t* parent, const UiConfig& config) {
   lv_obj_set_style_text_letter_space(s_toast, 1, LV_PART_MAIN);
   lv_obj_set_style_text_align(s_toast, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
   lv_label_set_text(s_toast, "");
-  lv_obj_align(s_toast, LV_ALIGN_CENTER, 0, CHIP_Y);
+  lv_obj_align(s_toast, LV_ALIGN_CENTER, 0, TOAST_Y);
   lv_obj_add_flag(s_toast, LV_OBJ_FLAG_HIDDEN);
 
   // Built last so it sits above the tileview and the dots in z-order.
@@ -357,8 +377,14 @@ void refresh_screens() {
   if (!s_live_valid) {
     return;
   }
-  const Snapshot& day = s_day_valid ? s_day : s_live;
-  history_set_view(s_day_valid ? HistoryBank::Day : HistoryBank::Live);
+  // An invalid snapshot is how every screen already renders "nothing to show":
+  // dashes throughout, no ring, no pill. Reusing it costs no new state on any of
+  // them.
+  static const Snapshot nothing;
+  const Snapshot& day = s_day_state == DayState::Loaded  ? s_day
+                        : s_day_state == DayState::Loading ? nothing
+                                                           : s_live;
+  history_set_view(s_day_state == DayState::Live ? HistoryBank::Live : HistoryBank::Day);
 
   for (int i = 0; i < s_screen_count; ++i) {
     switch (s_screen_at[i]) {
@@ -403,15 +429,26 @@ void ui_update(const Snapshot& snapshot) {
 
 void ui_update_day(const Snapshot& snapshot) {
   s_day = snapshot;
-  s_day_valid = snapshot.valid;
+  s_day_state = snapshot.valid ? DayState::Loaded : DayState::Loading;
+  refresh_day_chip();
+  refresh_screens();
+}
+
+void ui_set_day_loading() {
+  if (s_day_state == DayState::Loading) {
+    return;
+  }
+  s_day_state = DayState::Loading;
+  refresh_day_chip();
   refresh_screens();
 }
 
 void ui_clear_day() {
-  if (!s_day_valid) {
+  if (s_day_state == DayState::Live) {
     return;
   }
-  s_day_valid = false;
+  s_day_state = DayState::Live;
+  refresh_day_chip();
   refresh_screens();
 }
 
@@ -564,10 +601,6 @@ void ui_toast(const char* text) {
   if (s_toast == nullptr || text == nullptr) {
     return;
   }
-  // The toast shares the chip's slot, so the day indicator steps aside for it
-  // and comes back when it expires. One thing at the top of the screen at a
-  // time; two overlapping labels there would be unreadable.
-  lv_obj_add_flag(s_day_chip, LV_OBJ_FLAG_HIDDEN);
   lv_label_set_text(s_toast, text);
   lv_obj_clear_flag(s_toast, LV_OBJ_FLAG_HIDDEN);
   if (s_toast_timer != nullptr) {

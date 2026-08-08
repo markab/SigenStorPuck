@@ -51,8 +51,10 @@ constexpr int FLOW_DOTS = 3;
 constexpr lv_coord_t FLOW_DOT_SIZE = 7;
 
 // State of charge sits due south, in the gap between home and EV — the one
-// bearing the star leaves free.
-constexpr lv_coord_t SOC_RADIUS = 178;
+// bearing the star leaves free. Pulled in from 178 to leave the day indicator a
+// clear band above the page dots; the home and EV blocks sit at x = +-94 so
+// there is no collision, only a smaller gap.
+constexpr lv_coord_t SOC_RADIUS = 169;
 
 // The Puck's own battery goes at 36 deg, between solar and the battery leg. The
 // star's five points leave gaps at 36, 108, 180, 252 and 324; 180 is taken by the

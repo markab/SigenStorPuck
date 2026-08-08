@@ -10,6 +10,9 @@ namespace {
 XPowersAXP2101 s_pmic;
 bool s_ready = false;
 bool s_key_down = false;
+// A tap seen whole in one poll: the level stays down for one more call so the
+// caller gets an edge rather than nothing.
+bool s_release_pending = false;
 
 }  // namespace
 
@@ -84,23 +87,39 @@ void power_loop() {
   if (!s_ready) {
     return;
   }
+
+  // A tap that began and ended between two polls arrives as both edges latched
+  // together, and setting the level up and then down inside one call means the
+  // caller never sees it down at all — the press vanishes. So it is held down
+  // until the next poll, which gives the recogniser the transition it needs.
+  //
+  // This has to run before the early return below, or the release would wait for
+  // whatever unrelated interrupt happened to come next.
+  if (s_release_pending) {
+    s_release_pending = false;
+    s_key_down = false;
+    return;
+  }
+
   // Polled rather than interrupt-driven: the PMIC's IRQ line is not broken out to
-  // a pin we own, and at human button-press speeds polling is plenty. Called from
-  // loop(), so this runs every few milliseconds — far finer than the gestures
-  // buttons.cpp measures.
+  // a pin we own. Called from loop(), so usually every few milliseconds — but
+  // lv_timer_handler() shares that loop and a full redraw can hold it for far
+  // longer, which is exactly how both edges end up in one read.
   if (s_pmic.getIrqStatus() == 0) {
     return;
   }
-  // Both edges can be pending in one read if the key was tapped between polls.
-  // Order matters: the press has to land before the release, or a fast tap looks
-  // like a release with no press behind it and is dropped.
-  if (s_pmic.isPekeyNegativeIrq()) {
+  const bool pressed = s_pmic.isPekeyNegativeIrq();
+  const bool released = s_pmic.isPekeyPositiveIrq();
+  s_pmic.clearIrqStatus();
+
+  if (pressed && released) {
     s_key_down = true;
-  }
-  if (s_pmic.isPekeyPositiveIrq()) {
+    s_release_pending = true;
+  } else if (pressed) {
+    s_key_down = true;
+  } else if (released) {
     s_key_down = false;
   }
-  s_pmic.clearIrqStatus();
 }
 
 bool power_key_down() {
