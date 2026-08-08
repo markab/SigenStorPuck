@@ -29,6 +29,11 @@ void poller_begin();
 // never been a successful fetch, in which case `out` is untouched.
 bool poller_snapshot(Snapshot* out);
 
+// The past day the buttons have stepped back to, if one is loaded. False at an
+// offset of zero, and while the fetch for a newly-chosen day is still in flight
+// — the caller keeps showing live rather than a day it has not got yet.
+bool poller_day_snapshot(Snapshot* out);
+
 PollStatus poller_status();
 
 // Asks the loop to fetch immediately rather than waiting out its interval — used

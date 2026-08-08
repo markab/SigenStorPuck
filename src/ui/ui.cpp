@@ -2,6 +2,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 
 #include "board_config.h"
 #include "history.h"
@@ -26,10 +27,13 @@ namespace {
 //
 // Every caller outside this file already goes through ui_screen_count(), which
 // is what makes this a contained change.
-constexpr int MAX_SCREENS = 6;
-constexpr int SERVER_ONLY_SCREENS = 2;
-int s_screen_count = MAX_SCREENS;
-bool s_has_server = true;
+constexpr int MAX_SCREENS = PUCK_SCREEN_COUNT;
+int s_screen_count = 0;
+uint8_t s_rotate_mask = 0xFF;
+
+// Tile index -> which screen it holds. Built once, and the only thing that knows
+// the mapping: with screens switchable, position no longer implies identity.
+PuckScreen s_screen_at[MAX_SCREENS] = {};
 
 // Below everything the screens draw, but held clear of the bezel: the outermost
 // dot of a six-dot row sits at x=51, where screen 1's state-of-charge arc has
@@ -50,6 +54,28 @@ lv_obj_t* s_overlay = nullptr;
 lv_obj_t* s_overlay_title = nullptr;
 lv_obj_t* s_overlay_detail = nullptr;
 lv_obj_t* s_overlay_qr = nullptr;
+lv_obj_t* s_day_chip = nullptr;
+lv_obj_t* s_toast = nullptr;
+lv_timer_t* s_toast_timer = nullptr;
+bool s_rotate_enabled = true;
+int s_day_offset = 0;
+uint32_t s_last_ts = 0;
+bool s_day_stepping = true;
+
+// The live reading and the viewed day, held apart because different screens want
+// different ones. Screen 1 is always live; the rest follow the day when there is
+// one loaded.
+Snapshot s_live;
+bool s_live_valid = false;
+Snapshot s_day;
+bool s_day_valid = false;
+
+// Above every screen's own title and inside the ring: at y = 208 the ring's inner
+// edge has closed in to 154 px across, and the longest message put here —
+// "AUTO-CYCLE OFF" — measures 119 px at a letter spacing of 1. The date the chip
+// shows is much shorter, so that one keeps the wider spacing.
+constexpr lv_coord_t CHIP_Y = -208;
+constexpr uint32_t TOAST_MS = 1600;
 
 // The address the overlay's QR points at, kept so the code is re-encoded when
 // the address changes rather than every time the overlay text is set.
@@ -97,12 +123,20 @@ void housekeeping_tick(lv_timer_t* /*timer*/) {
   const bool busy = idle_ms < 4000;
 
   static uint32_t rotate_elapsed = 0;
-  if (s_rotate_seconds > 0 && !busy) {
+  if (s_rotate_seconds > 0 && s_rotate_enabled && !busy) {
     if (++rotate_elapsed >= s_rotate_seconds) {
       rotate_elapsed = 0;
-      const int next = (ui_current_screen() + 1) % s_screen_count;
-      lv_obj_set_tile(s_tileview, s_tiles[next], LV_ANIM_ON);
-      highlight_active_dot();
+      // Step to the next screen that is *in* the cycle. Searching forward rather
+      // than filtering a list keeps the swipe order and the cycle order the same
+      // — the cycle skips screens, it does not reorder them.
+      for (int step = 1; step <= s_screen_count; ++step) {
+        const int candidate = (ui_current_screen() + step) % s_screen_count;
+        if (s_rotate_mask & (1u << s_screen_at[candidate])) {
+          lv_obj_set_tile(s_tileview, s_tiles[candidate], LV_ANIM_ON);
+          highlight_active_dot();
+          break;
+        }
+      }
     }
   } else if (busy) {
     rotate_elapsed = 0;
@@ -117,15 +151,63 @@ void housekeeping_tick(lv_timer_t* /*timer*/) {
   }
 }
 
+// The day the chip names, taken from the newest reading rather than from the
+// device's own clock: the timestamp on screen should be the plant's, and it is
+// the one figure guaranteed to exist whenever there is anything to label.
+void refresh_day_chip() {
+  if (s_day_chip == nullptr) {
+    return;
+  }
+  if (s_day_offset == 0 || s_last_ts == 0) {
+    lv_obj_add_flag(s_day_chip, LV_OBJ_FLAG_HIDDEN);
+    return;
+  }
+  const time_t when = static_cast<time_t>(s_last_ts) + s_day_offset * 86400;
+  struct tm parts = {};
+  char text[24];
+  // Local time, because the day being named is a local day. gmtime is the
+  // fallback rather than a choice: without a timezone the offset is all we can
+  // honestly show.
+  if (localtime_r(&when, &parts) != nullptr) {
+    strftime(text, sizeof(text), "%a %d %b", &parts);
+  } else {
+    snprintf(text, sizeof(text), "%d DAYS BACK", -s_day_offset);
+  }
+  lv_label_set_text(s_day_chip, text);
+  lv_obj_clear_flag(s_day_chip, LV_OBJ_FLAG_HIDDEN);
+}
+
+void toast_expired(lv_timer_t* timer) {
+  lv_obj_add_flag(s_toast, LV_OBJ_FLAG_HIDDEN);
+  refresh_day_chip();
+  lv_timer_del(timer);
+  s_toast_timer = nullptr;
+}
+
 void on_tile_changed(lv_event_t* /*event*/) {
   highlight_active_dot();
 }
 
 }  // namespace
 
-lv_obj_t* ui_create(lv_obj_t* parent, bool with_server_screens) {
-  s_has_server = with_server_screens;
-  s_screen_count = with_server_screens ? MAX_SCREENS : MAX_SCREENS - SERVER_ONLY_SCREENS;
+lv_obj_t* ui_create(lv_obj_t* parent, const UiConfig& config) {
+  // The settings screen is built whatever its bit says: it carries the QR code
+  // and the address of this page, and is the only way back to it from the glass.
+  uint8_t wanted = config.visible | (1u << PUCK_SCREEN_SETTINGS);
+  if (!config.with_server_screens) {
+    wanted &= static_cast<uint8_t>(~PUCK_SERVER_ONLY_SCREENS);
+  }
+  // Screen 1 is the device's reason to exist and the one every failure mode
+  // falls back to. Leaving nothing but the settings screen would look broken.
+  wanted |= (1u << PUCK_SCREEN_POWER);
+  s_rotate_mask = config.rotate;
+
+  s_screen_count = 0;
+  for (uint8_t screen = 0; screen < PUCK_SCREEN_COUNT; ++screen) {
+    if (wanted & (1u << screen)) {
+      s_screen_at[s_screen_count++] = static_cast<PuckScreen>(screen);
+    }
+  }
 
   lv_obj_set_style_bg_color(parent, lv_color_hex(PUCK_COLOUR_BG), LV_PART_MAIN);
 
@@ -150,17 +232,30 @@ lv_obj_t* ui_create(lv_obj_t* parent, bool with_server_screens) {
     s_tiles[i] = lv_tileview_add_tile(s_tileview, static_cast<uint8_t>(i), 0, LV_DIR_HOR);
   }
 
-  screen_power_create(s_tiles[0]);
-  screen_battery_create(s_tiles[1]);
-  screen_solar_create(s_tiles[2]);
-  int next = 3;
-  if (s_has_server) {
-    screen_flows_create(s_tiles[next++]);
-    screen_cost_create(s_tiles[next++]);
+  for (int i = 0; i < s_screen_count; ++i) {
+    switch (s_screen_at[i]) {
+      case PUCK_SCREEN_POWER:
+        screen_power_create(s_tiles[i]);
+        break;
+      case PUCK_SCREEN_BATTERY:
+        screen_battery_create(s_tiles[i]);
+        break;
+      case PUCK_SCREEN_SOLAR:
+        screen_solar_create(s_tiles[i]);
+        break;
+      case PUCK_SCREEN_FLOWS:
+        screen_flows_create(s_tiles[i]);
+        break;
+      case PUCK_SCREEN_COST:
+        screen_cost_create(s_tiles[i]);
+        break;
+      case PUCK_SCREEN_SETTINGS:
+        screen_settings_create(s_tiles[i]);
+        break;
+      default:
+        break;
+    }
   }
-  // Always last, and always present: it is how you get back to the settings page
-  // on a device that is working, when nothing is covering the screen to tell you.
-  screen_settings_create(s_tiles[next++]);
 
   // Dots are siblings of the tileview, not children, so they stay put while the
   // screens slide underneath them.
@@ -182,6 +277,26 @@ lv_obj_t* ui_create(lv_obj_t* parent, bool with_server_screens) {
     lv_obj_set_style_bg_color(dot, lv_color_hex(PUCK_COLOUR_TRACK), LV_PART_MAIN);
     s_dots[i] = dot;
   }
+
+  // The day indicator and the toast: siblings of the tileview like the dots, so
+  // they stay put while the screens slide underneath.
+  s_day_chip = lv_label_create(parent);
+  lv_obj_set_style_text_font(s_day_chip, PUCK_FONT_SMALL, LV_PART_MAIN);
+  lv_obj_set_style_text_color(s_day_chip, lv_color_hex(PUCK_COLOUR_WARN), LV_PART_MAIN);
+  lv_obj_set_style_text_letter_space(s_day_chip, 2, LV_PART_MAIN);
+  lv_obj_set_style_text_align(s_day_chip, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+  lv_label_set_text(s_day_chip, "");
+  lv_obj_align(s_day_chip, LV_ALIGN_CENTER, 0, CHIP_Y);
+  lv_obj_add_flag(s_day_chip, LV_OBJ_FLAG_HIDDEN);
+
+  s_toast = lv_label_create(parent);
+  lv_obj_set_style_text_font(s_toast, PUCK_FONT_SMALL, LV_PART_MAIN);
+  lv_obj_set_style_text_color(s_toast, lv_color_hex(PUCK_COLOUR_TEXT), LV_PART_MAIN);
+  lv_obj_set_style_text_letter_space(s_toast, 1, LV_PART_MAIN);
+  lv_obj_set_style_text_align(s_toast, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+  lv_label_set_text(s_toast, "");
+  lv_obj_align(s_toast, LV_ALIGN_CENTER, 0, CHIP_Y);
+  lv_obj_add_flag(s_toast, LV_OBJ_FLAG_HIDDEN);
 
   // Built last so it sits above the tileview and the dots in z-order.
   s_overlay = lv_obj_create(parent);
@@ -229,22 +344,75 @@ lv_obj_t* ui_create(lv_obj_t* parent, bool with_server_screens) {
   return s_tileview;
 }
 
+// Pushes whatever each screen should currently be looking at.
+//
+// Screen 1 always gets the live reading. The rest get the viewed day when one is
+// loaded, and the live reading otherwise — so stepping back changes five screens
+// and leaves the one you are most likely watching alone.
+//
+// Only the screens that were built: screen_*_update() on one that was never
+// created would write through a null root, and each guards for that, but asking
+// at all is noise.
+void refresh_screens() {
+  if (!s_live_valid) {
+    return;
+  }
+  const Snapshot& day = s_day_valid ? s_day : s_live;
+  history_set_view(s_day_valid ? HistoryBank::Day : HistoryBank::Live);
+
+  for (int i = 0; i < s_screen_count; ++i) {
+    switch (s_screen_at[i]) {
+      case PUCK_SCREEN_POWER:
+        screen_power_update(s_live);
+        break;
+      case PUCK_SCREEN_BATTERY:
+        screen_battery_update(day);
+        break;
+      case PUCK_SCREEN_SOLAR:
+        screen_solar_update(day);
+        break;
+      case PUCK_SCREEN_FLOWS:
+        screen_flows_update(day);
+        break;
+      case PUCK_SCREEN_COST:
+        screen_cost_update(day);
+        break;
+      default:
+        break;
+    }
+  }
+}
+
 void ui_update(const Snapshot& snapshot) {
   // Filed before anything draws, so the charts see this reading on this pass.
   // Here rather than in the poll task because this is the one call every data
   // source goes through — the same reason the screens hang off it.
   history_record(snapshot);
+  if (snapshot.valid && snapshot.ts != 0) {
+    s_last_ts = snapshot.ts;
+    refresh_day_chip();
+  }
+  s_live = snapshot;
+  s_live_valid = true;
 
   // Every screen is refreshed, not just the visible one. They are cheap to
   // update and it means a swipe never lands on a screen showing an older
   // reading than the one you just swiped away from.
-  screen_power_update(snapshot);
-  screen_battery_update(snapshot);
-  screen_solar_update(snapshot);
-  if (s_has_server) {
-    screen_flows_update(snapshot);
-    screen_cost_update(snapshot);
+  refresh_screens();
+}
+
+void ui_update_day(const Snapshot& snapshot) {
+  s_day = snapshot;
+  s_day_valid = snapshot.valid;
+  refresh_screens();
+}
+
+void ui_clear_day() {
+  if (!s_day_valid) {
+    return;
   }
+  s_day_valid = false;
+  refresh_screens();
 }
 
 void ui_set_fine_rotation(int16_t tenths_of_a_degree) {
@@ -339,6 +507,73 @@ void ui_set_address(const char* host, const char* ip) {
 
 int ui_screen_count() {
   return s_screen_count;
+}
+
+PuckScreen ui_screen_at(int index) {
+  if (index < 0 || index >= s_screen_count) {
+    return PUCK_SCREEN_POWER;
+  }
+  return s_screen_at[index];
+}
+
+void ui_next_screen() {
+  if (s_tileview == nullptr || s_screen_count == 0) {
+    return;
+  }
+  ui_show_screen((ui_current_screen() + 1) % s_screen_count);
+  // Counts as activity: stepping through by hand should wake the screen and
+  // hold the auto-cycle off, exactly as a swipe does.
+  lv_disp_trig_activity(nullptr);
+}
+
+void ui_set_rotate_enabled(bool enabled) {
+  s_rotate_enabled = enabled;
+}
+
+bool ui_rotate_enabled() {
+  return s_rotate_enabled;
+}
+
+void ui_set_day_stepping(bool available) {
+  s_day_stepping = available;
+}
+
+bool ui_day_stepping() {
+  return s_day_stepping;
+}
+
+void ui_set_day_offset(int days_back) {
+  if (!s_day_stepping) {
+    return;
+  }
+  if (days_back > 0) {
+    days_back = 0;
+  }
+  if (days_back < -PUCK_MAX_DAYS_BACK) {
+    days_back = -PUCK_MAX_DAYS_BACK;
+  }
+  s_day_offset = days_back;
+  refresh_day_chip();
+}
+
+int ui_day_offset() {
+  return s_day_offset;
+}
+
+void ui_toast(const char* text) {
+  if (s_toast == nullptr || text == nullptr) {
+    return;
+  }
+  // The toast shares the chip's slot, so the day indicator steps aside for it
+  // and comes back when it expires. One thing at the top of the screen at a
+  // time; two overlapping labels there would be unreadable.
+  lv_obj_add_flag(s_day_chip, LV_OBJ_FLAG_HIDDEN);
+  lv_label_set_text(s_toast, text);
+  lv_obj_clear_flag(s_toast, LV_OBJ_FLAG_HIDDEN);
+  if (s_toast_timer != nullptr) {
+    lv_timer_del(s_toast_timer);
+  }
+  s_toast_timer = lv_timer_create(toast_expired, TOAST_MS, nullptr);
 }
 
 int ui_current_screen() {

@@ -1,5 +1,6 @@
 // A day of readings, kept in RAM so the screens can draw a curve behind the
-// number (docs/PLAN.md §D3).
+// number (docs/PLAN.md §D3). Two of them: today, and whichever past day the
+// buttons have stepped back to.
 //
 // Deliberately not persisted. NVS is a key-value store that a per-minute blob
 // write would wear out, and a filesystem partition is real complexity for a
@@ -31,9 +32,22 @@ enum class HistorySeries : uint8_t {
   Count,
 };
 
+// Which day a ring holds.
+//
+// One ring cannot hold two. It indexes by minute modulo a day and keeps a single
+// head, so a minute more than a day behind that head is indistinguishable from a
+// clock jump — and is treated as one, wiping the ring. So stepping back a day
+// needs somewhere else to put it, or today would be destroyed and have to be
+// re-fetched on the way back.
+enum class HistoryBank : uint8_t {
+  Live = 0,  // today, fed by every poll
+  Day,       // the past day being viewed, loaded from the server in one go
+  Count,
+};
+
 // Discards everything. Called when the clock jumps backwards, which would
 // otherwise interleave old and new samples in the ring.
-void history_reset();
+void history_reset(HistoryBank which);
 
 // Files one reading. Uses the snapshot's own `ts`, so a series is timestamped by
 // the plant rather than by however long the Puck has been awake.
@@ -47,18 +61,18 @@ void history_reset();
 void history_record(const Snapshot& snapshot);
 
 // Absolute minute (unix seconds / 60) of the newest sample, or 0 when empty.
-uint32_t history_head_minute();
+uint32_t history_head_minute(HistoryBank which);
 
 // Bumped every time the ring is cleared. A cache keyed only on the newest minute
 // would miss a reset that happened to land on the same minute — which is exactly
 // what stepping between fixtures in the simulator does, since they share a
 // timestamp, and what a clock correction could do on a device.
-uint32_t history_generation();
+uint32_t history_generation(HistoryBank which);
 
 // How many minutes of the window actually hold a sample. Screens use this to
 // tell "nothing recorded yet" from "recorded, and it was zero" — a chart that
 // draws a flat line along the bottom before any data arrives is a lie.
-size_t history_sample_count(HistorySeries series);
+size_t history_sample_count(HistoryBank which, HistorySeries series);
 
 // One pixel column's worth of reduced samples.
 struct HistoryColumn {
@@ -76,13 +90,20 @@ struct HistoryColumn {
 //
 // Columns with no samples come back with known = false, so a gap renders as a
 // gap instead of being bridged.
-void history_reduce(HistorySeries series, uint32_t from_minute, uint32_t to_minute,
-                    HistoryColumn* out, size_t columns);
+void history_reduce(HistoryBank which, HistorySeries series, uint32_t from_minute,
+                    uint32_t to_minute, HistoryColumn* out, size_t columns);
 
 // Minutes east of UTC, for anchoring the window to local midnight. Taken from
 // the snapshot when it carries one; call this directly only to feed a series by
 // hand, as the simulator does.
-void history_set_timezone(int32_t minutes_east);
+void history_set_timezone(HistoryBank which, int32_t minutes_east);
+
+// Which bank the charts draw. Writing names its bank explicitly; reading is a
+// property of what is on screen, so it is held here rather than threaded through
+// every band. history_record() always writes Live — the reading that just
+// arrived belongs to today whatever is being looked at.
+void history_set_view(HistoryBank which);
+HistoryBank history_view();
 
 // The window a chart should draw.
 //
@@ -98,8 +119,8 @@ void history_set_timezone(int32_t minutes_east);
 // see the note on Snapshot::tz_offset_min for why we may not get one.
 //
 // Returns false when there is nothing recorded yet.
-bool history_window(uint32_t* from_minute, uint32_t* to_minute);
+bool history_window(HistoryBank which, uint32_t* from_minute, uint32_t* to_minute);
 
 // Feeds a series directly, for the simulator's synthetic day (§D3) and for tests.
 // `minute` is absolute, matching history_head_minute().
-void history_put(HistorySeries series, uint32_t minute, float value);
+void history_put(HistoryBank which, HistorySeries series, uint32_t minute, float value);

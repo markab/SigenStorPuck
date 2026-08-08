@@ -78,6 +78,17 @@ struct Settings {
   uint32_t rotate_s = 0;
   // How often the sweep band runs, in minutes; 0 = off.
   uint32_t sweep_min = 240;
+  // Which screens are built, and which the auto-cycle steps through, one bit per
+  // PuckScreen (see ui/ui.h). Two masks rather than one: a screen you want to be
+  // able to swipe to is not necessarily one you want the device parking on for
+  // minutes at a time.
+  //
+  // Both default to everything. The settings screen's visibility bit is ignored
+  // — it is the only route back to this page from the device itself, so hiding
+  // it would strand anyone who did not already know the address.
+  uint8_t screens_visible = 0xFF;
+  uint8_t screens_rotate = 0xFF;
+
   // Whether opening the settings page checks GitHub for a newer release.
   //
   // On by default. It was off, guarding a check that only ever happened when you
@@ -134,6 +145,11 @@ bool settings_set_orientation(uint8_t quarter_turns);
 bool settings_set_fine_rotation(int16_t tenths_of_a_degree);
 
 bool settings_set_screensaver(uint32_t rotate_s, uint32_t sweep_min);
+
+// Which screens exist and which auto-cycle, as PuckScreen bit masks. Takes
+// effect on the next boot, like `source` and `orientation`: the tileview's tiles
+// are built once.
+bool settings_set_screens(uint8_t visible, uint8_t rotate);
 
 bool settings_set_check_updates(bool enabled);
 

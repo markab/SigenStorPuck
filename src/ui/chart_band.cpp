@@ -398,8 +398,13 @@ void chart_band_refresh(lv_obj_t* obj) {
     return;
   }
 
-  const uint32_t head = history_head_minute();
-  const uint32_t generation = history_generation();
+  // Whichever day is on screen. A band does not choose: stepping back a day
+  // moves every chart at once, so the choice belongs to the view, not to the
+  // band. The generation check catches the switch even when the two days happen
+  // to share a head minute.
+  const HistoryBank bank = history_view();
+  const uint32_t head = history_head_minute(bank);
+  const uint32_t generation = history_generation(bank) ^ (static_cast<uint32_t>(bank) << 24);
   if (head == band->last_minute && generation == band->last_generation) {
     return;
   }
@@ -407,7 +412,7 @@ void chart_band_refresh(lv_obj_t* obj) {
 
   uint32_t from = 0;
   uint32_t to = 0;
-  if (!history_window(&from, &to)) {
+  if (!history_window(bank, &from, &to)) {
     // Nothing recorded yet. Draw nothing at all rather than a flat line along
     // the bottom, which would read as a real day of zero generation.
     band->last_minute = head;
@@ -431,7 +436,7 @@ void chart_band_refresh(lv_obj_t* obj) {
   }
   band->last_minute = head;
 
-  history_reduce(band->series, from, to, band->column, columns);
+  history_reduce(bank, band->series, from, to, band->column, columns);
   band->columns = columns;
   smooth_columns(band);
 

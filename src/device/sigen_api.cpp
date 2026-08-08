@@ -18,6 +18,7 @@ constexpr const char* SUMMARY_PATH = "/api/summary";
 // resolution the min/max envelope needs to show broken cloud as a band rather
 // than a line. ~3.5 KB, fetched every few minutes rather than every poll.
 constexpr const char* DAY_SERIES_PATH = "/api/day/series?slot_minutes=5";
+constexpr const char* SUMMARY_PATH_DATED = "/api/summary?date=";
 
 // Identifies the device in the server's logs. Version included so an old device
 // misbehaving in the field can be recognised from the access log alone.
@@ -174,9 +175,10 @@ static FetchResult fetch_path(const char* path, String* body, int* status_code) 
   return FetchResult::Ok;
 }
 
-FetchResult sigen_api_fetch(Snapshot* out, int* status_code) {
+// Shared by the live poll and the dated one: they differ only in the path.
+static FetchResult fetch_summary(const String& path, Snapshot* out, int* status_code) {
   String body;
-  const FetchResult result = fetch_path(SUMMARY_PATH, &body, status_code);
+  const FetchResult result = fetch_path(path.c_str(), &body, status_code);
   if (result != FetchResult::Ok) {
     return result;
   }
@@ -189,7 +191,18 @@ FetchResult sigen_api_fetch(Snapshot* out, int* status_code) {
   return FetchResult::Ok;
 }
 
-FetchResult sigen_api_fetch_day(int* status_code) {
+FetchResult sigen_api_fetch(Snapshot* out, int* status_code) {
+  return fetch_summary(SUMMARY_PATH, out, status_code);
+}
+
+FetchResult sigen_api_fetch_dated(const String& date, Snapshot* out, int* status_code) {
+  if (date.isEmpty()) {
+    return sigen_api_fetch(out, status_code);
+  }
+  return fetch_summary(String(SUMMARY_PATH_DATED) + date, out, status_code);
+}
+
+FetchResult sigen_api_fetch_day(HistoryBank bank, const String& date, int* status_code) {
   // The clock is what places the payload in the ring, and TLS already refuses to
   // run without one, so this is only reachable on a plain-HTTP LAN server that
   // has not seen NTP yet.
@@ -198,12 +211,18 @@ FetchResult sigen_api_fetch_day(int* status_code) {
     return FetchResult::ClockUnset;
   }
 
+  String path = DAY_SERIES_PATH;
+  if (!date.isEmpty()) {
+    path += "&date=";
+    path += date;
+  }
+
   String body;
-  const FetchResult result = fetch_path(DAY_SERIES_PATH, &body, status_code);
+  const FetchResult result = fetch_path(path.c_str(), &body, status_code);
   if (result != FetchResult::Ok) {
     return result;
   }
-  if (!day_series_parse(body.c_str(), body.length(), static_cast<uint32_t>(now / 60))) {
+  if (!day_series_parse(bank, body.c_str(), body.length(), static_cast<uint32_t>(now / 60))) {
     return FetchResult::BadPayload;
   }
   return FetchResult::Ok;

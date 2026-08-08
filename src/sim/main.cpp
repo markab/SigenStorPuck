@@ -261,7 +261,7 @@ float soc_shape(int local_minute) {
 }
 
 void synthesise_history(const Snapshot& snapshot) {
-  history_reset();
+  history_reset(HistoryBank::Live);
   if (!snapshot.valid || snapshot.ts == 0) {
     return;
   }
@@ -269,7 +269,7 @@ void synthesise_history(const Snapshot& snapshot) {
   // UTC, so the fixtures' own 13:00 timestamp is the time of day. Setting it at
   // all is what puts the charts on their anchored-to-midnight path rather than
   // the rolling fallback, which is the arrangement worth looking at.
-  history_set_timezone(0);
+  history_set_timezone(HistoryBank::Live, 0);
 
   const uint32_t end = snapshot.ts / 60;
   const int end_local = static_cast<int>(end % 1440);
@@ -306,7 +306,7 @@ void synthesise_history(const Snapshot& snapshot) {
     if (snapshot.power.pv.known) {
       const float cloud = overcast ? 0.35f + 0.5f * hash01(minute)
                                    : cloud_factor(minute, local);
-      history_put(HistorySeries::Pv, minute, peak * solar_shape(local) * cloud);
+      history_put(HistoryBank::Live, HistorySeries::Pv, minute, peak * solar_shape(local) * cloud);
     }
 
     if (snapshot.battery.soc_pct.known) {
@@ -317,7 +317,7 @@ void synthesise_history(const Snapshot& snapshot) {
       if (soc > 100.0f) {
         soc = 100.0f;
       }
-      history_put(HistorySeries::Soc, minute, soc);
+      history_put(HistoryBank::Live, HistorySeries::Soc, minute, soc);
     }
   }
 }
@@ -389,8 +389,8 @@ void build_debug_view() {
   lv_obj_set_style_text_color(hint, lv_color_hex(COLOUR_MUTED), LV_PART_MAIN);
   lv_obj_set_style_text_align(hint, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
   lv_label_set_text(hint,
-                    "n/p fixture   [ ] screen   , . tilt\n"
-                    "o overlay   d dump   esc quit");
+                    "n/p fixture   [ ] screen   , . tilt   - = day\n"
+                    "r auto-cycle   o overlay   d dump   esc quit");
   lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -34);
 }
 
@@ -401,7 +401,9 @@ void build_views() {
   lv_obj_set_style_bg_color(screen, lv_color_hex(COLOUR_BACKGROUND), LV_PART_MAIN);
   lv_obj_clear_flag(screen, LV_OBJ_FLAG_SCROLLABLE);
 
-  ui_create(screen, s_with_server_screens);
+  UiConfig config;
+  config.with_server_screens = s_with_server_screens;
+  ui_create(screen, config);
 
   // A stand-in for what net_hostname()/net_ip() return on the device, so the
   // settings screen and its QR code render here rather than only on hardware.
@@ -469,6 +471,18 @@ void handle_key(int key) {
     if (tenths < -300) tenths = -300;
     ui_set_fine_rotation(tenths);
     printf("[sim] fine rotation %.1f degrees\n", tenths / 10.0);
+    return;
+  }
+  // The day indicator and the toast, which the buttons drive on hardware and no
+  // fixture can express.
+  if (key == '-' || key == '=') {
+    ui_set_day_offset(ui_day_offset() + (key == '=' ? 1 : -1));
+    return;
+  }
+  if (key == 'r') {
+    const bool on = !ui_rotate_enabled();
+    ui_set_rotate_enabled(on);
+    ui_toast(on ? "AUTO-CYCLE ON" : "AUTO-CYCLE OFF");
     return;
   }
   if (key == ']' || key == '[') {
@@ -541,6 +555,32 @@ int run_screenshot_pass(const std::string& output_directory) {
     }
   }
   cycle_overlay();
+
+  // The day indicator and the toast, which the buttons drive on hardware and no
+  // fixture can express — same reasoning as the overlays above.
+  ui_show_screen(1);
+  show_current_fixture();
+  ui_set_day_offset(-2);
+  lv_refr_now(nullptr);
+  {
+    const std::string path = output_directory + "/day_back.bmp";
+    if (sim_backend_save_bmp(path.c_str())) {
+      printf("[sim] wrote %s\n", path.c_str());
+    } else {
+      ++failures;
+    }
+  }
+  ui_set_day_offset(0);
+  ui_toast("AUTO-CYCLE OFF");
+  lv_refr_now(nullptr);
+  {
+    const std::string path = output_directory + "/toast.bmp";
+    if (sim_backend_save_bmp(path.c_str())) {
+      printf("[sim] wrote %s\n", path.c_str());
+    } else {
+      ++failures;
+    }
+  }
 
   // How close LV_MEM_SIZE is to its limit, after a pass that has built every
   // screen and drawn every fixture through them — which is as hard as the pool

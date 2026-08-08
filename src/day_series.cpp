@@ -16,8 +16,8 @@ constexpr size_t MAX_SLOTS = 1440;
 // there rather than showing the spread a live-recorded minute would. That is
 // honest: the server has already reduced those minutes, and inventing a spread
 // to make the band look busier would be drawing something nobody measured.
-void fill_series(HistorySeries series, JsonArrayConst values, uint32_t first_minute,
-                 uint32_t slot_minutes, uint32_t now_minute) {
+void fill_series(HistoryBank bank, HistorySeries series, JsonArrayConst values,
+                 uint32_t first_minute, uint32_t slot_minutes, uint32_t now_minute) {
   size_t index = 0;
   for (JsonVariantConst value : values) {
     if (index >= MAX_SLOTS) {
@@ -43,14 +43,14 @@ void fill_series(HistorySeries series, JsonArrayConst values, uint32_t first_min
       if (minute > now_minute) {
         break;
       }
-      history_put(series, minute, reading);
+      history_put(bank, series, minute, reading);
     }
   }
 }
 
 }  // namespace
 
-bool day_series_parse(const char* json, size_t length, uint32_t now_minute) {
+bool day_series_parse(HistoryBank bank, const char* json, size_t length, uint32_t now_minute) {
   JsonDocument doc;
   if (deserializeJson(doc, json, length) != DeserializationError::Ok) {
     return false;
@@ -69,13 +69,13 @@ bool day_series_parse(const char* json, size_t length, uint32_t now_minute) {
   // part-days and reads as a U.
   JsonVariantConst tz = doc["tz_offset_min"];
   if (!tz.isNull()) {
-    history_set_timezone(tz.as<int32_t>());
+    history_set_timezone(bank, tz.as<int32_t>());
   }
 
   const uint32_t first_minute = day_start / 60;
-  fill_series(HistorySeries::Pv, doc["solar_kw"].as<JsonArrayConst>(), first_minute,
+  fill_series(bank, HistorySeries::Pv, doc["solar_kw"].as<JsonArrayConst>(), first_minute,
               static_cast<uint32_t>(slot_minutes), now_minute);
-  fill_series(HistorySeries::Soc, doc["soc_pct"].as<JsonArrayConst>(), first_minute,
+  fill_series(bank, HistorySeries::Soc, doc["soc_pct"].as<JsonArrayConst>(), first_minute,
               static_cast<uint32_t>(slot_minutes), now_minute);
   return true;
 }

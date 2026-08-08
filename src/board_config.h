@@ -110,6 +110,10 @@ static constexpr uint32_t PUCK_STALE_AFTER_S = 30;
 // Decimal places on live kW figures. The payload carries two.
 static constexpr int PUCK_KW_DECIMALS = 2;
 
+// How far back the PWR button may step through past days. The server keeps far
+// more than this; the limit is what is useful to reach one press at a time.
+static constexpr int PUCK_MAX_DAYS_BACK = 7;
+
 // Below this the battery arc turns amber. An exception, not a gradient: the ring
 // means "the battery" everywhere else, so it should only change colour when
 // there is genuinely something to notice.

@@ -14,16 +14,22 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "history.h"
+
 // Files a day payload into the history ring, returning false if it did not parse
 // or carried no usable day.
 //
+// `bank` is which day this payload is: HistoryBank::Live for today, ::Day for a
+// past one stepped back to. They cannot share a ring — see history.h.
+//
 // `now_minute` is the current absolute minute (unix seconds / 60) and is a
 // deliberate parameter rather than a call to time(): it is what stops the day's
-// unelapsed slots being written.
+// unelapsed slots being written. It only bites on today; every slot of a past
+// day has already happened, so such a payload fills completely.
 //
 // That cut matters. The server reports a slot with no samples as 0.0 kW, not as
 // null — for the elapsed day that is correct, but the slots after now are only
 // zero because they have not happened. Writing them would draw a flat line along
 // the bottom from now to midnight, which is the exact lie history.h's
 // sample-count check exists to prevent.
-bool day_series_parse(const char* json, size_t length, uint32_t now_minute);
+bool day_series_parse(HistoryBank bank, const char* json, size_t length, uint32_t now_minute);

@@ -45,6 +45,11 @@ const char* PAGE_STYLE =
     // full width of its column — a 528 px radio button with its text stranded off
     // to the right.
     "input[type=checkbox],input[type=radio]{width:auto;flex:0 0 auto;margin:0;padding:0}"
+    "table.screens{width:100%;border-collapse:collapse;margin:.4rem 0}"
+    "table.screens th{font-size:.8rem;font-weight:500;opacity:.7;text-align:center}"
+    "table.screens th:first-child{text-align:left}"
+    "table.screens td{padding:.25rem 0}"
+    "table.screens td:not(:first-child){text-align:center;width:5.5rem}"
     "label{font-size:.85rem;color:#9ab}"
     // A whole row you can click, for the controls whose label sits beside them
     // rather than above them.
@@ -298,6 +303,49 @@ String page(const String& message, bool message_is_error) {
   html += "<div><label for=sweep>Sweep every (min, 0 = off)</label><input id=sweep name=sweep type=number min=0 max=1440 value=";
   html += settings.sweep_min;
   html += "></div></div>";
+
+  // Two columns of checkboxes rather than one list with a modifier: "show it" and
+  // "park on it" are different questions, and a screen worth being able to swipe
+  // to is not necessarily one worth leaving up for minutes at a time.
+  //
+  // Applies on restart because the tileview builds its tiles once — same as
+  // orientation and the data source.
+  static const char* const SCREEN_NAME[PUCK_SCREEN_COUNT] = {
+      "Power", "Battery", "Solar", "Flows", "Cost", "Settings"};
+  html += "<label>Screens (applies on restart)</label>";
+  html += "<table class=screens><tr><th></th><th>Show</th><th>Auto-cycle</th></tr>";
+  for (uint8_t i = 0; i < PUCK_SCREEN_COUNT; ++i) {
+    const bool server_only = (PUCK_SERVER_ONLY_SCREENS & (1u << i)) != 0;
+    // A screen the source cannot fill is shown struck through rather than hidden,
+    // so the list is the same shape whichever source is configured and nobody
+    // wonders where two of them went.
+    const bool unavailable = modbus && server_only;
+    html += "<tr><td>";
+    html += unavailable ? "<s>" : "";
+    html += SCREEN_NAME[i];
+    html += unavailable ? "</s>" : "";
+    html += "</td><td><input type=checkbox name=scr" + String(i) + " value=1";
+    if (settings.screens_visible & (1u << i)) {
+      html += " checked";
+    }
+    // The settings screen is always built — it is the only way back to this page
+    // from the device — so its box says so rather than pretending to be a choice.
+    if (unavailable || i == PUCK_SCREEN_SETTINGS || i == PUCK_SCREEN_POWER) {
+      html += " disabled";
+    }
+    html += "></td><td><input type=checkbox name=rotscr" + String(i) + " value=1";
+    if (settings.screens_rotate & (1u << i)) {
+      html += " checked";
+    }
+    if (unavailable) {
+      html += " disabled";
+    }
+    html += "></td></tr>";
+  }
+  html += "</table>";
+  html += "<p class=hint>Power and Settings are always shown: one is what the device is "
+          "for, the other is the only way back to this page.</p>";
+
   html += "<button type=submit>Apply</button></form>";
 
   html += "<h2>Firmware</h2><p>Running <code>" PUCK_FW_VERSION "</code>.</p>";
@@ -533,8 +581,28 @@ void handle_display() {
     ui_set_rotate_interval(settings_get().rotate_s);
     ui_set_sweep_interval(settings_get().sweep_min);
   }
+
+  // An unchecked box sends nothing at all, so the masks are rebuilt from what did
+  // arrive rather than edited. A disabled box sends nothing either, which is why
+  // the two always-on screens are forced back in here as well as in ui_create().
+  uint8_t visible = (1u << PUCK_SCREEN_POWER) | (1u << PUCK_SCREEN_SETTINGS);
+  uint8_t rotate = 0;
+  for (uint8_t i = 0; i < PUCK_SCREEN_COUNT; ++i) {
+    if (s_server.hasArg(("scr" + String(i)).c_str())) {
+      visible |= (1u << i);
+    }
+    if (s_server.hasArg(("rotscr" + String(i)).c_str())) {
+      rotate |= (1u << i);
+    }
+  }
+  const bool screens_changed = visible != settings_get().screens_visible ||
+                               rotate != settings_get().screens_rotate;
+  if (screens_changed) {
+    settings_set_screens(visible, rotate);
+    restart_needed = true;
+  }
   poller_wake();
-  send_page(restart_needed ? "Applied. Restart for the new orientation."
+  send_page(restart_needed ? "Applied. Restart for the new orientation or screen list."
                            : "Display settings applied.",
             false);
 }

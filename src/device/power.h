@@ -28,10 +28,13 @@ PowerStatus power_status();
 // Services the PMIC's power-key interrupts. Call from loop().
 void power_loop();
 
-// True once, if the power key was short-pressed since the last call. The PWR
-// button is not a GPIO — it reaches the AXP2101's PWRON pin, so this is the only
-// way to see it.
-bool power_take_short_press();
+// Whether the power key is held down right now.
+//
+// The PWR button is not a GPIO — it reaches the AXP2101's PWRON pin — so this is
+// reconstructed from the PMIC's press and release edge interrupts. Reported as a
+// level rather than as events so buttons.cpp can time it exactly like the BOOT
+// pin it can read directly, and one gesture recogniser serves both.
+bool power_key_down();
 
 // Cuts every rail. Only meaningful with a battery fitted: on USB alone the device
 // either comes straight back or sits dark, which reads as a fault rather than as

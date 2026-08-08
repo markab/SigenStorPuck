@@ -175,6 +175,14 @@ void refresh_ui() {
   const bool have = poller_snapshot(&snapshot);
   const PollStatus status = poller_status();
 
+  // The viewed day before the live reading, so one pass never draws the new day's
+  // chart against the old day's figures.
+  Snapshot day;
+  if (poller_day_snapshot(&day)) {
+    ui_update_day(day);
+  } else {
+    ui_clear_day();
+  }
   if (have) {
     ui_update(snapshot);
   }
@@ -228,10 +236,18 @@ void setup() {
   power_begin();
   buttons_begin();
 
-  // Three screens on the Modbus source: no server means no tariff, and so no
-  // cost screen to swipe to (PLAN.md §D1). Read here rather than watched,
-  // because the source only changes across a reboot.
-  ui_create(lv_scr_act(), settings_get().source != DataSource::Modbus);
+  // Which screens exist is settled here and not revisited: the tileview's tiles
+  // are built once, so the masks and the data source both apply on the next boot
+  // — same as `orientation`.
+  UiConfig ui_config;
+  ui_config.with_server_screens = settings_get().source != DataSource::Modbus;
+  ui_config.visible = settings_get().screens_visible;
+  ui_config.rotate = settings_get().screens_rotate;
+  ui_create(lv_scr_act(), ui_config);
+  // No dated API behind the Modbus source — it has daily counters and no history
+  // to step into — so the buttons refuse rather than moving an indicator over
+  // figures that will never change.
+  ui_set_day_stepping(ui_config.with_server_screens);
   display_set_brightness(settings_get().brightness);
   // A named boot screen rather than a bare word: on a device that takes a couple
   // of seconds to find WiFi, this is the only proof it is alive.
@@ -255,16 +271,17 @@ void setup() {
 }
 
 void loop() {
+  // The PMIC's key edges before the gesture recogniser reads them, so a press
+  // is seen on the pass it arrives rather than the next one.
+  power_loop();
   buttons_loop();
 
-  // A short press of PWR wakes the screen, and only that. Advancing a screen as
-  // well meant you could not wake the device without also moving off whatever you
-  // had left on it.
-  if (power_take_short_press()) {
-    lv_disp_trig_activity(nullptr);
+  // Any button press wakes a dimmed screen. buttons_loop() has already told LVGL
+  // the device is active; this is the brightness half of the same thought.
+  if (lv_disp_get_inactive_time(nullptr) < 100) {
     display_set_brightness(settings_get().brightness);
   }
-  power_loop();
+
   net_loop();
 
   // Started only once connected: the captive portal owns port 80 until then.

@@ -8,6 +8,9 @@
 #include "settings.h"
 #include "sigen_api.h"
 #include "updater.h"
+#include "ui/ui.h"
+
+#include <time.h>
 
 namespace {
 
@@ -45,6 +48,33 @@ volatile bool s_wake = false;
 // rest of the task's state rather than as statics buried in the loop.
 uint32_t s_last_day_ms = 0;
 bool s_day_complained = false;
+
+// The past day currently loaded, and what the buttons are asking for. Kept apart
+// so the fetch happens on the poll task rather than under the button handler:
+// the button runs on the UI loop, and a TLS request there would stall drawing
+// for the whole of a handshake.
+int s_loaded_offset = 0;
+uint32_t s_last_dated_ms = 0;
+Snapshot s_day_snapshot;
+bool s_day_valid = false;
+
+// A past day does not change, so this is only a guard against the device sitting
+// on one for hours with a stale copy — and against a fetch that failed.
+constexpr uint32_t DATED_REFRESH_MS = 15 * 60 * 1000;
+
+// "YYYY-MM-DD" for a whole number of days back from now, in local time. The
+// server takes the date, not an offset, because a day is a local-calendar thing
+// and only one of us knows the timezone for certain.
+String date_for_offset(int days_back) {
+  const time_t when = time(nullptr) + static_cast<time_t>(days_back) * 86400;
+  struct tm parts = {};
+  if (when <= 0 || localtime_r(&when, &parts) == nullptr) {
+    return String();
+  }
+  char text[12];
+  strftime(text, sizeof(text), "%Y-%m-%d", &parts);
+  return String(text);
+}
 
 uint32_t backoff_for(uint32_t failures) {
   if (failures == 0) {
@@ -138,7 +168,7 @@ void poll_task(void* /*argument*/) {
       if (due && status.ever_succeeded) {
         s_last_day_ms = now;
         int day_status = 0;
-        const FetchResult day = sigen_api_fetch_day(&day_status);
+        const FetchResult day = sigen_api_fetch_day(HistoryBank::Live, String(), &day_status);
         if (day != FetchResult::Ok && !s_day_complained) {
           // Once, not every time: an old server would otherwise print this every
           // five minutes for the life of the device.
@@ -148,6 +178,52 @@ void poll_task(void* /*argument*/) {
                         fetch_result_name(day), day_status);
         } else if (day == FetchResult::Ok) {
           s_day_complained = false;
+        }
+      }
+
+      // The day the buttons have stepped back to. Fetched here rather than under
+      // the button handler because that runs on the UI loop, where a TLS
+      // handshake would stall drawing for its whole duration.
+      const int wanted = ui_day_offset();
+      const bool changed = wanted != s_loaded_offset;
+      const bool stale = s_last_dated_ms == 0 || now - s_last_dated_ms >= DATED_REFRESH_MS;
+      if (wanted == 0) {
+        // Back to live. Nothing to fetch, and the day bank is left as it is —
+        // stepping back to the same day again should not have to reload it.
+        if (s_loaded_offset != 0 && xSemaphoreTake(s_lock, portMAX_DELAY) == pdTRUE) {
+          s_loaded_offset = 0;
+          s_day_valid = false;
+          xSemaphoreGive(s_lock);
+        }
+      } else if (status.ever_succeeded && (changed || stale)) {
+        const String date = date_for_offset(wanted);
+        if (!date.isEmpty()) {
+          // The curve first: on a change the chart is the slowest thing to
+          // arrive, and loading it before the figures avoids a frame showing the
+          // new day's numbers over the old day's shape.
+          int dated_status = 0;
+          if (changed) {
+            history_reset(HistoryBank::Day);
+          }
+          sigen_api_fetch_day(HistoryBank::Day, date, &dated_status);
+
+          Snapshot dated;
+          const FetchResult result = sigen_api_fetch_dated(date, &dated, &dated_status);
+          if (result == FetchResult::Ok) {
+            if (xSemaphoreTake(s_lock, portMAX_DELAY) == pdTRUE) {
+              s_day_snapshot = dated;
+              s_day_valid = true;
+              s_loaded_offset = wanted;
+              xSemaphoreGive(s_lock);
+            }
+            s_last_dated_ms = now;
+          } else {
+            Serial.printf("[poll] %s for %s (http %d)\n", fetch_result_name(result),
+                          date.c_str(), dated_status);
+            // Retried on the next cycle rather than backed off: a day the user is
+            // looking at is worth more than one that failed in the background.
+            s_last_dated_ms = 0;
+          }
         }
       }
     }
@@ -227,6 +303,24 @@ PollStatus poller_status() {
     xSemaphoreGive(s_lock);
   }
   return copy;
+}
+
+bool poller_day_snapshot(Snapshot* out) {
+  if (out == nullptr) {
+    return false;
+  }
+  bool valid = false;
+  if (xSemaphoreTake(s_lock, portMAX_DELAY) == pdTRUE) {
+    // Only when the loaded day is the one being asked for: between a button press
+    // and its fetch landing, the previous day is still in there and showing it
+    // under the new day's date would be worse than showing live.
+    valid = s_day_valid && s_loaded_offset == ui_day_offset() && s_loaded_offset != 0;
+    if (valid) {
+      *out = s_day_snapshot;
+    }
+    xSemaphoreGive(s_lock);
+  }
+  return valid;
 }
 
 void poller_wake() {

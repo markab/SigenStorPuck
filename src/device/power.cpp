@@ -9,7 +9,7 @@ namespace {
 
 XPowersAXP2101 s_pmic;
 bool s_ready = false;
-bool s_short_press = false;
+bool s_key_down = false;
 
 }  // namespace
 
@@ -29,10 +29,21 @@ void power_begin() {
   s_pmic.enableVbusVoltageMeasure();
   s_pmic.enableSystemVoltageMeasure();
 
-  // Power-key events. A long press shuts down; a short press is ours to use.
+  // Press and release edges rather than the PMIC's own short/long classification.
+  //
+  // The chip can only be told to call a hold "long" at 1 s, 1.5 s or 2 s, and the
+  // gestures this device wants — a single press, a double press and a three
+  // second hold — do not fit that. Given the two edges, buttons.cpp times the
+  // press itself and both buttons behave identically.
   s_pmic.disableIRQ(XPOWERS_AXP2101_ALL_IRQ);
   s_pmic.clearIrqStatus();
-  s_pmic.enableIRQ(XPOWERS_AXP2101_PKEY_SHORT_IRQ | XPOWERS_AXP2101_PKEY_LONG_IRQ);
+  s_pmic.enableIRQ(XPOWERS_AXP2101_PKEY_NEGATIVE_IRQ | XPOWERS_AXP2101_PKEY_POSITIVE_IRQ);
+
+  // The PMIC will cut every rail on its own after a long enough hold, whatever
+  // firmware thinks. Pushed out to the longest it offers so it cannot fire before
+  // our own three-second shutdown does — otherwise the device would die at 4 s
+  // with none of the tidying that goes with a deliberate power-off.
+  s_pmic.setPowerKeyPressOffTime(XPOWERS_POWEROFF_10S);
 
   s_ready = true;
 
@@ -74,28 +85,26 @@ void power_loop() {
     return;
   }
   // Polled rather than interrupt-driven: the PMIC's IRQ line is not broken out to
-  // a pin we own, and at human button-press speeds polling is plenty.
+  // a pin we own, and at human button-press speeds polling is plenty. Called from
+  // loop(), so this runs every few milliseconds — far finer than the gestures
+  // buttons.cpp measures.
   if (s_pmic.getIrqStatus() == 0) {
     return;
   }
-  if (s_pmic.isPekeyShortPressIrq()) {
-    s_short_press = true;
-    Serial.println("[power] PWR short press");
+  // Both edges can be pending in one read if the key was tapped between polls.
+  // Order matters: the press has to land before the release, or a fast tap looks
+  // like a release with no press behind it and is dropped.
+  if (s_pmic.isPekeyNegativeIrq()) {
+    s_key_down = true;
   }
-  if (s_pmic.isPekeyLongPressIrq()) {
-    Serial.println("[power] PWR long press, shutting down");
-    s_pmic.clearIrqStatus();
-    delay(50);
-    power_shutdown();
-    return;
+  if (s_pmic.isPekeyPositiveIrq()) {
+    s_key_down = false;
   }
   s_pmic.clearIrqStatus();
 }
 
-bool power_take_short_press() {
-  const bool pressed = s_short_press;
-  s_short_press = false;
-  return pressed;
+bool power_key_down() {
+  return s_key_down;
 }
 
 void power_shutdown() {

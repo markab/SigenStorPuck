@@ -18,6 +18,8 @@ constexpr const char* KEY_ORIENT = "orient";
 constexpr const char* KEY_FINE = "fine_deg10";
 constexpr const char* KEY_ROTATE = "rotate_s";
 constexpr const char* KEY_SWEEP = "sweep_min";
+constexpr const char* KEY_SCR_VIS = "scr_vis";
+constexpr const char* KEY_SCR_ROT = "scr_rot";
 constexpr const char* KEY_UPDATES = "updates";
 constexpr const char* KEY_SOURCE = "source";
 constexpr const char* KEY_HOSTNAME = "hostname";
@@ -55,6 +57,8 @@ void settings_begin() {
   s_settings.fine_tenths = prefs.getShort(KEY_FINE, s_settings.fine_tenths);
   s_settings.rotate_s = prefs.getUInt(KEY_ROTATE, s_settings.rotate_s);
   s_settings.sweep_min = prefs.getUInt(KEY_SWEEP, s_settings.sweep_min);
+  s_settings.screens_visible = prefs.getUChar(KEY_SCR_VIS, s_settings.screens_visible);
+  s_settings.screens_rotate = prefs.getUChar(KEY_SCR_ROT, s_settings.screens_rotate);
   s_settings.check_updates = prefs.getBool(KEY_UPDATES, s_settings.check_updates);
 
   s_settings.source = prefs.getUChar(KEY_SOURCE, 0) == 1 ? DataSource::Modbus : DataSource::Server;
@@ -299,6 +303,19 @@ bool settings_set_screensaver(uint32_t rotate_s, uint32_t sweep_min) {
   prefs.end();
   s_settings.rotate_s = rotate_s;
   s_settings.sweep_min = sweep_min;
+  return true;
+}
+
+bool settings_set_screens(uint8_t visible, uint8_t rotate) {
+  Preferences prefs;
+  if (!prefs.begin(NAMESPACE, /*readOnly=*/false)) {
+    return false;
+  }
+  prefs.putUChar(KEY_SCR_VIS, visible);
+  prefs.putUChar(KEY_SCR_ROT, rotate);
+  prefs.end();
+  s_settings.screens_visible = visible;
+  s_settings.screens_rotate = rotate;
   return true;
 }
 

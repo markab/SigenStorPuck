@@ -237,32 +237,32 @@ void test_day_baseline() {
 void test_history() {
   printf("history\n");
 
-  history_reset();
-  check(history_head_minute() == 0, "empty ring has no head");
-  check(history_sample_count(HistorySeries::Pv) == 0, "empty ring has no samples");
+  history_reset(HistoryBank::Live);
+  check(history_head_minute(HistoryBank::Live) == 0, "empty ring has no head");
+  check(history_sample_count(HistoryBank::Live, HistorySeries::Pv) == 0, "empty ring has no samples");
 
   uint32_t from = 0;
   uint32_t to = 0;
-  check(!history_window(&from, &to), "no window before anything is recorded");
+  check(!history_window(HistoryBank::Live, &from, &to), "no window before anything is recorded");
 
   // A day anchored to UTC midnight: minute 30000000 is a round day boundary
   // only by construction, so pick one and work relative to it.
   const uint32_t midnight = (30000000u / 1440u) * 1440u;
-  history_set_timezone(0);
+  history_set_timezone(HistoryBank::Live, 0);
   for (uint32_t m = 0; m <= 600; ++m) {
-    history_put(HistorySeries::Pv, midnight + m, static_cast<float>(m) / 100.0f);
+    history_put(HistoryBank::Live, HistorySeries::Pv, midnight + m, static_cast<float>(m) / 100.0f);
   }
-  check(history_head_minute() == midnight + 600, "head follows the newest sample");
-  check(history_sample_count(HistorySeries::Pv) == 601, "every minute recorded");
+  check(history_head_minute(HistoryBank::Live) == midnight + 600, "head follows the newest sample");
+  check(history_sample_count(HistoryBank::Live, HistorySeries::Pv) == 601, "every minute recorded");
 
-  check(history_window(&from, &to), "window available once recorded");
+  check(history_window(HistoryBank::Live, &from, &to), "window available once recorded");
   check(from == midnight, "window anchors to local midnight");
   check(to == midnight + 1440, "window covers the whole day");
 
   // Reduction: 1440 minutes onto 144 columns is ten minutes each, and only the
   // first 601 minutes hold anything.
   HistoryColumn columns[144];
-  history_reduce(HistorySeries::Pv, from, to, columns, 144);
+  history_reduce(HistoryBank::Live, HistorySeries::Pv, from, to, columns, 144);
   check(columns[0].known, "first column has data");
   check_near(columns[0].min_value, 0.0f, "first column min");
   check_near(columns[0].max_value, 0.09f, "first column max");
@@ -270,21 +270,21 @@ void test_history() {
   check(columns[59].known, "last populated column");
 
   // A gap must not be bridged.
-  history_reset();
-  history_set_timezone(0);
-  history_put(HistorySeries::Soc, midnight + 10, 50.0f);
-  history_put(HistorySeries::Soc, midnight + 400, 60.0f);
-  history_reduce(HistorySeries::Soc, midnight, midnight + 1440, columns, 144);
+  history_reset(HistoryBank::Live);
+  history_set_timezone(HistoryBank::Live, 0);
+  history_put(HistoryBank::Live, HistorySeries::Soc, midnight + 10, 50.0f);
+  history_put(HistoryBank::Live, HistorySeries::Soc, midnight + 400, 60.0f);
+  history_reduce(HistoryBank::Live, HistorySeries::Soc, midnight, midnight + 1440, columns, 144);
   check(columns[1].known, "sample at minute 10 lands in column 1");
   check(!columns[20].known, "the gap between them stays a gap");
 
   // A clock jump backwards of more than a day starts again rather than
   // interleaving two eras of samples in the same ring.
-  const uint32_t before = history_generation();
-  history_put(HistorySeries::Soc, midnight - 5000, 42.0f);
-  check(history_generation() != before, "a backwards clock jump resets the ring");
+  const uint32_t before = history_generation(HistoryBank::Live);
+  history_put(HistoryBank::Live, HistorySeries::Soc, midnight - 5000, 42.0f);
+  check(history_generation(HistoryBank::Live) != before, "a backwards clock jump resets the ring");
 
-  history_reset();
+  history_reset(HistoryBank::Live);
 }
 
 // A day payload straight from /api/day/series, at the shape the device asks for.
@@ -292,7 +292,7 @@ void test_history() {
 // read; the device uses 5-minute slots and 288 of them.
 void test_day_series() {
   printf("day series\n");
-  history_reset();
+  history_reset(HistoryBank::Live);
 
   // A real local midnight for the +60 offset below: minute % 1440 must be 1380,
   // so that adding the offset lands on a UTC midnight. Picking a round-looking
@@ -309,18 +309,18 @@ void test_day_series() {
   // "Now" is 40 minutes into the day: slots 0 and 1 are fully elapsed, slot 2 is
   // part way through, slot 3 has not started.
   const uint32_t now = midnight_minute + 40;
-  check(day_series_parse(json, strlen(json), now), "day payload parses");
+  check(day_series_parse(HistoryBank::Live, json, strlen(json), now), "day payload parses");
 
-  check(history_head_minute() == now, "the ring stops at now, not at the end of the day");
-  check(history_sample_count(HistorySeries::Pv) == 41,
+  check(history_head_minute(HistoryBank::Live) == now, "the ring stops at now, not at the end of the day");
+  check(history_sample_count(HistoryBank::Live, HistorySeries::Pv) == 41,
         "every elapsed minute filled, and none beyond");
 
   // A null slot is a gap, not a zero: SoC was not recorded for the first quarter
   // hour, and drawing that as 0 % would claim the battery was flat at midnight.
-  check(history_sample_count(HistorySeries::Soc) == 26, "null slots leave gaps");
+  check(history_sample_count(HistoryBank::Live, HistorySeries::Soc) == 26, "null slots leave gaps");
 
   HistoryColumn columns[4];
-  history_reduce(HistorySeries::Pv, midnight_minute, midnight_minute + 60, columns, 4);
+  history_reduce(HistoryBank::Live, HistorySeries::Pv, midnight_minute, midnight_minute + 60, columns, 4);
   check(columns[0].known && columns[0].max_value == 0.0f, "slot 0 is a recorded zero");
   check(columns[1].known && columns[1].max_value == 1.5f, "slot 1 carries its value");
   check(columns[2].known && columns[2].max_value == 3.0f, "the part-elapsed slot is filled");
@@ -330,14 +330,75 @@ void test_day_series() {
   // gets a trustworthy one.
   uint32_t from = 0;
   uint32_t to = 0;
-  check(history_window(&from, &to), "window available");
+  check(history_window(HistoryBank::Live, &from, &to), "window available");
   check(from == midnight_minute && to == midnight_minute + 1440,
         "window anchors to the day the payload named");
 
-  check(!day_series_parse("{\"slot_minutes\":15}", 19, now), "a payload with no day is rejected");
-  check(!day_series_parse(json, strlen(json), 0), "no clock means nothing is filed");
+  check(!day_series_parse(HistoryBank::Live, "{\"slot_minutes\":15}", 19, now), "a payload with no day is rejected");
+  check(!day_series_parse(HistoryBank::Live, json, strlen(json), 0), "no clock means nothing is filed");
 
-  history_reset();
+  history_reset(HistoryBank::Live);
+}
+
+// The two rings are the point of HistoryBank: one ring cannot hold two days,
+// because a minute more than a day behind the head is indistinguishable from a
+// clock jump and rightly wipes it.
+void test_history_banks() {
+  printf("history banks\n");
+  history_reset(HistoryBank::Live);
+  history_reset(HistoryBank::Day);
+  history_set_timezone(HistoryBank::Live, 0);
+  history_set_timezone(HistoryBank::Day, 0);
+
+  // Computed rather than written out: with the offset at 0 a local midnight is a
+  // whole multiple of a day, and picking a round-looking number instead only
+  // tests that history_window disagrees with the fixture.
+  const uint32_t today = (28928100u / 1440u) * 1440u;
+  const uint32_t yesterday = today - 1440;
+
+  for (uint32_t m = 0; m <= 600; ++m) {
+    history_put(HistoryBank::Live, HistorySeries::Pv, today + m, 2.0f);
+  }
+  for (uint32_t m = 0; m < 1440; ++m) {
+    history_put(HistoryBank::Day, HistorySeries::Pv, yesterday + m, 5.0f);
+  }
+
+  // Filling the day bank must not have touched today, which is exactly what a
+  // single ring could not manage.
+  check(history_head_minute(HistoryBank::Live) == today + 600, "live head untouched");
+  check(history_head_minute(HistoryBank::Day) == yesterday + 1439, "day head is yesterday");
+  check(history_sample_count(HistoryBank::Live, HistorySeries::Pv) == 601,
+        "live bank keeps its samples");
+  check(history_sample_count(HistoryBank::Day, HistorySeries::Pv) == 1440,
+        "day bank holds a whole day");
+
+  uint32_t from = 0;
+  uint32_t to = 0;
+  check(history_window(HistoryBank::Live, &from, &to) && from == today,
+        "live window anchors to today");
+  check(history_window(HistoryBank::Day, &from, &to) && from == yesterday,
+        "day window anchors to yesterday");
+
+  // Values stay with their own bank.
+  HistoryColumn columns[4];
+  history_reduce(HistoryBank::Day, HistorySeries::Pv, yesterday, yesterday + 1440, columns, 4);
+  check(columns[0].known && columns[0].max_value == 5.0f, "day bank reads back its own value");
+  history_reduce(HistoryBank::Live, HistorySeries::Pv, today, today + 1440, columns, 4);
+  check(columns[0].known && columns[0].max_value == 2.0f, "live bank reads back its own value");
+
+  // The view is what the charts follow, and switching it must not disturb data.
+  history_set_view(HistoryBank::Day);
+  check(history_view() == HistoryBank::Day, "view follows the setter");
+  history_set_view(HistoryBank::Live);
+
+  // Clearing one leaves the other alone — stepping back to today must not cost
+  // the day that was loaded.
+  history_reset(HistoryBank::Day);
+  check(history_sample_count(HistoryBank::Day, HistorySeries::Pv) == 0, "day bank cleared");
+  check(history_sample_count(HistoryBank::Live, HistorySeries::Pv) == 601,
+        "clearing the day bank spares the live one");
+
+  history_reset(HistoryBank::Live);
 }
 
 }  // namespace
@@ -351,6 +412,7 @@ int run_selftest() {
   test_day_baseline();
   test_history();
   test_day_series();
+  test_history_banks();
   printf("\n%d checks, %d failed\n", s_checks, s_failures);
   return s_failures == 0 ? 0 : 1;
 }
