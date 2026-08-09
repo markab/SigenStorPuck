@@ -38,10 +38,9 @@ void step_day(int delta) {
   ui_set_day_offset(before + delta);
   const int after = ui_day_offset();
   if (after == before) {
-    // Already at today, or as far back as the data goes. No toast: it shares its
-    // slot with the day indicator, so saying "OLDEST DAY" would blank the date
-    // you are looking at to tell you it has not changed. The date staying put is
-    // the answer, and at today the indicator disappearing is.
+    // Already at today, or as far back as the data goes. No toast: the indicator
+    // above the dots has already answered — it either still names the same day or
+    // still says "Today" — and a message repeating that is noise.
     return;
   }
   // Kick the poll task rather than letting it notice on its own schedule. It
@@ -63,7 +62,7 @@ void handle_pwr(ButtonGesture gesture) {
       // rather than a runtime shadow of it that a reboot would silently undo.
       // A human-rate toggle is nothing to NVS.
       settings_set_rotate_enabled(on);
-      ui_toast(on ? "AUTO-CYCLE ON" : "AUTO-CYCLE OFF");
+      ui_toast(on ? "CYCLE ON" : "CYCLE OFF");
       Serial.printf("[buttons] auto-cycle %s\n", on ? "on" : "off");
       break;
     }

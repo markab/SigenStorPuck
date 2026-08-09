@@ -12,3 +12,8 @@
 
 lv_obj_t* screen_solar_create(lv_obj_t* parent);
 void screen_solar_update(const Snapshot& snapshot);
+
+// Whether the reading being shown is live. False on a past day, where the live
+// PV pill is hidden — the server cannot date it, so it would be right now's
+// output under a past date.
+void screen_solar_set_live(bool live);

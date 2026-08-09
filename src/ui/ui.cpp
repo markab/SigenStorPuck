@@ -78,16 +78,15 @@ enum class DayState : uint8_t {
 };
 DayState s_day_state = DayState::Live;
 
-// The toast owns the top of the screen. At y = 208 the ring's inner edge has
-// closed in to 154 px across, and the longest message put there — "AUTO-CYCLE
-// OFF" — measures 119 px at a letter spacing of 1.
+// The top of the screen: transient messages, and "LOADING" while a chosen day is
+// on its way, which is the same kind of thing — something happening rather than
+// something that is.
 constexpr lv_coord_t TOAST_Y = -208;
 
-// The day indicator sits just above the page dots instead, because it is the
-// same kind of thing they are: persistent state, not an interruption. Sharing
-// the top with the toast meant "OLDEST DAY" blanked the very date it was
-// answering about. Screen 1's state-of-charge readout moved up to make room.
-constexpr lv_coord_t CHIP_Y = 189;
+// The day indicator sits just above the page dots, because it is the same kind of
+// thing they are: persistent state. Sharing the top with the toast meant a
+// message blanked the very date it was answering about.
+constexpr lv_coord_t CHIP_Y = 183;
 constexpr uint32_t TOAST_MS = 1600;
 
 // The address the overlay's QR points at, kept so the code is re-encoded when
@@ -167,45 +166,77 @@ void housekeeping_tick(lv_timer_t* /*timer*/) {
 // The day the chip names, taken from the newest reading rather than from the
 // device's own clock: the timestamp on screen should be the plant's, and it is
 // the one figure guaranteed to exist whenever there is anything to label.
+// Screen 1 is the live screen and says so by carrying none of this: no date, no
+// loading. Everywhere else the indicator is always present, naming the day being
+// shown even when that day is today.
+bool day_indicator_wanted() {
+  return s_screen_count > 0 && ui_screen_at(ui_current_screen()) != PUCK_SCREEN_POWER;
+}
+
 void refresh_day_chip() {
   if (s_day_chip == nullptr) {
     return;
   }
-  if (s_day_offset == 0 || s_last_ts == 0) {
+  if (!day_indicator_wanted() || s_last_ts == 0) {
     lv_obj_add_flag(s_day_chip, LV_OBJ_FLAG_HIDDEN);
     return;
   }
-  // No date until there is a day behind it. Naming the day while the screens
-  // below are still dashes would label an empty screen with a date it has not
-  // got yet.
-  if (s_day_state == DayState::Loading) {
-    lv_label_set_text(s_day_chip, "LOADING");
+
+  if (s_day_offset == 0) {
+    // Muted, not amber: amber is what says "this is not now", and spending it on
+    // the ordinary case would leave nothing to say it with.
+    lv_label_set_text(s_day_chip, "Today");
+    lv_obj_set_style_text_color(s_day_chip, lv_color_hex(PUCK_COLOUR_MUTED), LV_PART_MAIN);
     lv_obj_clear_flag(s_day_chip, LV_OBJ_FLAG_HIDDEN);
     return;
   }
+
   const time_t when = static_cast<time_t>(s_last_ts) + s_day_offset * 86400;
   struct tm parts = {};
   char text[24];
-  // Local time, because the day being named is a local day. gmtime is the
-  // fallback rather than a choice: without a timezone the offset is all we can
-  // honestly show.
+  // Local time, because the day being named is a local day. The offset is the
+  // fallback rather than a choice: without a timezone it is all we can honestly
+  // show.
   if (localtime_r(&when, &parts) != nullptr) {
     strftime(text, sizeof(text), "%a %d %b", &parts);
   } else {
-    snprintf(text, sizeof(text), "%d DAYS BACK", -s_day_offset);
+    snprintf(text, sizeof(text), "%d days back", -s_day_offset);
   }
   lv_label_set_text(s_day_chip, text);
+  lv_obj_set_style_text_color(s_day_chip, lv_color_hex(PUCK_COLOUR_WARN), LV_PART_MAIN);
   lv_obj_clear_flag(s_day_chip, LV_OBJ_FLAG_HIDDEN);
 }
 
-void toast_expired(lv_timer_t* timer) {
+// The top slot carries a transient message when there is one and "LOADING" while
+// a chosen day is still on its way. A real toast wins for its couple of seconds,
+// then this puts LOADING back if it is still true.
+void refresh_top_slot() {
+  if (s_toast == nullptr) {
+    return;
+  }
+  if (s_toast_timer != nullptr) {
+    return;  // a transient message owns the slot
+  }
+  if (s_day_state == DayState::Loading && day_indicator_wanted()) {
+    lv_label_set_text(s_toast, "LOADING");
+    lv_obj_clear_flag(s_toast, LV_OBJ_FLAG_HIDDEN);
+    return;
+  }
   lv_obj_add_flag(s_toast, LV_OBJ_FLAG_HIDDEN);
+}
+
+void toast_expired(lv_timer_t* timer) {
   lv_timer_del(timer);
   s_toast_timer = nullptr;
+  refresh_top_slot();
 }
 
 void on_tile_changed(lv_event_t* /*event*/) {
   highlight_active_dot();
+  // Both belong to the screen being looked at, not to the device: screen 1 shows
+  // neither, so swiping on and off it has to re-decide.
+  refresh_day_chip();
+  refresh_top_slot();
 }
 
 }  // namespace
@@ -386,6 +417,13 @@ void refresh_screens() {
                                                            : s_live;
   history_set_view(s_day_state == DayState::Live ? HistoryBank::Live : HistoryBank::Day);
 
+  // The live-only parts of the day screens. Only `today`, `cost` and `solar`
+  // follow the date, so a pill showing right now's kW under a past date is the
+  // one thing that reads as a plain error rather than as a design choice.
+  const bool live = s_day_state == DayState::Live;
+  screen_battery_set_live(live);
+  screen_solar_set_live(live);
+
   for (int i = 0; i < s_screen_count; ++i) {
     switch (s_screen_at[i]) {
       case PUCK_SCREEN_POWER:
@@ -431,6 +469,7 @@ void ui_update_day(const Snapshot& snapshot) {
   s_day = snapshot;
   s_day_state = snapshot.valid ? DayState::Loaded : DayState::Loading;
   refresh_day_chip();
+  refresh_top_slot();
   refresh_screens();
 }
 
@@ -440,6 +479,7 @@ void ui_set_day_loading() {
   }
   s_day_state = DayState::Loading;
   refresh_day_chip();
+  refresh_top_slot();
   refresh_screens();
 }
 
@@ -449,6 +489,7 @@ void ui_clear_day() {
   }
   s_day_state = DayState::Live;
   refresh_day_chip();
+  refresh_top_slot();
   refresh_screens();
 }
 
@@ -627,4 +668,6 @@ void ui_show_screen(int index) {
   // half-finished slide would be captured instead of the screen.
   lv_obj_set_tile(s_tileview, s_tiles[index], LV_ANIM_OFF);
   highlight_active_dot();
+  refresh_day_chip();
+  refresh_top_slot();
 }

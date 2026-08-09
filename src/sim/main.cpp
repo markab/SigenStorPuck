@@ -502,7 +502,7 @@ void handle_key(int key) {
   if (key == 'r') {
     const bool on = !ui_rotate_enabled();
     ui_set_rotate_enabled(on);
-    ui_toast(on ? "AUTO-CYCLE ON" : "AUTO-CYCLE OFF");
+    ui_toast(on ? "CYCLE ON" : "CYCLE OFF");
     return;
   }
   if (key == ']' || key == '[') {
@@ -579,8 +579,14 @@ int run_screenshot_pass(const std::string& output_directory) {
   // The day indicator and the toast, which the buttons drive on hardware and no
   // fixture can express — same reasoning as the overlays above.
   ui_show_screen(1);
-  // Offset first, so show_current_fixture() feeds the day as well as the live
-  // reading and the screens draw the loaded state rather than the pending one.
+  // Back to a real fixture first: the loop above leaves s_current one past the
+  // end, and show_current_fixture() would index out of bounds, fail to read and
+  // return before feeding the UI anything — leaving these captures showing
+  // whatever was last drawn.
+  s_current = 0;
+  // Offset before the fixture, so show_current_fixture() feeds the day as well
+  // as the live reading and the screens draw the loaded state, not the pending
+  // one.
   ui_set_day_offset(-2);
   show_current_fixture();
   lv_refr_now(nullptr);
@@ -592,22 +598,25 @@ int run_screenshot_pass(const std::string& output_directory) {
       ++failures;
     }
   }
-  // Still on a past day, and loaded: the whole point of moving the indicator
-  // down to the page dots is that a toast no longer blanks it.
-  ui_toast("AUTO-CYCLE OFF");
+  ui_set_day_loading();
   lv_refr_now(nullptr);
   {
-    const std::string path = output_directory + "/toast.bmp";
+    const std::string path = output_directory + "/day_loading.bmp";
     if (sim_backend_save_bmp(path.c_str())) {
       printf("[sim] wrote %s\n", path.c_str());
     } else {
       ++failures;
     }
   }
-  ui_set_day_loading();
+
+  // Back to a loaded day, then a message over it: a transient toast owns the top
+  // slot while it lasts, so this has to come after the loading capture or it
+  // would be the thing on screen for it.
+  show_current_fixture();
+  ui_toast("CYCLE OFF");
   lv_refr_now(nullptr);
   {
-    const std::string path = output_directory + "/day_loading.bmp";
+    const std::string path = output_directory + "/toast.bmp";
     if (sim_backend_save_bmp(path.c_str())) {
       printf("[sim] wrote %s\n", path.c_str());
     } else {

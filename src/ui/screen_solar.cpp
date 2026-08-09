@@ -28,7 +28,7 @@ namespace {
 // rectangle either lies across the ring at its corners or ends in open screen.
 constexpr lv_coord_t BAND_WIDTH = PUCK_LCD_WIDTH;
 constexpr lv_coord_t BAND_HEIGHT = 156;
-constexpr lv_coord_t BAND_Y = 96;  // centre, so the band spans +18 to +174
+constexpr lv_coord_t BAND_Y = 90;  // centre, so the band spans +12 to +168
 
 constexpr lv_coord_t BAND_CLIP_RADIUS = PUCK_RING_DIAMETER / 2 - PUCK_RING_WIDTH - 4;
 
@@ -56,6 +56,7 @@ lv_obj_t* s_forecast = nullptr;
 lv_obj_t* s_remaining = nullptr;
 lv_obj_t* s_versus = nullptr;
 lv_obj_t* s_peak = nullptr;
+bool s_live = true;
 
 lv_obj_t* make_label(lv_obj_t* parent, const lv_font_t* font, uint32_t colour, lv_coord_t x,
                      lv_coord_t y) {
@@ -223,6 +224,13 @@ void screen_solar_update(const Snapshot& snapshot) {
     lv_label_set_text(s_caption, "generated today");
   }
 
+  // The pill is live-only, so a past day simply does not have one.
+  if (s_live) {
+    lv_obj_clear_flag(s_pill, LV_OBJ_FLAG_HIDDEN);
+  } else {
+    lv_obj_add_flag(s_pill, LV_OBJ_FLAG_HIDDEN);
+  }
+
   // Live PV, in the pill.
   const MaybeFloat pv = snapshot.valid ? snapshot.power.pv : MaybeFloat{};
   const bool generating = pv.known && pv.value > 0.0f;
@@ -245,4 +253,8 @@ void screen_solar_update(const Snapshot& snapshot) {
   set_forecast_figure(s_remaining, snapshot, snapshot.solar.remaining_kwh, 1, " kWh");
   set_forecast_figure(s_versus, snapshot, snapshot.solar.vs_forecast_pct, 0, "%");
   set_forecast_figure(s_peak, snapshot, snapshot.solar.peak_kw, 1, " kW");
+}
+
+void screen_solar_set_live(bool live) {
+  s_live = live;
 }

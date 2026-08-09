@@ -39,7 +39,7 @@ namespace {
 // curve runs off under the ring on both sides and its foot follows the glass.
 constexpr lv_coord_t BAND_WIDTH = PUCK_LCD_WIDTH;
 constexpr lv_coord_t BAND_HEIGHT = 148;
-constexpr lv_coord_t BAND_Y = 96;  // centre, so the band spans +22 to +170
+constexpr lv_coord_t BAND_Y = 92;  // centre, so the band spans +18 to +166
 
 // Just inside the ring's own inner edge, so the two never touch.
 constexpr lv_coord_t BAND_CLIP_RADIUS = PUCK_RING_DIAMETER / 2 - PUCK_RING_WIDTH - 4;
@@ -73,6 +73,7 @@ lv_obj_t* s_charged = nullptr;
 lv_obj_t* s_discharged = nullptr;
 lv_obj_t* s_health = nullptr;
 lv_obj_t* s_temp = nullptr;
+bool s_live = true;
 
 lv_obj_t* make_label(lv_obj_t* parent, const lv_font_t* font, uint32_t colour, lv_coord_t x,
                      lv_coord_t y) {
@@ -247,6 +248,16 @@ void screen_battery_update(const Snapshot& snapshot) {
     lv_label_set_text(s_stored, "");
   }
 
+  // The pill and the ETA are live-only, so a past day simply does not have them.
+  lv_obj_t* const live_only[] = {s_pill, s_eta};
+  for (lv_obj_t* part : live_only) {
+    if (s_live) {
+      lv_obj_clear_flag(part, LV_OBJ_FLAG_HIDDEN);
+    } else {
+      lv_obj_add_flag(part, LV_OBJ_FLAG_HIDDEN);
+    }
+  }
+
   // Charge or discharge rate, in the pill.
   const MaybeFloat rate = snapshot.valid ? snapshot.power.batt : MaybeFloat{};
   const bool moving = rate.known && rate.value != 0.0f;
@@ -297,4 +308,8 @@ void screen_battery_update(const Snapshot& snapshot) {
   } else {
     lv_label_set_text(s_temp, "--");
   }
+}
+
+void screen_battery_set_live(bool live) {
+  s_live = live;
 }
