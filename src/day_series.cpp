@@ -77,5 +77,9 @@ bool day_series_parse(HistoryBank bank, const char* json, size_t length, uint32_
               static_cast<uint32_t>(slot_minutes), now_minute);
   fill_series(bank, HistorySeries::Soc, doc["soc_pct"].as<JsonArrayConst>(), first_minute,
               static_cast<uint32_t>(slot_minutes), now_minute);
+  // Absent from a server older than 0.18.0, which simply leaves the load chart to
+  // fill from live polls as it did before.
+  fill_series(bank, HistorySeries::Load, doc["load_kw"].as<JsonArrayConst>(), first_minute,
+              static_cast<uint32_t>(slot_minutes), now_minute);
   return true;
 }

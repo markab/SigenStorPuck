@@ -22,13 +22,15 @@
 // envelope needs to show PV under broken cloud as a band rather than a line.
 static constexpr uint32_t HISTORY_MINUTES = 1440;  // 24 h
 
-// Samples are int16 scaled by this, so one series costs 2.9 KB. The range is
+// Samples are int16 scaled by this, so one series costs 2.9 KB — and there are
+// two banks of every series, so a series added here costs 5.8 KB. The range is
 // then +-327.67, comfortably past any domestic kW figure and any percentage.
 static constexpr int32_t HISTORY_SCALE = 100;
 
 enum class HistorySeries : uint8_t {
-  Pv,   // kW from solar
-  Soc,  // battery state of charge, %
+  Pv,    // kW from solar
+  Soc,   // battery state of charge, %
+  Load,  // kW consumed, house and EV together
   Count,
 };
 

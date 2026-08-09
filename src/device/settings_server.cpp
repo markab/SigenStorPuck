@@ -319,11 +319,14 @@ String page(const String& message, bool message_is_error) {
   //
   // Applies on restart because the tileview builds its tiles once — same as
   // orientation and the data source.
+  // Indexed by PuckScreen id, but listed below in PUCK_SCREEN_ORDER so the page
+  // reads the way the device swipes.
   static const char* const SCREEN_NAME[PUCK_SCREEN_COUNT] = {
-      "Power", "Battery", "Solar", "Flows", "Cost", "Settings"};
+      "Power", "Battery", "Solar", "Flows", "Cost", "Settings", "Load"};
   html += "<label>Screens (applies on restart)</label>";
   html += "<table class=screens><tr><th></th><th>Show</th><th>Auto-cycle</th></tr>";
-  for (uint8_t i = 0; i < PUCK_SCREEN_COUNT; ++i) {
+  for (PuckScreen screen : PUCK_SCREEN_ORDER) {
+    const uint8_t i = static_cast<uint8_t>(screen);
     const bool server_only = (PUCK_SERVER_ONLY_SCREENS & (1u << i)) != 0;
     // A screen the source cannot fill is shown struck through rather than hidden,
     // so the list is the same shape whichever source is configured and nobody

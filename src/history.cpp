@@ -179,6 +179,15 @@ void history_record(const Snapshot& snapshot) {
     bank.ring[static_cast<size_t>(HistorySeries::Soc)].sample[slot] =
         encode(snapshot.battery.soc_pct.value);
   }
+  // Consumption is the house and the car together, to match today.load. `home`
+  // already has EV taken out of it server-side, so the two are added back here
+  // rather than either standing alone. An unread `home` leaves the slot empty:
+  // the car charging on its own is not the house's consumption.
+  if (snapshot.power.home.known) {
+    const float ev = snapshot.power.ev.known ? snapshot.power.ev.value : 0.0f;
+    bank.ring[static_cast<size_t>(HistorySeries::Load)].sample[slot] =
+        encode(snapshot.power.home.value + ev);
+  }
 }
 
 uint32_t history_head_minute(HistoryBank which) {

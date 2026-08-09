@@ -28,6 +28,12 @@ ButtonGestureState s_pwr{{/*debounce_ms=*/0, HOLD_MS, LONG_HOLD_MS}};
 // Both day steps report what they did, because on a device with no keyboard the
 // only confirmation you get is the screen.
 void step_day(int delta) {
+  if (!ui_day_screen()) {
+    // Screen 1 is live and the settings screen shows an address; neither carries
+    // a date, so stepping the day from them would move an indicator that is not
+    // on screen. Nothing happens, quietly.
+    return;
+  }
   if (!ui_day_stepping()) {
     // The Modbus source has daily counters and no dated API behind them, so
     // there is no past to step into. Better to say so than to look broken.

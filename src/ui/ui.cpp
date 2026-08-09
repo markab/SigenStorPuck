@@ -10,6 +10,7 @@
 #include "screen_battery.h"
 #include "screen_cost.h"
 #include "screen_flows.h"
+#include "screen_load.h"
 #include "screen_power.h"
 #include "screen_settings.h"
 #include "screen_solar.h"
@@ -166,11 +167,19 @@ void housekeeping_tick(lv_timer_t* /*timer*/) {
 // The day the chip names, taken from the newest reading rather than from the
 // device's own clock: the timestamp on screen should be the plant's, and it is
 // the one figure guaranteed to exist whenever there is anything to label.
-// Screen 1 is the live screen and says so by carrying none of this: no date, no
-// loading. Everywhere else the indicator is always present, naming the day being
-// shown even when that day is today.
+// Only the screens whose figures belong to a day carry the indicator.
+//
+// Screen 1 is the live screen and says so by having no date and no loading. The
+// settings screen shows an address and a QR code, which have no day about them
+// at all. Everywhere else it is always present, naming the day being shown even
+// when that day is today — which is why those screens' own captions no longer
+// have to say "today" themselves.
 bool day_indicator_wanted() {
-  return s_screen_count > 0 && ui_screen_at(ui_current_screen()) != PUCK_SCREEN_POWER;
+  if (s_screen_count == 0) {
+    return false;
+  }
+  const PuckScreen screen = ui_screen_at(ui_current_screen());
+  return screen != PUCK_SCREEN_POWER && screen != PUCK_SCREEN_SETTINGS;
 }
 
 void refresh_day_chip() {
@@ -254,9 +263,9 @@ lv_obj_t* ui_create(lv_obj_t* parent, const UiConfig& config) {
   s_rotate_mask = config.rotate;
 
   s_screen_count = 0;
-  for (uint8_t screen = 0; screen < PUCK_SCREEN_COUNT; ++screen) {
+  for (PuckScreen screen : PUCK_SCREEN_ORDER) {
     if (wanted & (1u << screen)) {
-      s_screen_at[s_screen_count++] = static_cast<PuckScreen>(screen);
+      s_screen_at[s_screen_count++] = screen;
     }
   }
 
@@ -293,6 +302,9 @@ lv_obj_t* ui_create(lv_obj_t* parent, const UiConfig& config) {
         break;
       case PUCK_SCREEN_SOLAR:
         screen_solar_create(s_tiles[i]);
+        break;
+      case PUCK_SCREEN_LOAD:
+        screen_load_create(s_tiles[i]);
         break;
       case PUCK_SCREEN_FLOWS:
         screen_flows_create(s_tiles[i]);
@@ -423,6 +435,7 @@ void refresh_screens() {
   const bool live = s_day_state == DayState::Live;
   screen_battery_set_live(live);
   screen_solar_set_live(live);
+  screen_load_set_live(live);
 
   for (int i = 0; i < s_screen_count; ++i) {
     switch (s_screen_at[i]) {
@@ -434,6 +447,9 @@ void refresh_screens() {
         break;
       case PUCK_SCREEN_SOLAR:
         screen_solar_update(day);
+        break;
+      case PUCK_SCREEN_LOAD:
+        screen_load_update(day);
         break;
       case PUCK_SCREEN_FLOWS:
         screen_flows_update(day);
@@ -618,6 +634,10 @@ void ui_set_day_stepping(bool available) {
 
 bool ui_day_stepping() {
   return s_day_stepping;
+}
+
+bool ui_day_screen() {
+  return day_indicator_wanted();
 }
 
 void ui_set_day_offset(int days_back) {

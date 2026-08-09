@@ -23,7 +23,20 @@ enum PuckScreen : uint8_t {
   PUCK_SCREEN_FLOWS,
   PUCK_SCREEN_COST,
   PUCK_SCREEN_SETTINGS,
+  // Appended, not inserted. Load belongs next to solar when you swipe, but the
+  // ids are what a device's stored mask is written against — giving it id 3 would
+  // silently turn this into the flows screen on every Puck already in the field.
+  // Swipe order is a separate list; see PUCK_SCREEN_ORDER.
+  PUCK_SCREEN_LOAD,
   PUCK_SCREEN_COUNT,
+};
+
+// The order they are swiped through, which is not the order they are numbered.
+// Settings stays last: it is the way back to the settings page, and a route out
+// belongs at the end.
+static constexpr PuckScreen PUCK_SCREEN_ORDER[PUCK_SCREEN_COUNT] = {
+    PUCK_SCREEN_POWER, PUCK_SCREEN_BATTERY, PUCK_SCREEN_SOLAR, PUCK_SCREEN_LOAD,
+    PUCK_SCREEN_FLOWS, PUCK_SCREEN_COST,    PUCK_SCREEN_SETTINGS,
 };
 
 // Screens the Modbus source cannot fill: the cost screen needs tariff tables
@@ -144,6 +157,13 @@ int ui_day_offset();
 // will never change.
 void ui_set_day_stepping(bool available);
 bool ui_day_stepping();
+
+// Whether the screen currently shown is one whose figures belong to a day.
+//
+// False on screen 1, which is live, and on the settings screen, which shows an
+// address. Those two carry no date, so stepping the day from them would move an
+// indicator you cannot see — the buttons do nothing there instead.
+bool ui_day_screen();
 
 // A brief message across the top, for an action whose effect is not otherwise
 // visible — toggling the auto-cycle, mostly. Clears itself.

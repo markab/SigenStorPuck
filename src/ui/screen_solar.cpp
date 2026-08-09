@@ -137,7 +137,7 @@ lv_obj_t* screen_solar_create(lv_obj_t* parent) {
   lv_label_set_text(s_generated, "--");
 
   s_caption = make_label(s_root, PUCK_FONT_SMALL, PUCK_COLOUR_MUTED, 0, -70);
-  lv_label_set_text(s_caption, "generated today");
+  lv_label_set_text(s_caption, "generated");
 
   // The live rate, in the same pill screen 2 uses for the same job.
   s_pill = lv_obj_create(s_root);
@@ -218,10 +218,8 @@ void screen_solar_update(const Snapshot& snapshot) {
     }
     lv_arc_set_value(s_arc, static_cast<int16_t>(pct));
     lv_obj_clear_flag(s_arc, LV_OBJ_FLAG_HIDDEN);
-    lv_label_set_text(s_caption, "generated today");
   } else {
     lv_obj_add_flag(s_arc, LV_OBJ_FLAG_HIDDEN);
-    lv_label_set_text(s_caption, "generated today");
   }
 
   // The pill is live-only, so a past day simply does not have one.

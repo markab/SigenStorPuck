@@ -309,6 +309,19 @@ void synthesise_history(const Snapshot& snapshot) {
       history_put(HistoryBank::Live, HistorySeries::Pv, minute, peak * solar_shape(local) * cloud);
     }
 
+    // House load: a base draw with a morning and an evening hump, plus the odd
+    // kettle. Spiky on purpose — a flat line would not exercise the smoothing the
+    // load chart needs, which is the whole reason its window is wider.
+    if (snapshot.power.home.known) {
+      const float morning = expf(-powf((local - 450) / 90.0f, 2.0f));
+      const float evening = expf(-powf((local - 1140) / 120.0f, 2.0f));
+      float load = 0.35f + 1.4f * morning + 2.2f * evening;
+      if (hash01(minute + 31337u) > 0.94f) {
+        load += 2.5f;  // kettle
+      }
+      history_put(HistoryBank::Live, HistorySeries::Load, minute, load);
+    }
+
     if (snapshot.battery.soc_pct.known) {
       float soc = soc_offset + SOC_AMPLITUDE * soc_shape(local);
       if (soc < 2.0f) {

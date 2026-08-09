@@ -273,7 +273,7 @@ lv_obj_t* screen_flows_create(lv_obj_t* parent) {
   lv_label_set_text(s_hero, "--");
 
   s_caption = make_label(s_root, PUCK_FONT_SMALL, PUCK_COLOUR_MUTED, 0, -112);
-  lv_label_set_text(s_caption, "self-sufficient today");
+  lv_label_set_text(s_caption, "self-sufficient");
 
   // Short names on purpose: the labels sit where the bezel has already closed in,
   // and "BATTERY" twice over would not fit beside the bars.
