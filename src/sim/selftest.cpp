@@ -414,15 +414,15 @@ struct Recorder {
   ButtonGestureState state;
   uint32_t now = 1000;  // not zero, so an uninitialised timestamp would show up
   int presses = 0;
-  int doubles = 0;
   int holds = 0;
+  int long_holds = 0;
 
   void feed(bool down, uint32_t ms) {
     for (uint32_t elapsed = 0; elapsed < ms; elapsed += 5) {
       switch (state.update(down, now)) {
         case ButtonGesture::Press: ++presses; break;
-        case ButtonGesture::Double: ++doubles; break;
         case ButtonGesture::Hold: ++holds; break;
+        case ButtonGesture::LongHold: ++long_holds; break;
         default: break;
       }
       now += 5;
@@ -435,77 +435,75 @@ struct Recorder {
 
 void test_button_gestures() {
   printf("button gestures\n");
-  const ButtonGestureConfig boot{40, 400, 3000};
+  // BOOT's shape: a bouncing GPIO, two seconds and five.
+  const ButtonGestureConfig boot{40, 2000, 5000};
 
-  {  // One tap is a press, and only after the double window has closed.
+  {  // A press fires the moment the button comes up, with nothing to wait for.
+    // This is what dropping the double press bought.
     gesture::Recorder r{{boot}};
-    r.tap(80);
-    r.feed(false, 200);
-    check(r.presses == 0, "a single press waits out the double window");
+    r.tap(120);
+    check(r.presses == 1, "a press fires on release");
+    r.feed(false, 600);
+    check(r.presses == 1, "and only once");
+    check(r.holds == 0 && r.long_holds == 0, "and is not a hold");
+  }
+
+  {  // Two taps in quick succession are simply two presses now.
+    gesture::Recorder r{{boot}};
+    r.tap(120);
+    r.feed(false, 150);
+    r.tap(120);
     r.feed(false, 300);
-    check(r.presses == 1 && r.doubles == 0, "and then fires once");
+    check(r.presses == 2, "quick taps are two presses, not a double");
   }
 
-  {  // The bug this was written for: two unhurried taps must be one double.
-    //
-    // Each press is held 200 ms with a 250 ms gap. Measured release to release
-    // that is 450 ms and misses a 400 ms window, which is how a double came out
-    // as two singles; measured release to press it is 250 ms and lands.
+  {  // Held past two seconds and let go before five.
     gesture::Recorder r{{boot}};
-    r.tap(200);
-    r.feed(false, 250);
-    r.tap(200);
+    r.feed(true, 2500);
     r.feed(false, 600);
-    check(r.doubles == 1, "unhurried taps still make a double");
-    check(r.presses == 0, "and no single press escapes with it");
+    check(r.holds == 1, "a two second hold fires once");
+    check(r.long_holds == 0, "and does not reach the long one");
+    check(r.presses == 0, "and its release is not also a press");
   }
 
-  {  // Genuinely separate taps stay separate.
+  {  // Held through both. The short one fires on the way, which is deliberate:
+    // it is the feedback that says the button is working, and both long actions
+    // end with the device restarting or powering off anyway.
     gesture::Recorder r{{boot}};
-    r.tap(80);
+    r.feed(true, 5500);
     r.feed(false, 600);
-    r.tap(80);
-    r.feed(false, 600);
-    check(r.presses == 2 && r.doubles == 0, "taps beyond the window are two presses");
+    check(r.holds == 1 && r.long_holds == 1, "holding through fires both, once each");
+    check(r.presses == 0, "and never a press");
   }
 
-  {  // A hold fires while still down, once, and its release does nothing.
+  {  // Just short of the threshold is still a press, not a hold.
     gesture::Recorder r{{boot}};
-    r.feed(true, 3200);
-    r.feed(false, 600);
-    check(r.holds == 1, "a long press holds exactly once");
-    check(r.presses == 0 && r.doubles == 0, "and is not also a press");
+    r.feed(true, 1900);
+    r.feed(false, 300);
+    check(r.presses == 1 && r.holds == 0, "just under two seconds is a press");
   }
 
   {  // Debounce rejects contact noise on the raw GPIO...
     gesture::Recorder r{{boot}};
     r.feed(true, 10);
-    r.feed(false, 600);
+    r.feed(false, 300);
     check(r.presses == 0, "a bounce is not a press");
   }
 
   {  // ...but the PMIC button has none, because power.cpp can only report a tap
     // seen whole between two polls as lasting a single loop iteration.
-    gesture::Recorder r{{ButtonGestureConfig{0, 400, 3000}}};
+    gesture::Recorder r{{ButtonGestureConfig{0, 2000, 5000}}};
     r.feed(true, 5);
-    r.feed(false, 600);
+    r.feed(false, 300);
     check(r.presses == 1, "an undebounced button keeps its shortest tap");
   }
 
-  {  // A tap and then a held second press is a double *and* a hold.
-    //
-    // Deciding the double at the press is what fixes the window, and the cost is
-    // that it cannot be taken back when that press turns out to be a hold. Both
-    // pairings are harmless: on PWR the auto-cycle toggles and then the device
-    // powers off, on BOOT a screen advances and then it restarts. What must not
-    // happen is a single press escaping as well, because that steps a day.
+  {  // A poll gap wide enough to skip both thresholds reports the one the finger
+    // earned rather than the one it passed through.
     gesture::Recorder r{{boot}};
-    r.tap(80);
-    r.feed(false, 100);
-    r.feed(true, 3200);
-    r.feed(false, 600);
-    check(r.holds == 1 && r.doubles == 1, "tap-then-hold is both, and once each");
-    check(r.presses == 0, "and no day step escapes on the way");
+    r.state.update(true, 10000);
+    check(r.state.update(true, 16000) == ButtonGesture::LongHold,
+          "a skipped poll still reports the long hold");
   }
 }
 

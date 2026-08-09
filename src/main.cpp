@@ -266,6 +266,7 @@ void setup() {
   // rotation that is not on screen would put every tap 2.5 degrees out for no
   // visible reason.
   ui_set_rotate_interval(settings_get().rotate_s);
+  ui_set_rotate_enabled(settings_get().rotate_enabled);
   ui_set_sweep_interval(settings_get().sweep_min);
 
   net_begin();

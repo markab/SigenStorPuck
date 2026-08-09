@@ -3,22 +3,27 @@
 #include "board_config.h"
 #include "button_gesture.h"
 #include "poller.h"
+#include "settings.h"
 #include "power.h"
 #include "ui/ui.h"
 
 namespace {
 
 // Long enough to ignore contact bounce on the raw GPIO, short enough not to feel
-// sticky. Only BOOT needs it — see Recogniser::debounce_ms.
+// sticky. Only BOOT needs it — see ButtonGestureConfig::debounce_ms.
 constexpr uint32_t DEBOUNCE_MS = 40;
+
+// Two seconds for the middle action, five for the one you should have to mean.
+constexpr uint32_t HOLD_MS = 2000;
+constexpr uint32_t LONG_HOLD_MS = 5000;
 
 // BOOT is a bare GPIO and bounces, so a press shorter than a few tens of
 // milliseconds is contact noise. PWR is debounced by the PMIC before it ever
 // becomes an interrupt, and a minimum there would throw away exactly the taps
 // power.cpp works hardest to preserve — the ones seen whole between two polls,
 // which it can only report as lasting a single loop iteration.
-ButtonGestureState s_boot{{/*debounce_ms=*/40}};
-ButtonGestureState s_pwr{{/*debounce_ms=*/0}};
+ButtonGestureState s_boot{{DEBOUNCE_MS, HOLD_MS, LONG_HOLD_MS}};
+ButtonGestureState s_pwr{{/*debounce_ms=*/0, HOLD_MS, LONG_HOLD_MS}};
 
 // Both day steps report what they did, because on a device with no keyboard the
 // only confirmation you get is the screen.
@@ -51,15 +56,19 @@ void handle_pwr(ButtonGesture gesture) {
     case ButtonGesture::Press:
       step_day(-1);
       break;
-    case ButtonGesture::Double: {
+    case ButtonGesture::Hold: {
       const bool on = !ui_rotate_enabled();
       ui_set_rotate_enabled(on);
+      // Persisted, so this is the same switch as the one on the settings page
+      // rather than a runtime shadow of it that a reboot would silently undo.
+      // A human-rate toggle is nothing to NVS.
+      settings_set_rotate_enabled(on);
       ui_toast(on ? "AUTO-CYCLE ON" : "AUTO-CYCLE OFF");
       Serial.printf("[buttons] auto-cycle %s\n", on ? "on" : "off");
       break;
     }
-    case ButtonGesture::Hold:
-      Serial.println("[buttons] PWR held, shutting down");
+    case ButtonGesture::LongHold:
+      Serial.println("[buttons] PWR held long, shutting down");
       ui_toast("POWERING OFF");
       // Long enough for the message to land on the glass before the rails go.
       delay(400);
@@ -75,11 +84,11 @@ void handle_boot(ButtonGesture gesture) {
     case ButtonGesture::Press:
       step_day(1);
       break;
-    case ButtonGesture::Double:
+    case ButtonGesture::Hold:
       ui_next_screen();
       break;
-    case ButtonGesture::Hold:
-      Serial.println("[buttons] BOOT held, restarting");
+    case ButtonGesture::LongHold:
+      Serial.println("[buttons] BOOT held long, restarting");
       ui_toast("RESTARTING");
       delay(400);
       ESP.restart();
@@ -94,8 +103,8 @@ void handle_boot(ButtonGesture gesture) {
 void buttons_begin() {
   // Active low, with the internal pull-up: the button pulls GPIO0 to ground.
   pinMode(PUCK_BUTTON_BOOT, INPUT_PULLUP);
-  Serial.println("[buttons] PWR: day back / double auto-cycle / hold 3s off");
-  Serial.println("[buttons] BOOT: day forward / double next screen / hold 3s restart");
+  Serial.println("[buttons] PWR: day back / hold 2s auto-cycle / hold 5s off");
+  Serial.println("[buttons] BOOT: day forward / hold 2s next screen / hold 5s restart");
 }
 
 void buttons_loop() {

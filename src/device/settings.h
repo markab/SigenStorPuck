@@ -73,9 +73,14 @@ struct Settings {
   // Extra rotation in tenths of a degree, for a mount that is not square to a
   // quarter turn. Costs a resampling pass, so 0 is the fast path.
   int16_t fine_tenths = 0;
-  // Auto-cycle through the screens; 0 = off. Spreads AMOLED wear across four
+  // Auto-cycle through the screens; 0 = off. Spreads AMOLED wear across the
   // layouts instead of burning one in.
   uint32_t rotate_s = 0;
+  // Whether the auto-cycle is running, kept apart from its interval so it can be
+  // switched off without losing the rate it was set to. The PWR button's double
+  // press writes this too, so the switch on the settings page and the one on the
+  // glass are the same switch and survive a reboot together.
+  bool rotate_enabled = true;
   // How often the sweep band runs, in minutes; 0 = off.
   uint32_t sweep_min = 240;
   // Which screens are built, and which the auto-cycle steps through, one bit per
@@ -145,6 +150,10 @@ bool settings_set_orientation(uint8_t quarter_turns);
 bool settings_set_fine_rotation(int16_t tenths_of_a_degree);
 
 bool settings_set_screensaver(uint32_t rotate_s, uint32_t sweep_min);
+
+// The auto-cycle on/off, without touching its interval. Written from the button
+// as well as the settings page.
+bool settings_set_rotate_enabled(bool enabled);
 
 // Which screens exist and which auto-cycle, as PuckScreen bit masks. Takes
 // effect on the next boot, like `source` and `orientation`: the tileview's tiles

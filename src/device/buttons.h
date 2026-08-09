@@ -12,20 +12,26 @@
 // The PMIC turns out to report press and release edges, not just its own idea of
 // a short or long press — so power.cpp can hand over a plain held/not-held level
 // and both buttons run through one gesture recogniser here. That matters: the
-// chip can only call a hold "long" at 1 s, 1.5 s or 2 s, and none of those is the
-// three seconds these gestures want.
+// chip can only call a hold "long" at 1 s, 1.5 s or 2 s, and there is no way to
+// get two thresholds out of it at all. The PMIC's own hardware cut-off is pushed
+// out to 10 s so it cannot fire before the five-second one below.
 //
 //   PWR    press        a day back through the data
-//          double       auto-cycle on or off
-//          hold 3 s     power off
+//          hold 2 s     auto-cycle on or off
+//          hold 5 s     power off
 //
 //   BOOT   press        a day forward, no further than today
-//          double       next screen
-//          hold 3 s     restart
+//          hold 2 s     next screen
+//          hold 5 s     restart
 //
-// A single press cannot fire until the double-press window has passed, so
-// stepping a day carries that much delay. Unavoidable: telling one press from
-// the first half of two means waiting to find out.
+// Two hold lengths rather than a double press. A double was tried and was
+// unreliable in the hand, and it cost every single press a wait — telling one
+// press from the first half of two means waiting out the whole double window
+// before acting. A press now fires the moment the button comes up.
+//
+// Both holds report while the button is still down, so holding through to five
+// seconds fires the two-second action on the way. That is harmless: both
+// five-second actions end with the device restarting or powering off.
 
 #pragma once
 

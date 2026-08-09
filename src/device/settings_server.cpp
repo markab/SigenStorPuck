@@ -296,8 +296,17 @@ String page(const String& message, bool message_is_error) {
   html += "<input id=orient name=orient type=number min=0 max=3 value=";
   html += settings.orientation;
   html += ">";
+  // The switch and the interval are separate controls on purpose: turning the
+  // auto-cycle off by zeroing its interval loses the rate it was set to, and
+  // finding it again is a job nobody wants after switching it back on. The PWR
+  // button's double press writes the same setting, so the two agree.
+  html += "<label class=opt><input type=checkbox name=roten value=1";
+  if (settings.rotate_enabled) {
+    html += " checked";
+  }
+  html += "> Auto-cycle screens</label>";
   html += "<div class=row>";
-  html += "<div><label for=rot>Rotate screens (s, 0 = off)</label><input id=rot name=rot type=number min=0 max=3600 value=";
+  html += "<div><label for=rot>Auto-cycle every (s, 0 = off)</label><input id=rot name=rot type=number min=0 max=3600 value=";
   html += settings.rotate_s;
   html += "></div>";
   html += "<div><label for=sweep>Sweep every (min, 0 = off)</label><input id=sweep name=sweep type=number min=0 max=1440 value=";
@@ -580,6 +589,16 @@ void handle_display() {
                              static_cast<uint32_t>(sweep.toInt()));
     ui_set_rotate_interval(settings_get().rotate_s);
     ui_set_sweep_interval(settings_get().sweep_min);
+
+    // Read alongside the interval rather than on its own, because an unchecked
+    // box sends nothing and there is no way to tell that from a form that never
+    // carried the field. The interval always arrives, so its presence is what
+    // says this section was submitted.
+    const bool rotate_on = s_server.hasArg("roten");
+    if (rotate_on != settings_get().rotate_enabled) {
+      settings_set_rotate_enabled(rotate_on);
+      ui_set_rotate_enabled(rotate_on);
+    }
   }
 
   // An unchecked box sends nothing at all, so the masks are rebuilt from what did
