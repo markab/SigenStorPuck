@@ -18,6 +18,7 @@ lv_disp_draw_buf_t s_draw_buf;
 lv_disp_drv_t s_disp_drv;
 lv_color_t* s_pixels = nullptr;
 bool s_buffer_is_internal = false;
+bool s_asleep = false;
 
 // Rotation is done here, on the way to the panel, rather than by LVGL's sw_rotate.
 // sw_rotate rotates each rendered fragment but leaves the area rectangle
@@ -203,6 +204,27 @@ void display_set_brightness(uint8_t level) {
   if (s_panel != nullptr) {
     s_panel->setBrightness(level);
   }
+}
+
+void display_set_sleep(bool asleep) {
+  if (s_panel == nullptr || asleep == s_asleep) {
+    return;
+  }
+  s_asleep = asleep;
+  if (asleep) {
+    s_panel->displayOff();
+  } else {
+    s_panel->displayOn();
+    // Panel RAM holds nothing meaningful after a sleep, and LVGL believes the
+    // screen still shows whatever it last flushed — so without this the display
+    // comes back as noise and stays that way until something happens to change.
+    lv_obj_invalidate(lv_scr_act());
+  }
+  Serial.printf("[display] panel %s\n", asleep ? "asleep" : "awake");
+}
+
+bool display_asleep() {
+  return s_asleep;
 }
 
 bool display_buffer_is_internal() {

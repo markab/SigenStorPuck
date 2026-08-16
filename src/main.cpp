@@ -18,6 +18,7 @@
 #include "device/settings_server.h"
 #include "device/updater.h"
 #include "display.h"
+#include "screen_window.h"
 #include "snapshot.h"
 #include "touch.h"
 #include "ui/theme.h"
@@ -170,6 +171,49 @@ void apply_idle_dim() {
   }
 }
 
+// Blanks the panel outright between two local times, and brings it back for a
+// button (buttons.cpp swallows the gesture that does the waking) or for the end
+// of the window.
+//
+// Local, not UTC. The device's own clock is UTC — net.cpp asks NTP for no
+// timezone — so the offset has to come from the reading, which is the same one
+// the day charts are anchored to. Until one arrives the window is read against
+// UTC, which in Britain is right for half the year and an hour out for the other
+// half; the settings page prints the device's current local time next to the
+// fields so that is visible rather than mysterious.
+void apply_screen_schedule() {
+  const Settings& settings = settings_get();
+  const time_t now = time(nullptr);
+
+  // Without a real clock every time of day is a guess, and the guess is 1970.
+  // Blanking on it would leave a device that has lost NTP dark with no way to
+  // tell why. The same 2024 floor sigen_api.cpp uses to judge certificates.
+  const bool can_tell_the_time = now > 1704067200;
+
+  bool wanted = false;
+  if (settings.screen_off_set && can_tell_the_time) {
+    const uint16_t minute =
+        screen_local_minute(static_cast<uint32_t>(now), poller_tz_offset_min());
+    wanted = screen_window_contains(settings.screen_off_start_min, settings.screen_off_end_min,
+                                    minute);
+  }
+
+  if (!wanted) {
+    display_set_sleep(false);
+    return;
+  }
+  if (display_asleep()) {
+    return;
+  }
+  // Inside the window but recently touched or pressed: leave it up. LVGL's
+  // inactivity timer is the same one the idle dim reads, so a swipe through the
+  // screens holds it awake as naturally as it holds off the dim.
+  if (lv_disp_get_inactive_time(nullptr) < PUCK_SCREEN_WAKE_S * 1000) {
+    return;
+  }
+  display_set_sleep(true);
+}
+
 void refresh_ui() {
   Snapshot snapshot;
   const bool have = poller_snapshot(&snapshot);
@@ -309,6 +353,7 @@ void loop() {
   }
 
   apply_idle_dim();
+  apply_screen_schedule();
   lv_timer_handler();
   delay(5);
 }

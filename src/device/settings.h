@@ -70,6 +70,22 @@ struct Settings {
   // a worse status display. 0 disables dimming entirely.
   uint32_t dim_after_s = 30;
   uint8_t dim_brightness = 24;
+  // Hours to switch the panel off entirely, as minutes since local midnight.
+  // A window that wraps midnight is the normal case — 22:30 to 07:00 — so
+  // `start > end` is expected rather than tolerated (see screen_window.h).
+  //
+  // Off here means off, not dimmed. That is not a reversal of the "dim, never
+  // blank" rule the idle timer follows: dimming keeps a display readable for
+  // someone who might glance at it, and this is for the hours nobody is there.
+  // Any button brings it back for PUCK_SCREEN_WAKE_S.
+  //
+  // The times are local, read against the timezone the day charts use — the
+  // device's own clock is UTC. The settings page shows the device's current
+  // local time beside these fields, because a schedule that fires an hour out is
+  // otherwise a mystery.
+  bool screen_off_set = false;
+  uint16_t screen_off_start_min = 0;
+  uint16_t screen_off_end_min = 0;
   // Quarter turns clockwise, 0-3, for mounting the Puck whichever way suits.
   uint8_t orientation = 0;
   // Extra rotation in tenths of a degree, for a mount that is not square to a
@@ -164,6 +180,12 @@ bool settings_set_modbus(const String& host, uint16_t port, uint8_t plant_addres
 
 bool settings_set_display(uint8_t brightness, uint32_t dim_after_s,
                           uint8_t dim_brightness);
+
+// The overnight screen-off window, in minutes since local midnight. `set` false
+// switches it off and the times are ignored; equal times are rejected, because
+// the only sane reading of a zero-length window is that somebody meant something
+// else (see screen_window_contains).
+bool settings_set_screen_off(bool set, uint16_t start_min, uint16_t end_min);
 
 bool settings_set_poll_interval(uint32_t seconds);
 

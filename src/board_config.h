@@ -114,6 +114,12 @@ static constexpr int PUCK_KW_DECIMALS = 2;
 // more than this; the limit is what is useful to reach one press at a time.
 static constexpr int PUCK_MAX_DAYS_BACK = 7;
 
+// How long a button keeps the screen up during a scheduled off period, before it
+// goes dark again. Long enough to read a figure off it in the dark, short enough
+// that a knock in passing does not light the room until morning. Any touch
+// afterwards extends it, so this is the floor and not the ceiling.
+static constexpr uint32_t PUCK_SCREEN_WAKE_S = 30;
+
 // Below this the battery arc turns amber. An exception, not a gradient: the ring
 // means "the battery" everywhere else, so it should only change colour when
 // there is genuinely something to notice.

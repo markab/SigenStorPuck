@@ -9,6 +9,7 @@
 #include "poller.h"
 #include "power.h"
 #include "settings.h"
+#include "screen_window.h"
 #include "sigen_api.h"
 #include "solar_api.h"
 #include "updater.h"
@@ -71,6 +72,44 @@ const char* PAGE_STYLE =
     // A hint that follows a group of controls rather than a single one needs the
     // opposite, or it clings to the last label and looks like part of it.
     "p.hint.gap{margin-top:.6rem}";
+
+// "HH:MM", which is both what <input type=time> renders and what it posts back.
+String clock_text(uint16_t minute_of_day) {
+  char text[6];
+  snprintf(text, sizeof(text), "%02u:%02u", minute_of_day / 60, minute_of_day % 60);
+  return String(text);
+}
+
+// The reverse. Returns false for anything that is not a plain HH:MM in range,
+// including the empty string a blank field posts — the caller reads that as
+// "switch the schedule off" rather than as a parse failure.
+bool clock_minutes(const String& text, uint16_t* out) {
+  if (text.length() < 4) {
+    return false;
+  }
+  const int colon = text.indexOf(':');
+  if (colon <= 0) {
+    return false;
+  }
+  const long hours = text.substring(0, colon).toInt();
+  const long minutes = text.substring(colon + 1).toInt();
+  if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
+    return false;
+  }
+  *out = static_cast<uint16_t>(hours * 60 + minutes);
+  return true;
+}
+
+// The device's own local time, for the hint beside the schedule. "--:--" until
+// NTP lands, which is the honest answer and also tells you why the schedule is
+// not firing yet.
+String device_clock_text() {
+  const time_t now = time(nullptr);
+  if (now <= 1704067200) {
+    return String("--:--");
+  }
+  return clock_text(screen_local_minute(static_cast<uint32_t>(now), poller_tz_offset_min()));
+}
 
 String escape_html(const String& text) {
   String out;
@@ -371,6 +410,33 @@ String page(const String& message, bool message_is_error) {
   html += "<div><label for=dimb>Dimmed brightness</label><input id=dimb name=dimb type=number min=1 max=255 value=";
   html += settings.dim_brightness;
   html += "></div></div>";
+
+  // Off entirely, not dimmed — different from the field above it, and worth the
+  // sentence saying so on the page rather than only in the source.
+  html += "<div class=row>";
+  html += "<div><label for=offstart>Screen off from</label>";
+  html += "<input id=offstart name=offstart type=time value='";
+  if (settings.screen_off_set) {
+    html += clock_text(settings.screen_off_start_min);
+  }
+  html += "'></div>";
+  html += "<div><label for=offend>until</label>";
+  html += "<input id=offend name=offend type=time value='";
+  if (settings.screen_off_set) {
+    html += clock_text(settings.screen_off_end_min);
+  }
+  html += "'></div></div>";
+  // The device's own idea of the time, printed because it is the only way to see
+  // that the schedule will fire when you meant. The clock is UTC and the offset
+  // comes from the reading, so on a device that has not polled yet, or a Modbus
+  // one with no solar location, this will say UTC and the window will follow it.
+  html += "<p class=hint>Blank both to leave the screen on. Off means off, not "
+          "dimmed — any button brings it back for ";
+  html += PUCK_SCREEN_WAKE_S;
+  html += " seconds. Times are the device's local time, which is now <b>";
+  html += device_clock_text();
+  html += "</b>.</p>";
+
   // No fine-rotation field yet: the drawing mechanism for it is blocked (see
   // ui_set_fine_rotation). Offering a control that stores a value and changes
   // nothing on screen would be worse than not offering it.
@@ -648,6 +714,15 @@ void handle_display() {
   if (poll > 0) {
     settings_set_poll_interval(static_cast<uint32_t>(poll));
   }
+
+  // Both fields or neither. One time on its own has no window in it, and
+  // guessing the other end — midnight? dawn? — would be inventing a schedule the
+  // user did not ask for.
+  uint16_t off_start = 0;
+  uint16_t off_end = 0;
+  const bool have_start = clock_minutes(s_server.arg("offstart"), &off_start);
+  const bool have_end = clock_minutes(s_server.arg("offend"), &off_end);
+  settings_set_screen_off(have_start && have_end, off_start, off_end);
   const String orient = s_server.arg("orient");
   bool restart_needed = false;
   if (orient.length() > 0) {

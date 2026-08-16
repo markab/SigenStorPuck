@@ -43,6 +43,7 @@ constexpr uint32_t DAY_REFRESH_MS = 5 * 60 * 1000;
 SemaphoreHandle_t s_lock = nullptr;
 Snapshot s_snapshot;
 PollStatus s_status;
+int32_t s_tz_offset_min = 0;
 volatile bool s_wake = false;
 
 // Task-local in practice — only poll_task touches these — but kept here with the
@@ -93,6 +94,14 @@ void publish(const Snapshot& snapshot, const PollStatus& status) {
   if (xSemaphoreTake(s_lock, portMAX_DELAY) == pdTRUE) {
     s_snapshot = snapshot;
     s_status = status;
+    // Latched rather than left in the snapshot for readers to dig out: it is the
+    // one field that is a property of the *site* rather than of this reading, and
+    // the screen schedule needs it even while polls are failing. Keeping the last
+    // known offset through a network outage is right — the timezone has not
+    // changed just because the server stopped answering.
+    if (snapshot.tz_offset_min.known) {
+      s_tz_offset_min = snapshot.tz_offset_min.value;
+    }
     xSemaphoreGive(s_lock);
   }
 }
@@ -337,6 +346,15 @@ bool poller_day_snapshot(Snapshot* out) {
     xSemaphoreGive(s_lock);
   }
   return valid;
+}
+
+int32_t poller_tz_offset_min() {
+  int32_t copy = 0;
+  if (s_lock != nullptr && xSemaphoreTake(s_lock, portMAX_DELAY) == pdTRUE) {
+    copy = s_tz_offset_min;
+    xSemaphoreGive(s_lock);
+  }
+  return copy;
 }
 
 void poller_wake() {

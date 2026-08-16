@@ -36,6 +36,15 @@ bool poller_day_snapshot(Snapshot* out);
 
 PollStatus poller_status();
 
+// Minutes east of UTC, latched from the last reading that carried one; 0 until
+// then, which is also a legitimate value, so this cannot distinguish "UTC" from
+// "not known yet" and does not try to.
+//
+// The device's own clock is deliberately UTC (net.cpp asks NTP for no timezone),
+// so this is what anything needing a local time has to go through: the day
+// charts' midnight and the screen-off schedule both.
+int32_t poller_tz_offset_min();
+
 // Asks the loop to fetch immediately rather than waiting out its interval — used
 // after the settings change, so a corrected URL takes effect at once.
 void poller_wake();

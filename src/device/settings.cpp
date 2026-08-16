@@ -32,6 +32,9 @@ constexpr const char* KEY_MB_PLANT = "mb_plant";
 // times three fields would be twelve NVS entries to keep in step, and the struct
 // is plain data with no pointers in it.
 constexpr const char* KEY_MB_DEVICES = "mb_devs";
+constexpr const char* KEY_OFF_SET = "off_set";
+constexpr const char* KEY_OFF_START = "off_start";
+constexpr const char* KEY_OFF_END = "off_end";
 constexpr const char* KEY_SOL_SET = "sol_set";
 constexpr const char* KEY_SOL_LAT = "sol_lat";
 constexpr const char* KEY_SOL_LON = "sol_lon";
@@ -91,6 +94,10 @@ void settings_begin() {
     // A short blob leaves the defaults, which is an empty device list.
     prefs.getBytes(KEY_MB_DEVICES, s_settings.modbus_devices, sizeof(s_settings.modbus_devices));
   }
+
+  s_settings.screen_off_set = prefs.getBool(KEY_OFF_SET, false);
+  s_settings.screen_off_start_min = prefs.getUShort(KEY_OFF_START, 0);
+  s_settings.screen_off_end_min = prefs.getUShort(KEY_OFF_END, 0);
 
   s_settings.solar_location_set = prefs.getBool(KEY_SOL_SET, false);
   s_settings.latitude = prefs.getFloat(KEY_SOL_LAT, s_settings.latitude);
@@ -152,6 +159,30 @@ bool settings_set_display(uint8_t brightness, uint32_t dim_after_s, uint8_t dim_
   s_settings.brightness = brightness;
   s_settings.dim_after_s = dim_after_s;
   s_settings.dim_brightness = dim_brightness;
+  return true;
+}
+
+bool settings_set_screen_off(bool set, uint16_t start_min, uint16_t end_min) {
+  if (set && (start_min >= 1440 || end_min >= 1440 || start_min == end_min)) {
+    return false;
+  }
+  Preferences prefs;
+  if (!prefs.begin(NAMESPACE, /*readOnly=*/false)) {
+    return false;
+  }
+  prefs.putBool(KEY_OFF_SET, set);
+  prefs.putUShort(KEY_OFF_START, start_min);
+  prefs.putUShort(KEY_OFF_END, end_min);
+  prefs.end();
+  s_settings.screen_off_set = set;
+  s_settings.screen_off_start_min = start_min;
+  s_settings.screen_off_end_min = end_min;
+  if (set) {
+    Serial.printf("[settings] screen off %02u:%02u to %02u:%02u local\n", start_min / 60,
+                  start_min % 60, end_min / 60, end_min % 60);
+  } else {
+    Serial.println("[settings] screen off schedule cleared");
+  }
   return true;
 }
 

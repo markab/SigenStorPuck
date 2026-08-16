@@ -17,6 +17,7 @@
 #include "day_series.h"
 #include "history.h"
 #include "modbus_regs.h"
+#include "screen_window.h"
 #include "solar_forecast.h"
 
 namespace {
@@ -633,6 +634,53 @@ void test_solar_forecast() {
   check(summary.forecast_kwh == 0.0f, "no arrays forecasts nothing");
 }
 
+// --- screen-off window -----------------------------------------------------
+
+void test_screen_window() {
+  printf("screen window\n");
+
+  // 22:30 to 07:00 — the case anyone actually sets, and the one that wraps.
+  constexpr uint16_t NIGHT_FROM = 22 * 60 + 30;
+  constexpr uint16_t NIGHT_TO = 7 * 60;
+  check(screen_window_contains(NIGHT_FROM, NIGHT_TO, 23 * 60), "23:00 is inside an overnight window");
+  check(screen_window_contains(NIGHT_FROM, NIGHT_TO, 3 * 60), "03:00 is inside it");
+  check(screen_window_contains(NIGHT_FROM, NIGHT_TO, NIGHT_FROM), "the start minute is inside");
+  check(!screen_window_contains(NIGHT_FROM, NIGHT_TO, NIGHT_TO), "the end minute is outside");
+  check(!screen_window_contains(NIGHT_FROM, NIGHT_TO, 12 * 60), "midday is outside");
+  check(!screen_window_contains(NIGHT_FROM, NIGHT_TO, NIGHT_FROM - 1),
+        "the minute before the start is outside");
+
+  // Wholly within a day, which is the easy case but still has to work.
+  check(screen_window_contains(60, 360, 120), "02:00 is inside 01:00-06:00");
+  check(!screen_window_contains(60, 360, 30), "00:30 is outside it");
+  check(!screen_window_contains(60, 360, 400), "06:40 is outside it");
+
+  // An empty window blanks nothing. The alternative reading — a whole day — is
+  // the worst thing a mistyped pair of equal times could do.
+  check(!screen_window_contains(600, 600, 600), "equal times are an empty window");
+  check(!screen_window_contains(600, 600, 0), "equal times blank nothing at all");
+
+  // Midnight itself, at both ends.
+  check(screen_window_contains(1380, 0, 1400), "a window ending at midnight holds 23:20");
+  check(!screen_window_contains(1380, 0, 0), "and lets go at midnight exactly");
+
+  // 2026-08-16 00:00:00 UTC. The offsets below are the ones that break a naive
+  // implementation: an hour east pushes into the next day, and anything west
+  // pushes into the previous one, where unsigned arithmetic wraps to seventy
+  // million minutes and puts the device in the afternoon.
+  constexpr uint32_t MIDNIGHT_UTC = 1786924800u;
+  check(screen_local_minute(MIDNIGHT_UTC, 0) == 0, "UTC midnight is minute 0");
+  check(screen_local_minute(MIDNIGHT_UTC, 60) == 60, "one hour east is 01:00");
+  check(screen_local_minute(MIDNIGHT_UTC, -300) == 19 * 60, "New York is 19:00 the day before");
+  check(screen_local_minute(MIDNIGHT_UTC, -1) == 1439, "one minute west wraps to 23:59");
+  check(screen_local_minute(MIDNIGHT_UTC, 345) == 345, "Kathmandu's three quarters of an hour");
+  check(screen_local_minute(MIDNIGHT_UTC + 13 * 3600 + 37 * 60, 60) == 14 * 60 + 37,
+        "a time mid-afternoon");
+  // Sydney in summer is +11, so UTC 14:00 is 01:00 the next day — the wrap in
+  // the other direction.
+  check(screen_local_minute(MIDNIGHT_UTC + 14 * 3600, 660) == 60, "wrapping forward past midnight");
+}
+
 }  // namespace
 
 int run_selftest() {
@@ -647,6 +695,7 @@ int run_selftest() {
   test_history_banks();
   test_button_gestures();
   test_solar_forecast();
+  test_screen_window();
   printf("\n%d checks, %d failed\n", s_checks, s_failures);
   return s_failures == 0 ? 0 : 1;
 }

@@ -2,6 +2,7 @@
 
 #include "board_config.h"
 #include "button_gesture.h"
+#include "display.h"
 #include "poller.h"
 #include "settings.h"
 #include "power.h"
@@ -54,6 +55,22 @@ void step_day(int delta) {
   // would sit on LOADING for all of it.
   poller_wake();
   Serial.printf("[buttons] day offset %d\n", after);
+}
+
+// A gesture that arrives while the panel is asleep does one thing only: turn it
+// back on. Acting on it as well would mean pressing PWR to see the screen and
+// finding yesterday on it, which is a fair description of a bug.
+//
+// Only the gesture that does the waking is swallowed, not the whole press. So
+// holding through to five seconds still powers the device off: the two-second
+// hold on the way there lights the screen, and the long hold then lands on a
+// device that is awake and can show the message before the rails go.
+bool wake_if_asleep() {
+  if (!display_asleep()) {
+    return false;
+  }
+  display_set_sleep(false);
+  return true;
 }
 
 void handle_pwr(ButtonGesture gesture) {
@@ -120,12 +137,16 @@ void buttons_loop() {
     // Any button counts as activity, so a press wakes a dimmed screen and holds
     // the auto-cycle off — the same treatment a touch gets.
     lv_disp_trig_activity(nullptr);
-    handle_boot(boot);
+    if (!wake_if_asleep()) {
+      handle_boot(boot);
+    }
   }
 
   const ButtonGesture pwr = s_pwr.update(power_key_down(), now);
   if (pwr != ButtonGesture::None) {
     lv_disp_trig_activity(nullptr);
-    handle_pwr(pwr);
+    if (!wake_if_asleep()) {
+      handle_pwr(pwr);
+    }
   }
 }
