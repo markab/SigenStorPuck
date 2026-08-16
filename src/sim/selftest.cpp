@@ -1,4 +1,4 @@
-// Checks for the parts of the Modbus path that do not need a plant (PLAN.md §D4).
+// Checks for the parts of the Modbus path that do not need a plant (PLAN.md §D).
 //
 // Run with `.pio/build/sim/program --selftest`. Desktop-only, like the rest of
 // src/sim/, but everything it exercises is shared with the firmware — which is
@@ -17,6 +17,7 @@
 #include "day_series.h"
 #include "history.h"
 #include "modbus_regs.h"
+#include "solar_forecast.h"
 
 namespace {
 
@@ -36,6 +37,18 @@ void check_near(float actual, float expected, const char* what) {
   if (fabsf(actual - expected) > 0.005f) {
     ++s_failures;
     printf("  FAIL  %s (got %.4f, wanted %.4f)\n", what, actual, expected);
+  }
+}
+
+// A proportional tolerance, for figures compared against a reference computed in
+// double precision. The firmware is float throughout — an S3 has hardware FP32
+// and nothing else — so a day's worth of accumulated slots cannot match to the
+// absolute 5 mWh check_near() wants.
+void check_within(float actual, float expected, float fraction, const char* what) {
+  ++s_checks;
+  if (fabsf(actual - expected) > fabsf(expected) * fraction) {
+    ++s_failures;
+    printf("  FAIL  %s (got %.5f, wanted %.5f)\n", what, actual, expected);
   }
 }
 
@@ -507,6 +520,119 @@ void test_button_gestures() {
   }
 }
 
+// --- solar forecast --------------------------------------------------------
+//
+// Every expected figure here was produced by running the server's own
+// app/solar.py over the same inputs, not derived independently. That is the
+// point of the test: the model is a port, and what matters is not that it is a
+// defensible forecast but that it is the *same* forecast — one house showing two
+// different numbers on two screens would be worse than showing none.
+
+void test_solar_forecast() {
+  printf("solar forecast\n");
+
+  constexpr float LAT = 51.5072f;   // London, the reference site
+  constexpr float LON = -0.1276f;
+
+  float elevation = 0.0f;
+  float azimuth = 0.0f;
+
+  // Summer solstice, near solar noon: the year's highest sun, and almost exactly
+  // due south — which is the check that the azimuth convention did not come
+  // across 180 degrees out.
+  solar_position(1782043200u, LAT, LON, &elevation, &azimuth);
+  check_near(elevation, 61.9399f, "solstice noon elevation");
+  check_near(azimuth, 179.0198f, "solstice noon azimuth is due south");
+
+  // A day either side, to catch a declination that is out by one day: the
+  // difference is small and a whole-day slip would still look like a plausible
+  // number on its own.
+  solar_position(1781956800u, LAT, LON, &elevation, &azimuth);
+  check_near(elevation, 61.9352f, "day before the solstice");
+
+  // Midnight, and midnight in the far half of the year — the sun is well below
+  // the horizon and the elevation has to go negative rather than clamp.
+  solar_position(1755302400u, LAT, LON, &elevation, &azimuth);
+  check_near(elevation, -25.0308f, "midnight is below the horizon");
+  solar_position(1798848000u, LAT, LON, &elevation, &azimuth);
+  check_near(elevation, -61.4097f, "midwinter midnight");
+
+  // Morning, sun low in the east.
+  solar_position(1755324000u, LAT, LON, &elevation, &azimuth);
+  check_near(elevation, 9.8175f, "morning elevation");
+  check_near(azimuth, 80.6894f, "morning azimuth is east of south");
+
+  check_near(solar_poa_factor(40.0f, 180.0f, 35.0f, 180.0f), 0.965926f,
+             "sun square-on to a south-facing array");
+  check_near(solar_poa_factor(20.0f, 120.0f, 35.0f, 180.0f), 0.549659f, "sun off to one side");
+  check_near(solar_poa_factor(5.0f, 90.0f, 90.0f, 270.0f), 0.0f, "sun behind the panel");
+  check_near(solar_poa_factor(-3.0f, 180.0f, 35.0f, 180.0f), 0.0f, "sun below the horizon");
+
+  // A synthetic day: a triangular irradiance profile peaking at midday. Made up
+  // rather than fetched, so the test needs no network and the same numbers can be
+  // put through the Python.
+  constexpr uint32_t DAY = 1755302400u;  // 2025-08-16 00:00 UTC
+  SolarHour hours[24];
+  for (int h = 0; h < 24; ++h) {
+    const float distance = static_cast<float>(h < 12 ? 12 - h : h - 12);
+    hours[h].direct_normal = 900.0f - distance * 120.0f;
+    hours[h].diffuse = 200.0f - distance * 20.0f;
+    if (hours[h].direct_normal < 0.0f) {
+      hours[h].direct_normal = 0.0f;
+    }
+    if (hours[h].diffuse < 0.0f) {
+      hours[h].diffuse = 0.0f;
+    }
+  }
+
+  SolarSite site;
+  site.latitude = LAT;
+  site.longitude = LON;
+  site.system_loss = 0.85f;
+  site.array_count = 2;
+  site.array[0] = {5.4f, 35.0f, 180.0f};
+  site.array[1] = {2.0f, 20.0f, 90.0f};  // a second roof facing east
+
+  float slots[SOLAR_SLOTS_PER_DAY];
+  solar_forecast_day(site, DAY, hours, 24, DAY, slots);
+  SolarSummary summary = solar_summarise(slots, DAY, DAY);
+  check_within(summary.forecast_kwh, 40.924067f, 0.001f, "two arrays over a day");
+  check_within(summary.peak_kw, 6.393418f, 0.001f, "peak slot as kW");
+  check(summary.remaining_kwh == summary.forecast_kwh, "all of it is still to come at midnight");
+
+  summary = solar_summarise(slots, DAY, DAY + 12 * 3600);
+  check_within(summary.remaining_kwh, 21.676796f, 0.001f, "remaining from midday");
+
+  // The cap clips the combined throughput, so it shows up in the peak as well as
+  // the total — an AC-only reading of it would leave the peak alone.
+  site.inverter_cap_kw = 3.0f;
+  solar_forecast_day(site, DAY, hours, 24, DAY, slots);
+  summary = solar_summarise(slots, DAY, DAY);
+  check_within(summary.forecast_kwh, 29.768547f, 0.001f, "clipped by the inverter cap");
+  check_within(summary.peak_kw, 3.0f, 0.001f, "peak is the cap itself");
+
+  site.inverter_cap_kw = 0.0f;
+  site.array_count = 1;
+  solar_forecast_day(site, DAY, hours, 24, DAY, slots);
+  summary = solar_summarise(slots, DAY, DAY);
+  check_within(summary.forecast_kwh, 31.161450f, 0.001f, "one array alone");
+
+  // Hours that were not fetched contribute nothing rather than repeating the last
+  // one: a truncated response should shorten the curve, not extend a plateau.
+  solar_forecast_day(site, DAY, hours, 13, DAY, slots);
+  summary = solar_summarise(slots, DAY, DAY);
+  check(summary.forecast_kwh > 0.0f && summary.forecast_kwh < 31.0f,
+        "a short response forecasts only the hours it covers");
+  check(slots[SOLAR_SLOTS_PER_DAY - 1] == 0.0f, "slots past the response stay empty");
+
+  // No arrays is not a dark day, it is nothing to forecast — and it must not read
+  // back whatever the previous call left in the buffer.
+  site.array_count = 0;
+  solar_forecast_day(site, DAY, hours, 24, DAY, slots);
+  summary = solar_summarise(slots, DAY, DAY);
+  check(summary.forecast_kwh == 0.0f, "no arrays forecasts nothing");
+}
+
 }  // namespace
 
 int run_selftest() {
@@ -520,6 +646,7 @@ int run_selftest() {
   test_day_series();
   test_history_banks();
   test_button_gestures();
+  test_solar_forecast();
   printf("\n%d checks, %d failed\n", s_checks, s_failures);
   return s_failures == 0 ? 0 : 1;
 }

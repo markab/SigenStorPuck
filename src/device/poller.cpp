@@ -7,6 +7,7 @@
 #include "modbus_api.h"
 #include "settings.h"
 #include "sigen_api.h"
+#include "solar_api.h"
 #include "updater.h"
 #include "ui/ui.h"
 
@@ -121,6 +122,13 @@ void poll_task(void* /*argument*/) {
     status.last_http_status = http_status;
 
     if (result == FetchResult::Ok) {
+      // The forecast the plant cannot supply, folded in before publishing so the
+      // screens and history_record() see one complete snapshot rather than a
+      // reading that grows a solar block a moment later. No I/O here — this is
+      // the cached figures, refreshed further down between polls.
+      if (modbus) {
+        solar_api_apply(&fetched);
+      }
       status.consecutive_failures = 0;
       status.last_ok_ms = millis();
       status.ever_succeeded = true;
@@ -231,6 +239,14 @@ void poll_task(void* /*argument*/) {
     // Between fetches, with this task's own client already closed, so an update
     // check never overlaps a poll's TLS session. That overlap is what exhausted
     // the heap and made the check report a refused connection.
+    //
+    // The forecast fetch keeps the same company for the same reason: it is
+    // another TLS session on this stack, and it decides for itself whether one is
+    // due — at most one an hour. Server source excluded because there the
+    // forecast comes in the summary payload already.
+    if (modbus) {
+      solar_api_service();
+    }
     updater_service();
 
     uint32_t wait_ms = settings_get().poll_interval_s * 1000;

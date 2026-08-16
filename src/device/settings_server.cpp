@@ -10,6 +10,7 @@
 #include "power.h"
 #include "settings.h"
 #include "sigen_api.h"
+#include "solar_api.h"
 #include "updater.h"
 #include "touch.h"
 #include "ui/ui.h"
@@ -273,6 +274,87 @@ String page(const String& message, bool message_is_error) {
             " type=checkbox value=1";
     html += device.dc_charger ? " checked" : "";
     html += "> fitted</div></div></div>";
+  }
+  html += "<button type=submit>Save</button></form>";
+
+  // --- solar forecast ------------------------------------------------------
+  //
+  // Shown whichever source is selected, and marked out of use on the server one,
+  // exactly as the Modbus section above is. A section that appears and vanishes
+  // as you flip the radio button reads as a fault in the page.
+  html += "<h2>Solar forecast</h2>";
+  if (!modbus) {
+    html += "<p class=hint>Not in use: with a server in the path the forecast comes "
+            "from it, computed by the same model that feeds the dashboard.</p>";
+  } else {
+    html += "<p class=hint>";
+    if (!settings.solar_location_set) {
+      html += "Leave the location blank for no forecast — the solar screen then hides "
+              "its ring rather than showing an empty one.";
+    } else {
+      switch (solar_api_last_result()) {
+        case FetchResult::Ok:
+          html += "Forecast loaded from Open-Meteo.";
+          break;
+        case FetchResult::NotConfigured:
+          html += "Add at least one array below to start forecasting.";
+          break;
+        default:
+          html += "Last fetch: ";
+          html += fetch_result_name(solar_api_last_result());
+          html += ". Retrying.";
+          break;
+      }
+    }
+    html += "</p>";
+  }
+  html += "<form method=post action=/solar><div class=row>";
+  html += "<div><label for=sollat>Latitude</label>";
+  html += "<input id=sollat name=sollat type=number step=any min=-90 max=90 value='";
+  if (settings.solar_location_set) {
+    html += String(settings.latitude, 5);
+  }
+  html += "' placeholder='51.5072'></div>";
+  html += "<div><label for=sollon>Longitude</label>";
+  html += "<input id=sollon name=sollon type=number step=any min=-180 max=180 value='";
+  if (settings.solar_location_set) {
+    html += String(settings.longitude, 5);
+  }
+  html += "' placeholder='-0.1276'></div></div>";
+  // The offset that comes back with the weather is worth more than the forecast
+  // on this path: the Puck keeps UTC and the plant's own timezone register reads
+  // 0, so this is the only thing that knows where local midnight is — and the day
+  // charts are drawn against it.
+  html += "<p class=hint>The location also sets the timezone the day charts are "
+          "drawn against, which the plant does not report reliably.</p>";
+  html += "<div class=row>";
+  html += "<div><label for=solloss>System loss (0-1)</label>";
+  html += "<input id=solloss name=solloss type=number step=0.01 min=0.1 max=1 value=";
+  html += String(settings.solar_system_loss, 2);
+  html += "></div>";
+  html += "<div><label for=solcap>Inverter cap (kW, 0 = none)</label>";
+  html += "<input id=solcap name=solcap type=number step=0.1 min=0 value=";
+  html += String(settings.solar_inverter_cap_kw, 1);
+  html += "></div></div>";
+  html += "<p class=hint>Azimuth is a compass bearing: 180 is due south, 90 east, "
+          "270 west. Tilt is from horizontal, so 0 is flat. A size of 0 leaves the "
+          "slot unused.</p>";
+  for (size_t i = 0; i < SOLAR_MAX_ARRAYS; ++i) {
+    const PvArray& array = settings.solar_arrays[i];
+    const String suffix(static_cast<unsigned>(i));
+    html += "<div class=row><div><label for=solkwp" + suffix + ">Size (kWp)</label>";
+    html += "<input id=solkwp" + suffix + " name=solkwp" + suffix +
+            " type=number step=0.01 min=0 value=";
+    html += String(array.kwp, 2);
+    html += "></div><div><label for=soltilt" + suffix + ">Tilt</label>";
+    html += "<input id=soltilt" + suffix + " name=soltilt" + suffix +
+            " type=number step=1 min=0 max=90 value=";
+    html += String(array.tilt_deg, 0);
+    html += "></div><div><label for=solaz" + suffix + ">Azimuth</label>";
+    html += "<input id=solaz" + suffix + " name=solaz" + suffix +
+            " type=number step=1 min=0 max=360 value=";
+    html += String(array.azimuth_deg, 0);
+    html += "></div></div>";
   }
   html += "<button type=submit>Save</button></form>";
 
@@ -732,6 +814,37 @@ void handle_modbus() {
             false);
 }
 
+void handle_solar() {
+  // Blank coordinates mean "no forecast" rather than the equator. A checkbox
+  // would be a second control saying the same thing as an empty field, and the
+  // two would eventually disagree.
+  const String latitude = s_server.arg("sollat");
+  const String longitude = s_server.arg("sollon");
+  const bool located = latitude.length() > 0 && longitude.length() > 0;
+
+  PvArray arrays[SOLAR_MAX_ARRAYS];
+  for (size_t i = 0; i < SOLAR_MAX_ARRAYS; ++i) {
+    const String suffix(static_cast<unsigned>(i));
+    arrays[i].kwp = s_server.arg("solkwp" + suffix).toFloat();
+    arrays[i].tilt_deg = s_server.arg("soltilt" + suffix).toFloat();
+    arrays[i].azimuth_deg = s_server.arg("solaz" + suffix).toFloat();
+  }
+
+  if (!settings_set_solar(located, latitude.toFloat(), longitude.toFloat(),
+                          s_server.arg("solloss").toFloat(), s_server.arg("solcap").toFloat(),
+                          arrays, SOLAR_MAX_ARRAYS)) {
+    send_page("Could not store the solar settings. Check the latitude and longitude.", true);
+    return;
+  }
+  // The poll task notices the change on its own and refetches or recomputes as
+  // the edit warrants; waking it just means not waiting a poll interval to see it.
+  poller_wake();
+  send_page(settings_get().source == DataSource::Modbus
+                ? "Solar settings saved."
+                : "Solar settings saved. They apply on the Modbus source only.",
+            false);
+}
+
 void handle_restart() {
   send_html(200,
             "<!doctype html><p>Restarting. This page will stop responding for a "
@@ -764,6 +877,7 @@ void settings_server_begin() {
   s_server.on("/source", HTTP_POST, handle_source);
   s_server.on("/hostname", HTTP_POST, handle_hostname);
   s_server.on("/modbus", HTTP_POST, handle_modbus);
+  s_server.on("/solar", HTTP_POST, handle_solar);
   s_server.on("/restart", HTTP_POST, handle_restart);
   s_server.on("/test", HTTP_POST, handle_test);
   s_server.on("/display", HTTP_POST, handle_display);

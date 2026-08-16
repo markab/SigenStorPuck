@@ -1,6 +1,7 @@
 #include "settings.h"
 
 #include <Preferences.h>
+#include <math.h>
 
 namespace {
 
@@ -31,6 +32,14 @@ constexpr const char* KEY_MB_PLANT = "mb_plant";
 // times three fields would be twelve NVS entries to keep in step, and the struct
 // is plain data with no pointers in it.
 constexpr const char* KEY_MB_DEVICES = "mb_devs";
+constexpr const char* KEY_SOL_SET = "sol_set";
+constexpr const char* KEY_SOL_LAT = "sol_lat";
+constexpr const char* KEY_SOL_LON = "sol_lon";
+constexpr const char* KEY_SOL_LOSS = "sol_loss";
+constexpr const char* KEY_SOL_CAP = "sol_cap";
+// One blob for the same reason the device list is one: four arrays times three
+// fields is twelve NVS entries that would have to stay in step.
+constexpr const char* KEY_SOL_ARRAYS = "sol_arrays";
 
 // The protocol enforces a 1 s floor and the server polls Modbus every 5 s, so
 // anything faster only adds load without making data fresher (PLAN.md §A4).
@@ -81,6 +90,15 @@ void settings_begin() {
   if (prefs.isKey(KEY_MB_DEVICES)) {
     // A short blob leaves the defaults, which is an empty device list.
     prefs.getBytes(KEY_MB_DEVICES, s_settings.modbus_devices, sizeof(s_settings.modbus_devices));
+  }
+
+  s_settings.solar_location_set = prefs.getBool(KEY_SOL_SET, false);
+  s_settings.latitude = prefs.getFloat(KEY_SOL_LAT, s_settings.latitude);
+  s_settings.longitude = prefs.getFloat(KEY_SOL_LON, s_settings.longitude);
+  s_settings.solar_system_loss = prefs.getFloat(KEY_SOL_LOSS, s_settings.solar_system_loss);
+  s_settings.solar_inverter_cap_kw = prefs.getFloat(KEY_SOL_CAP, s_settings.solar_inverter_cap_kw);
+  if (prefs.isKey(KEY_SOL_ARRAYS)) {
+    prefs.getBytes(KEY_SOL_ARRAYS, s_settings.solar_arrays, sizeof(s_settings.solar_arrays));
   }
   prefs.end();
 
@@ -248,6 +266,75 @@ bool settings_set_modbus(const String& host, uint16_t port, uint8_t plant_addres
     s_settings.modbus_devices[i] = staged[i];
   }
   Serial.printf("[settings] modbus set to %s:%u plant %u\n", host.c_str(), port, plant_address);
+  return true;
+}
+
+bool settings_set_solar(bool location_set, float latitude, float longitude, float system_loss,
+                        float inverter_cap_kw, const PvArray* arrays, size_t count) {
+  // Out-of-range coordinates are a typo, not a location. Clamping them would put
+  // a roof somewhere plausible-looking and quietly forecast for it.
+  if (location_set && (latitude < -90.0f || latitude > 90.0f || longitude < -180.0f ||
+                       longitude > 180.0f)) {
+    return false;
+  }
+  // A loss factor is a fraction; anything at or below zero forecasts a permanent
+  // night, and above one generates more than the sun delivered.
+  if (system_loss <= 0.0f || system_loss > 1.0f) {
+    system_loss = 0.85f;
+  }
+  if (inverter_cap_kw < 0.0f) {
+    inverter_cap_kw = 0.0f;
+  }
+
+  PvArray staged[SOLAR_MAX_ARRAYS];
+  size_t kept = 0;
+  if (arrays != nullptr) {
+    for (size_t i = 0; i < count && kept < SOLAR_MAX_ARRAYS; ++i) {
+      if (arrays[i].kwp <= 0.0f) {
+        continue;  // an empty slot, not a zero-output array
+      }
+      staged[kept] = arrays[i];
+      // A panel past vertical is a data-entry slip, and the transposition would
+      // happily produce a number for it.
+      if (staged[kept].tilt_deg < 0.0f) {
+        staged[kept].tilt_deg = 0.0f;
+      } else if (staged[kept].tilt_deg > 90.0f) {
+        staged[kept].tilt_deg = 90.0f;
+      }
+      // Wrapped rather than clamped: azimuth is a compass bearing, so 370 means
+      // 10 and clamping it to 360 would be a different direction.
+      staged[kept].azimuth_deg = fmodf(staged[kept].azimuth_deg, 360.0f);
+      if (staged[kept].azimuth_deg < 0.0f) {
+        staged[kept].azimuth_deg += 360.0f;
+      }
+      ++kept;
+    }
+  }
+
+  Preferences prefs;
+  if (!prefs.begin(NAMESPACE, /*readOnly=*/false)) {
+    return false;
+  }
+  prefs.putBool(KEY_SOL_SET, location_set);
+  prefs.putFloat(KEY_SOL_LAT, latitude);
+  prefs.putFloat(KEY_SOL_LON, longitude);
+  prefs.putFloat(KEY_SOL_LOSS, system_loss);
+  prefs.putFloat(KEY_SOL_CAP, inverter_cap_kw);
+  prefs.putBytes(KEY_SOL_ARRAYS, staged, sizeof(staged));
+  prefs.end();
+
+  s_settings.solar_location_set = location_set;
+  s_settings.latitude = latitude;
+  s_settings.longitude = longitude;
+  s_settings.solar_system_loss = system_loss;
+  s_settings.solar_inverter_cap_kw = inverter_cap_kw;
+  for (size_t i = 0; i < SOLAR_MAX_ARRAYS; ++i) {
+    s_settings.solar_arrays[i] = staged[i];
+  }
+  Serial.printf("[settings] solar %s at %.4f,%.4f with %u array(s), loss %.2f\n",
+                location_set ? "site" : "site off", static_cast<double>(latitude),
+                static_cast<double>(longitude), static_cast<unsigned>(kept),
+                static_cast<double>(system_loss));
   return true;
 }
 

@@ -7,6 +7,8 @@
 
 #include <Arduino.h>
 
+#include "solar_forecast.h"
+
 // Where readings come from (docs/PLAN.md §D1). One firmware carries both paths;
 // this picks which one the poll task uses, and it takes effect on the next boot
 // like `orientation` does — changing it also changes how many screens exist.
@@ -94,6 +96,27 @@ struct Settings {
   uint8_t screens_visible = 0xFF;
   uint8_t screens_rotate = 0xFF;
 
+  // --- native PV forecast, Modbus path only (docs/PLAN.md §D4) --------------
+  //
+  // Unused when the source is Server: there the forecast arrives in
+  // /api/summary's `solar` block, already computed by the model that feeds the
+  // dashboard, and a second opinion from the same coordinates would only be a
+  // number that disagrees with the website.
+  //
+  // Kept as a flag rather than inferred from the coordinates being non-zero.
+  // 0,0 is in the Gulf of Guinea and nobody's roof is there, but "we assumed you
+  // meant nothing" is a bad way to treat a field somebody actually typed.
+  bool solar_location_set = false;
+  float latitude = 0.0f;
+  float longitude = 0.0f;
+  // Everything between the panels' rating and the meter: inverter efficiency,
+  // wiring, soiling, temperature. The server's default and the server's field.
+  float solar_system_loss = 0.85f;
+  // Clips combined throughput; 0 disables it.
+  float solar_inverter_cap_kw = 0.0f;
+  // A slot with kwp 0 is empty, which is how an array is removed.
+  PvArray solar_arrays[SOLAR_MAX_ARRAYS];
+
   // Whether opening the settings page checks GitHub for a newer release.
   //
   // On by default. It was off, guarding a check that only ever happened when you
@@ -161,6 +184,16 @@ bool settings_set_rotate_enabled(bool enabled);
 bool settings_set_screens(uint8_t visible, uint8_t rotate);
 
 bool settings_set_check_updates(bool enabled);
+
+// The site's location and array layout, for the native forecast. `count` slots
+// are taken from `arrays` and the rest cleared, so removing one is a matter of
+// sending a shorter list; a slot with kwp 0 is dropped on the way in.
+//
+// Takes effect on the next fetch rather than the next boot — the forecast is
+// re-requested whenever these change, because getting the tilt wrong and having
+// to reboot to see it corrected would make the form untestable.
+bool settings_set_solar(bool location_set, float latitude, float longitude, float system_loss,
+                        float inverter_cap_kw, const PvArray* arrays, size_t count);
 
 // True once there is enough stored to be worth polling: a base URL and a token
 // on the server path, a host on the Modbus path.
