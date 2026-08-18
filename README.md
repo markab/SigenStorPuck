@@ -97,13 +97,11 @@ After the first flash the Puck updates itself — see **Firmware** below.
 
 ### 2. Join it to your WiFi
 
-On first boot the screen shows:
+On first boot the Puck puts up its own WiFi network and shows you the name. Yours will
+end in six different characters — it is that device's own name, so two Pucks side by side
+do not clash.
 
-> **WiFi setup**
-> Join the WiFi network
-> SigenStorPuck-A1B2C3
-
-The last part is that Puck's own name, different on every device.
+<p align="center"><img src="docs/img/setup-wifi.png" width="240" alt="The WiFi setup screen, showing the network name to join"></p>
 
 1. On your phone or laptop, join that WiFi network. A setup page opens by itself; if it
    does not, browse to `http://192.168.4.1/`.
@@ -114,12 +112,14 @@ The last part is that Puck's own name, different on every device.
 
 ### 3. Open the settings page
 
-The **Not configured** screen shows a QR code and the address of the Puck's settings
-page — both the friendly name and the IP address, because not every phone can resolve
-`.local` names.
+The **Not configured** screen shows a QR code and the Puck's own address, given two ways:
+the friendly name and the IP. Both appear because not every phone can resolve `.local`
+names — if the first does nothing, use the second.
+
+<p align="center"><img src="docs/img/setup-configure.png" width="240" alt="The Not configured screen, showing a QR code above both addresses"></p>
 
 **Scan the QR code with your phone**, or type either address into any browser on the same
-network:
+network. The code carries the IP, being the one that always works.
 
 ```
 http://sigenstorpuck.local/
