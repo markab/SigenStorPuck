@@ -42,6 +42,7 @@ lv_obj_t* s_ev = nullptr;
 lv_obj_t* s_from_solar = nullptr;
 lv_obj_t* s_from_grid = nullptr;
 bool s_live = true;
+bool s_with_server = true;
 
 lv_obj_t* make_label(lv_obj_t* parent, const lv_font_t* font, uint32_t colour, lv_coord_t x,
                      lv_coord_t y) {
@@ -73,7 +74,8 @@ void set_figure(lv_obj_t* label, bool known, float kwh) {
 
 }  // namespace
 
-lv_obj_t* screen_load_create(lv_obj_t* parent) {
+lv_obj_t* screen_load_create(lv_obj_t* parent, bool with_server) {
+  s_with_server = with_server;
   s_root = lv_obj_create(parent);
   lv_obj_remove_style_all(s_root);
   lv_obj_set_size(s_root, PUCK_LCD_WIDTH, PUCK_LCD_HEIGHT);
@@ -120,6 +122,11 @@ lv_obj_t* screen_load_create(lv_obj_t* parent) {
   lv_obj_set_style_text_color(s_rate, lv_color_hex(PUCK_COLOUR_HOME), LV_PART_MAIN);
   lv_label_set_text(s_rate, "--");
   lv_obj_center(s_rate);
+
+  if (!s_with_server) {
+    // Nothing further to build: see the note on screen_load_create.
+    return s_root;
+  }
 
   // The split first, then where it came from: what you used, then what paid for
   // it. Battery's share is on the flows screen rather than repeated here.
@@ -187,6 +194,10 @@ void screen_load_update(const Snapshot& snapshot) {
     puck_format_magnitude(total, PUCK_KW_DECIMALS, scratch, sizeof(scratch));
     snprintf(text, sizeof(text), "%s kW now", scratch);
     lv_label_set_text(s_rate, text);
+  }
+
+  if (!s_with_server) {
+    return;  // the four figures were never built
   }
 
   // The four figures come out of the day's flow split, which is server-only: the

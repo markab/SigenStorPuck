@@ -13,7 +13,14 @@
 
 #include "snapshot.h"
 
-lv_obj_t* screen_load_create(lv_obj_t* parent);
+// `with_server` builds the four figures under the headline. They come out of the
+// day's flow split, which only a server has — on the Modbus source the plant's
+// daily counters cannot say which source served the load, so all four would read
+// "--" for the life of the device. Four permanent dashes are worse than nothing:
+// they read as a fault rather than as an absence, and they invite you to go
+// looking for the setting that turns them on. Without them the headline, the live
+// pill and the day's curve have the screen to themselves.
+lv_obj_t* screen_load_create(lv_obj_t* parent, bool with_server);
 void screen_load_update(const Snapshot& snapshot);
 
 // Whether the reading being shown is live. False on a past day, where the live

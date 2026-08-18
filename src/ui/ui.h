@@ -97,7 +97,15 @@ void ui_set_day_loading();
 //
 // `with_qr` adds the settings-page QR code from ui_set_address(), for the states
 // whose instruction is "go to the settings page".
-void ui_set_overlay(const char* title, const char* detail, bool with_qr = false);
+//
+// `highlight` is the thing the reader has to act on — the setup network's name,
+// the address to open — drawn large and bright, with `detail` demoted to the
+// muted line that explains what to do with it. They used to be one string, which
+// meant the name of the network you had to find was set in the same small grey as
+// the words "Join the WiFi network" around it, on the one screen whose entire job
+// is to hand over a value. Pass nullptr where there is no such value.
+void ui_set_overlay(const char* title, const char* highlight, const char* detail,
+                    bool with_qr = false);
 
 // Where this device's own settings page lives, for the QR code and the address
 // lines on the last screen. `host` is the mDNS name and may be empty; `ip` is

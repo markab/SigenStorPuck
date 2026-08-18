@@ -55,6 +55,7 @@ uint32_t s_sweep_minutes = 0;
 lv_obj_t* s_overlay = nullptr;
 lv_obj_t* s_overlay_title = nullptr;
 lv_obj_t* s_overlay_detail = nullptr;
+lv_obj_t* s_overlay_highlight = nullptr;
 lv_obj_t* s_overlay_qr = nullptr;
 lv_obj_t* s_day_chip = nullptr;
 lv_obj_t* s_toast = nullptr;
@@ -304,7 +305,7 @@ lv_obj_t* ui_create(lv_obj_t* parent, const UiConfig& config) {
         screen_solar_create(s_tiles[i]);
         break;
       case PUCK_SCREEN_LOAD:
-        screen_load_create(s_tiles[i]);
+        screen_load_create(s_tiles[i], config.with_server_screens);
         break;
       case PUCK_SCREEN_FLOWS:
         screen_flows_create(s_tiles[i]);
@@ -381,6 +382,19 @@ lv_obj_t* ui_create(lv_obj_t* parent, const UiConfig& config) {
 
   s_overlay_qr = puck_qr_block_create(s_overlay, OVERLAY_QR_PX);
   lv_obj_align(s_overlay_qr, LV_ALIGN_CENTER, 0, -5);
+
+  // The value the reader has to act on. Body weight and full-brightness text
+  // against the detail's small muted grey, so the network name or the address is
+  // what the eye lands on rather than the sentence wrapped around it.
+  s_overlay_highlight = lv_label_create(s_overlay);
+  lv_obj_set_style_text_font(s_overlay_highlight, PUCK_FONT_BODY, LV_PART_MAIN);
+  lv_obj_set_style_text_color(s_overlay_highlight, lv_color_hex(PUCK_COLOUR_TEXT), LV_PART_MAIN);
+  lv_obj_set_style_text_align(s_overlay_highlight, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+  lv_obj_set_width(s_overlay_highlight, PUCK_SAFE_SQUARE);
+  lv_label_set_long_mode(s_overlay_highlight, LV_LABEL_LONG_WRAP);
+  // Generous line spacing: the QR overlay puts two addresses here, and they are
+  // read one at a time rather than as a sentence.
+  lv_obj_set_style_text_line_space(s_overlay_highlight, 6, LV_PART_MAIN);
 
   s_overlay_detail = lv_label_create(s_overlay);
   lv_obj_set_style_text_font(s_overlay_detail, PUCK_FONT_SMALL, LV_PART_MAIN);
@@ -549,7 +563,7 @@ void ui_set_device_battery(bool show, int percent, bool charging) {
   screen_power_set_device_battery(show, percent, charging);
 }
 
-void ui_set_overlay(const char* title, const char* detail, bool with_qr) {
+void ui_set_overlay(const char* title, const char* highlight, const char* detail, bool with_qr) {
   if (s_overlay == nullptr) {
     return;
   }
@@ -560,13 +574,30 @@ void ui_set_overlay(const char* title, const char* detail, bool with_qr) {
   lv_label_set_text(s_overlay_title, title);
   lv_label_set_text(s_overlay_detail, detail != nullptr ? detail : "");
 
-  // Two layouts, not one with a gap left for a code that is usually absent: most
-  // overlays are two lines and belong in the middle of the screen.
+  const bool has_highlight = highlight != nullptr && highlight[0] != '\0';
+  if (has_highlight) {
+    lv_label_set_text(s_overlay_highlight, highlight);
+    lv_obj_clear_flag(s_overlay_highlight, LV_OBJ_FLAG_HIDDEN);
+  } else {
+    lv_obj_add_flag(s_overlay_highlight, LV_OBJ_FLAG_HIDDEN);
+  }
+
+  // Three layouts rather than one with gaps left for parts that are usually
+  // absent: most overlays are a title and a line of explanation, and belong in
+  // the middle of the screen rather than pushed up to make room for nothing.
   const bool qr = with_qr && s_qr_url[0] != '\0';
   if (qr) {
     puck_qr_block_set_url(s_overlay_qr, s_qr_url);
-    lv_obj_align(s_overlay_title, LV_ALIGN_CENTER, 0, -135);
-    lv_obj_align(s_overlay_detail, LV_ALIGN_CENTER, 0, 125);
+    lv_obj_align(s_overlay_title, LV_ALIGN_CENTER, 0, -160);
+    // Instruction above the addresses, addresses below it: you are told what to
+    // do and then given the thing to do it with, which is the order you read in.
+    lv_obj_align(s_overlay_detail, LV_ALIGN_CENTER, 0, 96);
+    lv_obj_align(s_overlay_highlight, LV_ALIGN_CENTER, 0, 148);
+  } else if (has_highlight) {
+    lv_obj_add_flag(s_overlay_qr, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_align(s_overlay_title, LV_ALIGN_CENTER, 0, -90);
+    lv_obj_align(s_overlay_detail, LV_ALIGN_CENTER, 0, -34);
+    lv_obj_align(s_overlay_highlight, LV_ALIGN_CENTER, 0, 22);
   } else {
     lv_obj_add_flag(s_overlay_qr, LV_OBJ_FLAG_HIDDEN);
     lv_obj_align(s_overlay_title, LV_ALIGN_CENTER, 0, -40);

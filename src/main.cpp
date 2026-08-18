@@ -36,12 +36,16 @@ constexpr uint32_t POWER_POLL_MS = 5000;
 // Two lines of storage for the overlay, so a message that has not changed is not
 // rewritten into LVGL 4 times a second.
 char s_overlay_title[48] = {};
+char s_overlay_highlight[96] = {};
 char s_overlay_detail[96] = {};
 bool s_overlay_qr = false;
 
-void set_overlay(const char* title, const char* detail, bool with_qr = false) {
+void set_overlay(const char* title, const char* highlight, const char* detail,
+                 bool with_qr = false) {
   const bool same = strncmp(s_overlay_title, title == nullptr ? "" : title,
                             sizeof(s_overlay_title)) == 0 &&
+                    strncmp(s_overlay_highlight, highlight == nullptr ? "" : highlight,
+                            sizeof(s_overlay_highlight)) == 0 &&
                     strncmp(s_overlay_detail, detail == nullptr ? "" : detail,
                             sizeof(s_overlay_detail)) == 0 &&
                     with_qr == s_overlay_qr;
@@ -49,9 +53,11 @@ void set_overlay(const char* title, const char* detail, bool with_qr = false) {
     return;
   }
   snprintf(s_overlay_title, sizeof(s_overlay_title), "%s", title == nullptr ? "" : title);
+  snprintf(s_overlay_highlight, sizeof(s_overlay_highlight), "%s",
+           highlight == nullptr ? "" : highlight);
   snprintf(s_overlay_detail, sizeof(s_overlay_detail), "%s", detail == nullptr ? "" : detail);
   s_overlay_qr = with_qr;
-  ui_set_overlay(title, detail, with_qr);
+  ui_set_overlay(title, highlight, detail, with_qr);
 
   // Logged because it is the one part of the UI you cannot ask the device about
   // over the network, and it is exactly what you want to know when someone says
@@ -86,12 +92,15 @@ void refresh_overlay(bool have_snapshot, const PollStatus& status) {
 
   switch (net_state()) {
     case NetState::Portal:
-      detail = String("Join the WiFi network\n") + net_setup_ap_name();
-      set_overlay("WiFi setup", detail.c_str());
+      // The network's name is the whole content of this screen — it is what you
+      // go and look for in a list on your phone — so it gets the highlight and
+      // the instruction becomes the caption above it.
+      set_overlay("WiFi setup", net_setup_ap_name(),
+                  "Join this WiFi network from your phone");
       return;
     case NetState::Starting:
     case NetState::Connecting:
-      set_overlay("Connecting to WiFi", nullptr);
+      set_overlay("Connecting to WiFi", nullptr, nullptr);
       return;
     case NetState::Connected:
       break;
@@ -99,55 +108,56 @@ void refresh_overlay(bool have_snapshot, const PollStatus& status) {
 
   const bool modbus = settings_get().source == DataSource::Modbus;
 
+  // One address per line rather than run together with "or": these are things to
+  // be typed, and a reader picking the one their phone can resolve should be able
+  // to take in each on its own.
   String where = "http://";
   if (!host.isEmpty()) {
     where += host;
-    where += "/\nor http://";
+    where += "/\nhttp://";
   }
   where += ip;
   where += "/";
 
   if (!settings_is_provisioned()) {
-    // The code carries the same address as the text under it, so a phone can
+    // The code carries the same address as the text beside it, so a phone can
     // skip the typing and everyone else still has something to read.
-    detail = "Scan, or open ";
-    detail += where;
+    //
     // Different instruction per source: there is no enrolment URL to paste when
-    // the Puck talks to the plant directly, and telling someone to find one
-    // would send them looking for something that does not exist.
-    detail += modbus ? "\nand set the plant's IP address" : "\nand paste the enrolment URL";
-    set_overlay("Not configured", detail.c_str(), true);
+    // the Puck talks to the plant directly, and telling someone to find one would
+    // send them looking for something that does not exist.
+    detail = modbus ? "Scan, or open this and set the plant's IP address"
+                    : "Scan, or open this and paste the enrolment URL";
+    set_overlay("Not configured", where.c_str(), detail.c_str(), true);
     return;
   }
 
   // A revoked token is not a network fault and will never fix itself, so it says
   // so rather than sitting on "waiting for data" forever.
   if (status.last_result == FetchResult::Unauthorised) {
-    detail = "The kiosk token was revoked.\nRe-enrol at ";
-    detail += where;
-    set_overlay("Re-enrol needed", detail.c_str());
+    set_overlay("Re-enrol needed", where.c_str(), "The kiosk token was revoked. Re-enrol at");
     return;
   }
 
   if (!have_snapshot) {
     if (status.last_result == FetchResult::ClockUnset) {
-      set_overlay("Waiting for clock", "HTTPS needs the time set.\nWaiting for NTP.");
+      set_overlay("Waiting for clock", nullptr, "HTTPS needs the time set.\nWaiting for NTP.");
     } else if (status.consecutive_failures > 0) {
       // Naming what is unreachable, because on the Modbus path "the server" is
       // not a thing that exists and the first place to look is the Sigen app's
       // Modbus whitelist.
       detail = modbus ? String("Cannot reach the plant\n") : String("Cannot reach the server\n");
       detail += fetch_result_name(status.last_result);
-      set_overlay("No data", detail.c_str());
+      set_overlay("No data", nullptr, detail.c_str());
     } else {
-      set_overlay("Waiting for data", nullptr);
+      set_overlay("Waiting for data", nullptr, nullptr);
     }
     return;
   }
 
   // Data is flowing: get out of the way. A stale reading is reported by the plant
   // node on screen 1, not by covering everything up.
-  set_overlay(nullptr, nullptr);
+  set_overlay(nullptr, nullptr, nullptr);
 }
 
 // Dims after a period with no touch. LVGL's own inactivity timer is used rather
@@ -300,8 +310,8 @@ void setup() {
   display_set_brightness(settings_get().brightness);
   // A named boot screen rather than a bare word: on a device that takes a couple
   // of seconds to find WiFi, this is the only proof it is alive.
-  set_overlay("SigenStorPuck", PUCK_FW_VERSION);
-  ui_set_overlay("SigenStorPuck", PUCK_FW_VERSION);
+  set_overlay("SigenStorPuck", nullptr, PUCK_FW_VERSION);
+  ui_set_overlay("SigenStorPuck", nullptr, PUCK_FW_VERSION);
   // Draw the first frame before WiFi so the screen is alive while the radio comes
   // up, rather than black for a couple of seconds.
   lv_timer_handler();

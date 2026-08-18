@@ -454,16 +454,16 @@ void cycle_overlay() {
   switch (which) {
     case 1:
       ui_set_overlay("Not configured",
-                     "Scan, or open http://sigenstorpuck.local/\n"
-                     "or http://192.168.1.100/\n"
-                     "and paste the enrolment URL",
-                     true);
+                     "http://sigenstorpuck.local/\n"
+                     "http://192.168.1.100/",
+                     "Scan, or open this and paste the enrolment URL", true);
       break;
     case 2:
-      ui_set_overlay("WiFi setup", "Join the WiFi network\nSigenStorPuck setup");
+      ui_set_overlay("WiFi setup", "SigenStorPuck-A1B2C3",
+                     "Join this WiFi network from your phone");
       break;
     default:
-      ui_set_overlay(nullptr, nullptr);
+      ui_set_overlay(nullptr, nullptr, nullptr);
       break;
   }
 }
