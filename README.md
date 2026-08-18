@@ -155,84 +155,92 @@ Most changes take effect straight away; the ones needing a restart are marked �
 
 ### Network
 
-| Option | What it does |
-|---|---|
-| **Device name** ↻ | What the Puck calls itself on your network. The default is `sigenstorpuck`, reachable at `http://sigenstorpuck.local/`. Change it if you have more than one Puck. |
+<table>
+<tr><th width="32%">Option</th><th>What it does</th></tr>
+<tr><td><strong>Device name</strong> ↻</td><td>What the Puck calls itself on your network. The default is <code>sigenstorpuck</code>, reachable at <code>http://sigenstorpuck.local/</code>. Change it if you have more than one Puck.</td></tr>
+</table>
 
 ### Data source
 
-| Option | What it does |
-|---|---|
-| **SigenStor Display server** ↻ | Read from a **SigenStorDisplay Server**. Not yet available. |
-| **Plant over Modbus (LAN only)** ↻ | Read your inverter or gateway directly. This is the one to use. Selecting it removes the Flows and Cost screens, which need data only a server has. |
+<table>
+<tr><th width="32%">Option</th><th>What it does</th></tr>
+<tr><td><strong>SigenStor Display server</strong> ↻</td><td>Read from a <strong>SigenStorDisplay Server</strong>. Not yet available.</td></tr>
+<tr><td><strong>Plant over Modbus (LAN only)</strong> ↻</td><td>Read your inverter or gateway directly. This is the one to use. Selecting it removes the Flows and Cost screens, which need data only a server has.</td></tr>
+</table>
 
 ### Plant (Modbus)
 
 *Used on the Modbus source.*
 
-| Option | What it does |
-|---|---|
-| **Gateway or inverter IP** | The address on your network of the device that speaks Modbus TCP. |
-| **Port** | `502` unless you have changed it on the plant. |
-| **Plant address** | `247` unless you have changed it. |
-| **Slave ID** | The address of one device inside the plant, as shown in the Sigen app. `0` means the slot is unused. Four slots are available; all are optional. |
-| **Type** | *Inverter* or *Charger*. Adding an inverter gives you battery temperature and the daily totals; adding a charger gives you EV power. |
-| **DC charger** | Tick if that inverter has a vehicle charger built into it, so its DC output counts as EV power. |
+<table>
+<tr><th width="32%">Option</th><th>What it does</th></tr>
+<tr><td><strong>Gateway or inverter IP</strong></td><td>The address on your network of the device that speaks Modbus TCP.</td></tr>
+<tr><td><strong>Port</strong></td><td><code>502</code> unless you have changed it on the plant.</td></tr>
+<tr><td><strong>Plant address</strong></td><td><code>247</code> unless you have changed it.</td></tr>
+<tr><td><strong>Slave ID</strong></td><td>The address of one device inside the plant, as shown in the Sigen app. <code>0</code> means the slot is unused. Four slots are available; all are optional.</td></tr>
+<tr><td><strong>Type</strong></td><td><em>Inverter</em> or <em>Charger</em>. Adding an inverter gives you battery temperature and the daily totals; adding a charger gives you EV power.</td></tr>
+<tr><td><strong>DC charger</strong></td><td>Tick if that inverter has a vehicle charger built into it, so its DC output counts as EV power.</td></tr>
+</table>
 
 ### Server
 
 **SigenStorDisplay Server Only** — nothing here has any effect on the Modbus source.
 
-| Option | What it does |
-|---|---|
-| **Enrolment URL** | Paste the whole URL from the server's Admin → Kiosk devices page. It fills in the server address and access token together. The page shows the last four characters of the stored token so you can tell one device's enrolment from another's. |
-| **Test connection** | Fetches data once and reports exactly what happened — the quickest way to find a wrong address or a revoked token. |
+<table>
+<tr><th width="32%">Option</th><th>What it does</th></tr>
+<tr><td><strong>Enrolment URL</strong></td><td>Paste the whole URL from the server's Admin → Kiosk devices page. It fills in the server address and access token together. The page shows the last four characters of the stored token so you can tell one device's enrolment from another's.</td></tr>
+<tr><td><strong>Test connection</strong></td><td>Fetches data once and reports exactly what happened — the quickest way to find a wrong address or a revoked token.</td></tr>
+</table>
 
 ### Solar forecast
 
 *Used on the Modbus source only.* With a **SigenStorDisplay Server** the forecast comes
 from the server and these are ignored.
 
-| Option | What it does |
-|---|---|
-| **Latitude / Longitude** | Where your panels are. **Leave both blank for no forecast** — the Solar screen then hides its ring rather than showing an empty one. Setting a location also tells the Puck your timezone, which is what lines the daily charts up with your own midnight. |
-| **System loss** | Everything between the panels' rating and your meter: inverter efficiency, wiring, dirt on the glass. `0.85` is a sensible starting point. |
-| **Inverter cap** | The most your inverter can put out, in kW. `0` means no limit. |
-| **Size (kWp)** | An array's rating. `0` leaves that slot unused. Up to four arrays. |
-| **Tilt** | The angle from flat. `0` is horizontal, `35` is a typical pitched roof, `90` is vertical. |
-| **Azimuth** | A compass bearing: `180` due south, `90` east, `270` west, `0` north. |
+<table>
+<tr><th width="32%">Option</th><th>What it does</th></tr>
+<tr><td><strong>Latitude / Longitude</strong></td><td>Where your panels are. <strong>Leave both blank for no forecast</strong> — the Solar screen then hides its ring rather than showing an empty one. Setting a location also tells the Puck your timezone, which is what lines the daily charts up with your own midnight.</td></tr>
+<tr><td><strong>System loss</strong></td><td>Everything between the panels' rating and your meter: inverter efficiency, wiring, dirt on the glass. <code>0.85</code> is a sensible starting point.</td></tr>
+<tr><td><strong>Inverter cap</strong></td><td>The most your inverter can put out, in kW. <code>0</code> means no limit.</td></tr>
+<tr><td><strong>Size (kWp)</strong></td><td>An array's rating. <code>0</code> leaves that slot unused. Up to four arrays.</td></tr>
+<tr><td><strong>Tilt</strong></td><td>The angle from flat. <code>0</code> is horizontal, <code>35</code> is a typical pitched roof, <code>90</code> is vertical.</td></tr>
+<tr><td><strong>Azimuth</strong></td><td>A compass bearing: <code>180</code> due south, <code>90</code> east, <code>270</code> west, <code>0</code> north.</td></tr>
+</table>
 
 ### Display
 
 *All of these work on both sources.*
 
-| Option | What it does |
-|---|---|
-| **Brightness** | Normal running brightness, 0 to 255. |
-| **Poll interval** | How often to fetch new readings, in seconds. `5` is the default. |
-| **Dim after** | Seconds of no touching before the screen dims. `0` never dims. |
-| **Dimmed brightness** | How dim it goes. It dims rather than blanking, so it stays readable from across the room. |
-| **Screen off from / until** | Hours to switch the screen off completely, for overnight. **Off means off, not dimmed.** Any button brings it back for 30 seconds. Blank both boxes to leave the screen on all the time. The times are the Puck's own local time, which the page shows next to the boxes so you can check it is right. |
-| **Orientation** ↻ | Quarter turns, `0` to `3`, for mounting the Puck whichever way round suits. |
-| **Auto-cycle every** | Seconds between automatically moving to the next screen. `0` turns it off. Also switchable by holding PWR for 2 seconds. |
-| **Sweep every** | Minutes between a brightness band sweeping across the screen. This evens out wear on the panel, which matters on an AMOLED showing much the same picture all day. `0` turns it off. |
-| **Screens** ↻ | A tick per screen for whether it appears at all, and a second for whether the auto-cycle stops on it. Power and Settings are always shown, so their boxes are fixed. On Modbus, Flows and Cost are struck through and cannot be ticked. |
+<table>
+<tr><th width="32%">Option</th><th>What it does</th></tr>
+<tr><td><strong>Brightness</strong></td><td>Normal running brightness, 0 to 255.</td></tr>
+<tr><td><strong>Poll interval</strong></td><td>How often to fetch new readings, in seconds. <code>5</code> is the default.</td></tr>
+<tr><td><strong>Dim after</strong></td><td>Seconds of no touching before the screen dims. <code>0</code> never dims.</td></tr>
+<tr><td><strong>Dimmed brightness</strong></td><td>How dim it goes. It dims rather than blanking, so it stays readable from across the room.</td></tr>
+<tr><td><strong>Screen off from / until</strong></td><td>Hours to switch the screen off completely, for overnight. <strong>Off means off, not dimmed.</strong> Any button brings it back for 30 seconds. Blank both boxes to leave the screen on all the time. The times are the Puck's own local time, which the page shows next to the boxes so you can check it is right.</td></tr>
+<tr><td><strong>Orientation</strong> ↻</td><td>Quarter turns, <code>0</code> to <code>3</code>, for mounting the Puck whichever way round suits.</td></tr>
+<tr><td><strong>Auto-cycle every</strong></td><td>Seconds between automatically moving to the next screen. <code>0</code> turns it off. Also switchable by holding PWR for 2 seconds.</td></tr>
+<tr><td><strong>Sweep every</strong></td><td>Minutes between a brightness band sweeping across the screen. This evens out wear on the panel, which matters on an AMOLED showing much the same picture all day. <code>0</code> turns it off.</td></tr>
+<tr><td><strong>Screens</strong> ↻</td><td>A tick per screen for whether it appears at all, and a second for whether the auto-cycle stops on it. Power and Settings are always shown, so their boxes are fixed. On Modbus, Flows and Cost are struck through and cannot be ticked.</td></tr>
+</table>
 
 ### Firmware
 
-| Option | What it does |
-|---|---|
-| **Install** | Downloads the newer release and applies it. The Puck restarts on its own. Only appears when there is one. |
-| **Check now** | Looks for a newer release straight away. |
-| **Check for a newer release when this page is opened** | Untick to stop the Puck contacting GitHub at all. Installing an update is always something you ask for, never automatic. |
+<table>
+<tr><th width="32%">Option</th><th>What it does</th></tr>
+<tr><td><strong>Install</strong></td><td>Downloads the newer release and applies it. The Puck restarts on its own. Only appears when there is one.</td></tr>
+<tr><td><strong>Check now</strong></td><td>Looks for a newer release straight away.</td></tr>
+<tr><td><strong>Check for a newer release when this page is opened</strong></td><td>Untick to stop the Puck contacting GitHub at all. Installing an update is always something you ask for, never automatic.</td></tr>
+</table>
 
 ### Danger
 
-| Option | What it does |
-|---|---|
-| **Restart Device** | Reboots it. Needed after any ↻ change above. |
-| **Forget server and token** | Clears your server details. You will need the enrolment URL again. |
-| **Forget WiFi and restart** | Clears the WiFi password and brings the setup network back, for moving the Puck to a different network. |
+<table>
+<tr><th width="32%">Option</th><th>What it does</th></tr>
+<tr><td><strong>Restart Device</strong></td><td>Reboots it. Needed after any ↻ change above.</td></tr>
+<tr><td><strong>Forget server and token</strong></td><td>Clears your server details. You will need the enrolment URL again.</td></tr>
+<tr><td><strong>Forget WiFi and restart</strong></td><td>Clears the WiFi password and brings the setup network back, for moving the Puck to a different network.</td></tr>
+</table>
 
 ## Troubleshooting
 
