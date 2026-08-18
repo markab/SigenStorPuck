@@ -127,7 +127,7 @@ http://sigenstorpuck.local/
 
 ### 4. Point it at your plant
 
-1. Set **Data source** to **Plant over Modbus**.
+1. Check **Data source** is set to **Plant over Modbus**. It is out of the box.
 2. Under **Plant (Modbus)**, enter the IP address of your inverter or gateway. Leave the
    port at `502` and the plant address at `247` unless you know otherwise.
 3. Optionally add your inverter as a device — this is what gives you battery temperature
@@ -165,7 +165,7 @@ Most changes take effect straight away; the ones needing a restart are marked �
 <table>
 <tr><th width="32%">Option</th><th>What it does</th></tr>
 <tr><td><strong>SigenStor Display server</strong> ↻</td><td>Read from a <strong>SigenStorDisplay Server</strong>. Not yet available.</td></tr>
-<tr><td><strong>Plant over Modbus (LAN only)</strong> ↻</td><td>Read your inverter or gateway directly. This is the one to use. Selecting it removes the Flows and Cost screens, which need data only a server has.</td></tr>
+<tr><td><strong>Plant over Modbus (LAN only)</strong> ↻</td><td><strong>The default.</strong> Read your inverter or gateway directly. Removes the Flows and Cost screens, which need data only a server has.</td></tr>
 </table>
 
 ### Plant (Modbus)
@@ -230,7 +230,7 @@ from the server and these are ignored.
 <tr><th width="32%">Option</th><th>What it does</th></tr>
 <tr><td><strong>Install</strong></td><td>Downloads the newer release and applies it. The Puck restarts on its own. Only appears when there is one.</td></tr>
 <tr><td><strong>Check now</strong></td><td>Looks for a newer release straight away.</td></tr>
-<tr><td><strong>Check for a newer release when this page is opened</strong></td><td>Untick to stop the Puck contacting GitHub at all. Installing an update is always something you ask for, never automatic.</td></tr>
+<tr><td><strong>Check for a newer release when this page is opened</strong></td><td>Off by default, so the Puck contacts nothing but your own network unless you ask it to. Tick it to be told about new releases when you open this page. Installing one is always a separate click.</td></tr>
 </table>
 
 ### Danger

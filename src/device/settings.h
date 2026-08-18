@@ -42,7 +42,14 @@ static constexpr size_t SETTINGS_MAX_MODBUS_DEVICES = 4;
 static constexpr size_t SETTINGS_MAX_HOSTNAME = 32;
 
 struct Settings {
-  DataSource source = DataSource::Server;
+  // Modbus, because that is the only source anyone can actually use: reading the
+  // plant directly needs nothing but its IP address, whereas the server path
+  // needs SigenStorDisplay, which has not been released. A device that arrives
+  // defaulting to a thing you cannot obtain is a device that arrives broken.
+  //
+  // settings_begin() keeps an already-enrolled device on Server — see the note
+  // there. This default only decides what a fresh NVS gets.
+  DataSource source = DataSource::Modbus;
 
   // The device's name on the network: `<hostname>.local` and the WiFi DHCP name.
   //
@@ -65,11 +72,13 @@ struct Settings {
   ModbusDevice modbus_devices[SETTINGS_MAX_MODBUS_DEVICES];
 
   uint32_t poll_interval_s = 5;
-  uint8_t brightness = 200;
+  uint8_t brightness = 120;
   // Dimmed rather than switched off: a status display you have to wake to read is
   // a worse status display. 0 disables dimming entirely.
   uint32_t dim_after_s = 30;
-  uint8_t dim_brightness = 24;
+  // Still clearly readable across a room rather than a faint glow: this is a
+  // status display, and the dim state is the one it spends most of its life in.
+  uint8_t dim_brightness = 60;
   // Hours to switch the panel off entirely, as minutes since local midnight.
   // A window that wraps midnight is the normal case — 22:30 to 07:00 — so
   // `start > end` is expected rather than tolerated (see screen_window.h).
@@ -93,14 +102,14 @@ struct Settings {
   int16_t fine_tenths = 0;
   // Auto-cycle through the screens; 0 = off. Spreads AMOLED wear across the
   // layouts instead of burning one in.
-  uint32_t rotate_s = 0;
+  uint32_t rotate_s = 15;
   // Whether the auto-cycle is running, kept apart from its interval so it can be
   // switched off without losing the rate it was set to. The PWR button's double
   // press writes this too, so the switch on the settings page and the one on the
   // glass are the same switch and survive a reboot together.
-  bool rotate_enabled = true;
+  bool rotate_enabled = false;
   // How often the sweep band runs, in minutes; 0 = off.
-  uint32_t sweep_min = 240;
+  uint32_t sweep_min = 30;
   // Which screens are built, and which the auto-cycle steps through, one bit per
   // PuckScreen (see ui/ui.h). Two masks rather than one: a screen you want to be
   // able to swipe to is not necessarily one you want the device parking on for
@@ -122,9 +131,14 @@ struct Settings {
   // Kept as a flag rather than inferred from the coordinates being non-zero.
   // 0,0 is in the Gulf of Guinea and nobody's roof is there, but "we assumed you
   // meant nothing" is a bad way to treat a field somebody actually typed.
-  bool solar_location_set = false;
-  float latitude = 0.0f;
-  float longitude = 0.0f;
+  // Pre-filled with the centre of London (Charing Cross) rather than left blank,
+  // so the forecast is one plausible edit away instead of a form somebody has to
+  // know to fill in. Nothing is fetched until an array is entered below, and
+  // anyone outside London has an obviously wrong number to correct rather than an
+  // empty box to wonder about.
+  bool solar_location_set = true;
+  float latitude = 51.5074f;
+  float longitude = -0.1278f;
   // Everything between the panels' rating and the meter: inverter efficiency,
   // wiring, soiling, temperature. The server's default and the server's field.
   float solar_system_loss = 0.85f;
@@ -135,14 +149,13 @@ struct Settings {
 
   // Whether opening the settings page checks GitHub for a newer release.
   //
-  // On by default. It was off, guarding a check that only ever happened when you
-  // pressed a button — consent for something you were already asking for. Now the
-  // page checks on its own, so the setting finally means something, and it is a
-  // real switch you can turn back off rather than a one-way flag (PLAN.md §C3).
+  // Off by default: this is the device reaching a third party on its own, and a
+  // thing it does unasked should be a thing you switched on. "Check now" is
+  // always there for anyone who wants to look (PLAN.md §C3).
   //
   // Turning it off stops every outbound call beyond your own server. Installing
   // is a separate, manual act either way.
-  bool check_updates = true;
+  bool check_updates = false;
 };
 
 // Loads from NVS, falling back to defaults. Safe to call before WiFi is up.

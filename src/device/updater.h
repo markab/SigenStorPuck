@@ -71,6 +71,6 @@ void updater_request_apply();
 
 UpdateStatus updater_status();
 
-// Whether the settings page checks on open. On by default; turning it off stops
+// Whether the settings page checks on open. Off by default; turning it on stops
 // every outbound call beyond your own network (PLAN.md §C3).
 bool updater_enabled();

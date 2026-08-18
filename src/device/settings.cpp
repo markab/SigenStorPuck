@@ -75,7 +75,19 @@ void settings_begin() {
   s_settings.screens_rotate = prefs.getUChar(KEY_SCR_ROT, s_settings.screens_rotate);
   s_settings.check_updates = prefs.getBool(KEY_UPDATES, s_settings.check_updates);
 
-  s_settings.source = prefs.getUChar(KEY_SOURCE, 0) == 1 ? DataSource::Modbus : DataSource::Server;
+  // Absent means the device predates this key, not that it wants the default.
+  //
+  // The default changed to Modbus once it became the only usable source, and a
+  // device that was enrolled against a server before then has a base URL and a
+  // token but was never asked to choose. Reading the default over the top of that
+  // would switch a working display to a plant it has no address for. What it has
+  // stored is the better evidence of what it was set up as.
+  if (prefs.isKey(KEY_SOURCE)) {
+    s_settings.source =
+        prefs.getUChar(KEY_SOURCE, 0) == 1 ? DataSource::Modbus : DataSource::Server;
+  } else if (!s_settings.base_url.isEmpty() && !s_settings.token.isEmpty()) {
+    s_settings.source = DataSource::Server;
+  }
   if (prefs.isKey(KEY_HOSTNAME)) {
     const String stored = prefs.getString(KEY_HOSTNAME, "");
     if (!stored.isEmpty()) {
@@ -95,11 +107,11 @@ void settings_begin() {
     prefs.getBytes(KEY_MB_DEVICES, s_settings.modbus_devices, sizeof(s_settings.modbus_devices));
   }
 
-  s_settings.screen_off_set = prefs.getBool(KEY_OFF_SET, false);
+  s_settings.screen_off_set = prefs.getBool(KEY_OFF_SET, s_settings.screen_off_set);
   s_settings.screen_off_start_min = prefs.getUShort(KEY_OFF_START, 0);
   s_settings.screen_off_end_min = prefs.getUShort(KEY_OFF_END, 0);
 
-  s_settings.solar_location_set = prefs.getBool(KEY_SOL_SET, false);
+  s_settings.solar_location_set = prefs.getBool(KEY_SOL_SET, s_settings.solar_location_set);
   s_settings.latitude = prefs.getFloat(KEY_SOL_LAT, s_settings.latitude);
   s_settings.longitude = prefs.getFloat(KEY_SOL_LON, s_settings.longitude);
   s_settings.solar_system_loss = prefs.getFloat(KEY_SOL_LOSS, s_settings.solar_system_loss);
