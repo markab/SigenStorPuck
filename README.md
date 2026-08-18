@@ -44,8 +44,12 @@ dashes, so you get five screens instead of seven.
 
 ## The screens
 
-Swipe left and right to move between them. Which ones appear is up to you — see
-**Screens** under Settings.
+**Swipe left and right across the glass to move between screens.** The row of dots along
+the bottom shows how many there are and which one you are on. If the Puck is out of
+reach, holding the **BOOT** button for 2 seconds moves to the next screen too, and the
+auto-cycle can step through them on its own — see **Auto-cycle every** under Settings.
+
+Which screens appear at all is up to you — see **Screens** under Settings.
 
 | | |
 |:--:|:--:|
