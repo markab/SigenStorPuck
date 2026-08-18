@@ -6,12 +6,41 @@ It runs on a Waveshare **ESP32-S3-Touch-AMOLED-1.75** — a 466×466 round AMOLE
 capacitive touch — and shows live power flow, battery state, solar generation against
 forecast, consumption, where the day's energy went, and what it all cost.
 
-It can get its data two ways:
+## Two ways to get data — read this first
 
-- from a [SigenStor Display](https://github.com/markab/SigenStorDisplay) server, which
-  gives you every screen; or
-- **straight from the plant over Modbus TCP**, with no server involved, which gives you
-  the power, battery, solar and load screens.
+The Puck can take its readings from either of two places, and it matters which, because
+some screens and features need one of them.
+
+**Modbus TCP — talking straight to your plant.** No other software involved. The Puck
+reads your inverter or gateway directly over your own network. **This is the only way to
+use the Puck today**, and everything below assumes it unless it says otherwise.
+
+**SigenStorDisplay Server.** A separate companion application that manages and logs a
+Sigenergy plant, which the Puck can then read from. It unlocks the Flows and Cost
+screens, stepping back through past days, and complete daily charts.
+**SigenStorDisplay has not been released yet.** The Puck already has full support for it
+built in and ready for when it is, but until then those parts are unavailable.
+
+### What works with which
+
+| | Modbus (available now) | SigenStorDisplay Server |
+|---|:--:|:--:|
+| **Power** screen | ● | ● |
+| **Battery** screen | ● | ● |
+| **Solar** screen | ● | ● |
+| **Load** screen | ◐ headline and live draw only | ● |
+| **Flows** screen | — | ● |
+| **Cost** screen | — | ● |
+| **Settings** screen | ● | ● |
+| Solar forecast | ● calculated on the Puck | ● from the server |
+| Daily charts | ◐ from when the Puck was switched on | ● the whole day, and after a restart |
+| Step back through past days | — | ● up to 7 days |
+| Tariff rates and savings | — | ● |
+
+● full · ◐ partial · — not available
+
+On Modbus the Flows and Cost screens are removed altogether rather than left showing
+dashes, so you get five screens instead of seven.
 
 ## The screens
 
@@ -21,16 +50,19 @@ Swipe left and right to move between them. Which ones appear is up to you — se
 | | |
 |:--:|:--:|
 | <img src="docs/img/power.png" width="300" alt="Power flow"> | <img src="docs/img/battery.png" width="300" alt="Battery"> |
-| **Power** — what is happening right now. Solar at the top, then clockwise: battery, home, EV, grid, around the plant in the middle. Dots run along each leg in the direction the power is going, faster when there is more of it. The ring is your state of charge. | **Battery** — charge level around the bezel, capacity in kWh, and how long until it is full or empty. Below that: charged and discharged today, battery health, and temperature. |
+| **Power** — what is happening right now. Solar at the top, then clockwise: battery, home, EV, grid, around the plant in the middle. Dots run along each leg in the direction the power is going, faster when there is more of it. The ring is your state of charge.<br><br>*Works on both.* | **Battery** — charge level around the bezel, capacity in kWh, and how long until it is full or empty. Below that: charged and discharged today, battery health, and temperature.<br><br>*Works on both. On Modbus, temperature and the daily totals need an inverter added under Plant.* |
 | <img src="docs/img/solar.png" width="300" alt="Solar"> | <img src="docs/img/load.png" width="300" alt="Load"> |
-| **Solar** — generation so far today, with the ring showing progress against the day's forecast. Then the forecast total, how much is still to come, how you are doing against it, and the expected peak. | **Load** — everything used today, with what is being drawn right now. Split into the house and the car, then how much came from solar and how much from the grid. |
+| **Solar** — generation so far today, with the ring showing progress against the day's forecast. Then the forecast total, how much is still to come, how you are doing against it, and the expected peak.<br><br>*Works on both. On Modbus the forecast is calculated on the Puck and needs your location and panels entered under Solar forecast; without them the ring is hidden.* | **Load** — everything used today, with what is being drawn right now.<br><br>*Partial on Modbus.* The headline total and the live figure work. The four figures below — house, EV, from solar, from grid — need the daily breakdown and show `--` until you have a **SigenStorDisplay Server**. |
 | <img src="docs/img/flows.png" width="300" alt="Energy flows"> | <img src="docs/img/cost.png" width="300" alt="Cost"> |
-| **Flows** — where today's energy came from and where it went. Sources down the left, destinations down the right, one ribbon per path. The ring is how self-sufficient you have been. *(Server only.)* | **Cost** — what you have saved today, the unit rate you are paying right now, and the next few tariff slots coloured against it. *(Server only.)* |
+| **Flows** — where today's energy came from and where it went. Sources down the left, destinations down the right, one ribbon per path. The ring is how self-sufficient you have been.<br><br>**SigenStorDisplay Server Only.** | **Cost** — what you have saved today, the unit rate you are paying right now, and the next few tariff slots coloured against it.<br><br>**SigenStorDisplay Server Only.** |
 | <img src="docs/img/settings.png" width="300" alt="Settings"> | |
-| **Settings** — always the last screen. Scan the code with your phone, or type either address into a browser, to reach the settings page. | |
+| **Settings** — always the last screen. Scan the code with your phone, or type either address into a browser, to reach the settings page.<br><br>*Works on both.* | |
 
 Behind the solar, load and battery screens is that day's own curve, drawn faintly so it
-does not compete with the figures.
+does not compete with the figures. On Modbus the curve builds up from the moment the Puck
+is switched on, so it starts empty after a restart and fills through the day. With a
+**SigenStorDisplay Server** the whole day is fetched, so the curve is complete straight
+away.
 
 ### The two buttons
 
@@ -39,9 +71,10 @@ does not compete with the figures.
 | **PWR** | Back one day | Auto-cycle on/off | Power off |
 | **BOOT** | Forward one day | Next screen | Restart |
 
-You can step back up to seven days. The Power screen always stays live, and the day you
-are looking at is named just above the page dots. Stepping through days needs a server —
-on Modbus the buttons say `LIVE ONLY`.
+The day buttons are **SigenStorDisplay Server Only** — on Modbus there is no stored
+history to step back into, and the buttons say `LIVE ONLY` instead. With a server you can
+step back seven days; the Power screen always stays live, and the day you are looking at
+is named just above the page dots.
 
 If the screen is off on a schedule, the first press of any button just wakes it up.
 
@@ -75,134 +108,127 @@ The last part is that Puck's own name, different on every device.
    not clash.
 4. Save. The Puck joins your network and the screen changes to **Not configured**.
 
-### 3. Tell it where to get data
+### 3. Open the settings page
 
 The **Not configured** screen shows a QR code and the address of the Puck's settings
 page — both the friendly name and the IP address, because not every phone can resolve
 `.local` names.
 
-**Scan the QR code with your phone**, or type either address into any browser on the
-same network:
+**Scan the QR code with your phone**, or type either address into any browser on the same
+network:
 
 ```
 http://sigenstorpuck.local/
 ```
 
-Then, depending on how you want to connect:
+### 4. Point it at your plant
 
-**Using a SigenStor Display server** — open your server's **Admin → Kiosk devices** page,
-create a device, and copy the enrolment URL it gives you. Paste it into the **Server**
-section of the Puck's settings page and save. That is everything: the URL carries the
-server address and the access token together.
+1. Set **Data source** to **Plant over Modbus**.
+2. Under **Plant (Modbus)**, enter the IP address of your inverter or gateway. Leave the
+   port at `502` and the plant address at `247` unless you know otherwise.
+3. Optionally add your inverter as a device — this is what gives you battery temperature
+   and the daily totals — and a charger if you have one, for EV power.
+4. Save, then **Restart Device** from the Danger section.
 
-**Straight from the plant over Modbus** — set **Data source** to *Plant over Modbus*,
-enter your inverter or gateway's IP address under **Plant (Modbus)**, and restart. In the
-Sigen app you must also allow Modbus TCP access for the Puck's IP address, and it is
-worth giving the Puck a fixed address in your router so that permission does not stop
-working later.
+Two things to do outside the Puck, or it will not be able to connect:
 
-Data should appear within a few seconds.
+- In the **Sigen app**, allow Modbus TCP access for the Puck's IP address. Access is
+  granted per address, and a device that has not been added simply gets no reply.
+- In your **router**, give the Puck a fixed (reserved) IP address, so the permission you
+  just granted does not stop working the next time addresses are handed out.
+
+Data should appear within a few seconds of the restart.
+
+> **Using a SigenStorDisplay Server instead**, once it is available: set **Data source**
+> to *Server*, then paste the enrolment URL from the server's **Admin → Kiosk devices**
+> page into the **Server** section and save. The URL carries the server address and the
+> access token together, so that is the only thing you need to enter.
 
 ## Settings
 
-Everything below lives on the Puck's own settings page at `http://sigenstorpuck.local/`.
-Most changes take effect straight away; the ones that need a restart say so.
+Everything below is on the Puck's own settings page at `http://sigenstorpuck.local/`.
+Most changes take effect straight away; the ones needing a restart are marked ↻.
 
 ### Network
 
-**Device name** — what the Puck calls itself on your network. The default is
-`sigenstorpuck`, reachable at `http://sigenstorpuck.local/`. Change it if you have more
-than one. *Needs a restart.*
+| Option | What it does |
+|---|---|
+| **Device name** ↻ | What the Puck calls itself on your network. The default is `sigenstorpuck`, reachable at `http://sigenstorpuck.local/`. Change it if you have more than one Puck. |
 
 ### Data source
 
-**Server** or **Plant over Modbus**. Choosing Modbus removes the Flows and Cost screens,
-which need information only a server has. *Needs a restart.*
-
-### Server
-
-**Enrolment URL** — paste the whole URL from your server's Admin → Kiosk devices page and
-it fills in the address and access token for you. The page shows the last four characters
-of the stored token so you can tell one device's enrolment from another's.
-
-**Test connection** — fetches data once and tells you exactly what happened, which is the
-quickest way to find a wrong address or a revoked token.
+| Option | What it does |
+|---|---|
+| **SigenStor Display server** ↻ | Read from a **SigenStorDisplay Server**. Not yet available. |
+| **Plant over Modbus (LAN only)** ↻ | Read your inverter or gateway directly. This is the one to use. Selecting it removes the Flows and Cost screens, which need data only a server has. |
 
 ### Plant (Modbus)
 
-**Gateway or inverter IP** — the address of the device on your network that speaks Modbus
-TCP. **Port** is 502 unless you have changed it, and **Plant address** is 247.
+*Used on the Modbus source.*
 
-**Devices** — optional. The plant address on its own already fills the power and battery
-screens. Add an inverter to get battery temperature and daily totals, or a charger to get
-EV power. Leave the Slave ID at 0 for any slot you are not using. Tick **DC charger** if
-your inverter has a vehicle charger built into it.
+| Option | What it does |
+|---|---|
+| **Gateway or inverter IP** | The address on your network of the device that speaks Modbus TCP. |
+| **Port** | `502` unless you have changed it on the plant. |
+| **Plant address** | `247` unless you have changed it. |
+| **Slave ID** | The address of one device inside the plant, as shown in the Sigen app. `0` means the slot is unused. Four slots are available; all are optional. |
+| **Type** | *Inverter* or *Charger*. Adding an inverter gives you battery temperature and the daily totals; adding a charger gives you EV power. |
+| **DC charger** | Tick if that inverter has a vehicle charger built into it, so its DC output counts as EV power. |
+
+### Server
+
+**SigenStorDisplay Server Only** — nothing here has any effect on the Modbus source.
+
+| Option | What it does |
+|---|---|
+| **Enrolment URL** | Paste the whole URL from the server's Admin → Kiosk devices page. It fills in the server address and access token together. The page shows the last four characters of the stored token so you can tell one device's enrolment from another's. |
+| **Test connection** | Fetches data once and reports exactly what happened — the quickest way to find a wrong address or a revoked token. |
 
 ### Solar forecast
 
-Only used on the Modbus source — with a server, the forecast comes from there.
+*Used on the Modbus source only.* With a **SigenStorDisplay Server** the forecast comes
+from the server and these are ignored.
 
-**Latitude and longitude** — where your panels are. Leave both blank for no forecast, and
-the Solar screen simply hides its ring. Setting a location also gives the Puck your
-timezone, which is what lines the daily charts up with your own midnight.
-
-**System loss** — everything between the panels' rating and your meter: inverter
-efficiency, wiring, dirt on the glass. `0.85` is a sensible default.
-
-**Inverter cap** — the most your inverter can put out, in kW. `0` means no limit.
-
-**Arrays** — up to four. **Size** is the array's rating in kWp; leave it at 0 for a slot
-you are not using. **Tilt** is the angle from flat, so 0 is horizontal and 35 is a
-typical pitched roof. **Azimuth** is a compass bearing: 180 is due south, 90 east, 270
-west.
+| Option | What it does |
+|---|---|
+| **Latitude / Longitude** | Where your panels are. **Leave both blank for no forecast** — the Solar screen then hides its ring rather than showing an empty one. Setting a location also tells the Puck your timezone, which is what lines the daily charts up with your own midnight. |
+| **System loss** | Everything between the panels' rating and your meter: inverter efficiency, wiring, dirt on the glass. `0.85` is a sensible starting point. |
+| **Inverter cap** | The most your inverter can put out, in kW. `0` means no limit. |
+| **Size (kWp)** | An array's rating. `0` leaves that slot unused. Up to four arrays. |
+| **Tilt** | The angle from flat. `0` is horizontal, `35` is a typical pitched roof, `90` is vertical. |
+| **Azimuth** | A compass bearing: `180` due south, `90` east, `270` west, `0` north. |
 
 ### Display
 
-**Brightness** — 0 to 255, normal running brightness.
+*All of these work on both sources.*
 
-**Poll interval** — how often to fetch new data, in seconds. 5 is the default.
-
-**Dim after** — seconds of no touching before the screen dims. `0` never dims.
-
-**Dimmed brightness** — how dim it goes. It dims rather than blanking, so it stays
-readable across the room.
-
-**Screen off from / until** — hours to switch the screen off completely, for overnight.
-Off means off, not dimmed. Any button brings it back for 30 seconds. Blank both boxes to
-leave the screen on all the time. The times are the Puck's local time, which the page
-shows next to the boxes so you can check it is right.
-
-**Orientation** — quarter turns, 0 to 3, for mounting the Puck whichever way round suits.
-*Needs a restart.*
-
-**Auto-cycle every** — seconds between automatically moving to the next screen. `0` turns
-it off. Also switchable by holding PWR for 2 seconds.
-
-**Sweep every** — minutes between a brightness band sweeping across the screen. This
-evens out wear on the panel, which matters on an AMOLED showing much the same picture all
-day. `0` turns it off.
-
-**Screens** — a tick per screen for whether it appears at all, and a second for whether
-the auto-cycle stops on it. Power and Settings are always shown. *Needs a restart.*
+| Option | What it does |
+|---|---|
+| **Brightness** | Normal running brightness, 0 to 255. |
+| **Poll interval** | How often to fetch new readings, in seconds. `5` is the default. |
+| **Dim after** | Seconds of no touching before the screen dims. `0` never dims. |
+| **Dimmed brightness** | How dim it goes. It dims rather than blanking, so it stays readable from across the room. |
+| **Screen off from / until** | Hours to switch the screen off completely, for overnight. **Off means off, not dimmed.** Any button brings it back for 30 seconds. Blank both boxes to leave the screen on all the time. The times are the Puck's own local time, which the page shows next to the boxes so you can check it is right. |
+| **Orientation** ↻ | Quarter turns, `0` to `3`, for mounting the Puck whichever way round suits. |
+| **Auto-cycle every** | Seconds between automatically moving to the next screen. `0` turns it off. Also switchable by holding PWR for 2 seconds. |
+| **Sweep every** | Minutes between a brightness band sweeping across the screen. This evens out wear on the panel, which matters on an AMOLED showing much the same picture all day. `0` turns it off. |
+| **Screens** ↻ | A tick per screen for whether it appears at all, and a second for whether the auto-cycle stops on it. Power and Settings are always shown, so their boxes are fixed. On Modbus, Flows and Cost are struck through and cannot be ticked. |
 
 ### Firmware
 
-Shows the version you are running. If a newer release is available, **Install**
-downloads and applies it and the Puck restarts on its own. **Check now** looks again
-straight away.
-
-Untick **Check for a newer release when this page is opened** to stop it contacting
-GitHub at all. Installing an update is always something you ask for, never automatic.
+| Option | What it does |
+|---|---|
+| **Install** | Downloads the newer release and applies it. The Puck restarts on its own. Only appears when there is one. |
+| **Check now** | Looks for a newer release straight away. |
+| **Check for a newer release when this page is opened** | Untick to stop the Puck contacting GitHub at all. Installing an update is always something you ask for, never automatic. |
 
 ### Danger
 
-**Restart Device** — reboots it.
-
-**Forget server and token** — clears your server details. You will need the enrolment URL
-again.
-
-**Forget WiFi and restart** — clears the WiFi password and brings the setup network back,
-for moving the Puck to a different network.
+| Option | What it does |
+|---|---|
+| **Restart Device** | Reboots it. Needed after any ↻ change above. |
+| **Forget server and token** | Clears your server details. You will need the enrolment URL again. |
+| **Forget WiFi and restart** | Clears the WiFi password and brings the setup network back, for moving the Puck to a different network. |
 
 ## Troubleshooting
 
@@ -210,15 +236,16 @@ for moving the Puck to a different network.
 |---|---|
 | **WiFi setup** | Not on your network yet. Join the setup network shown and follow step 2. |
 | **Connecting to WiFi** | Joining your network. It should pass in a few seconds. |
-| **Not configured** | On WiFi, but it does not know where to get data. Follow step 3. |
+| **Not configured** | On WiFi, but it does not know where to get data. Follow steps 3 and 4. |
 | **Waiting for data** | Configured, but nothing has arrived yet. Normal just after a restart. |
 | **Waiting for clock** | It needs the time from the internet before it can make a secure connection. Passes on its own once your network lets it reach an NTP server. |
-| **Re-enrol needed** | The access token has been revoked. Create a new kiosk device on the server and paste the fresh enrolment URL. |
-| **No data** | It cannot reach the server or the plant, and names the reason underneath. Check the address on the settings page and use **Test connection**. |
-| `LIVE ONLY` | You pressed a day button on the Modbus source, which has no history to step back into. |
+| **No data** | It cannot reach the plant, and names the reason underneath. Check the address on the settings page, and check the Puck is still allowed in the Sigen app. |
+| **Re-enrol needed** | *Server only.* The access token has been revoked. Create a new kiosk device and paste the fresh enrolment URL. |
+| `LIVE ONLY` | You pressed a day button on the Modbus source, which has no stored history to step back into. |
 
-If a Modbus setup worked and then stopped, check that the Puck still has the same IP
-address and that it is still allowed in the Sigen app.
+If a Modbus setup worked and then stopped, the usual cause is the Puck's IP address
+changing, which quietly invalidates the permission granted in the Sigen app. Reserve the
+address in your router and grant it again.
 
 ## Hardware
 
@@ -244,7 +271,7 @@ pio run -e sim && .pio/build/sim/program
 ```
 
 `n`/`p` change fixture, `[`/`]` change screen, `d` shows the parsed data behind what you
-are looking at.
+are looking at. `--modbus` previews the shorter five-screen arrangement.
 
-Design notes and the reasoning behind how it is built are in
-[CLAUDE.md](CLAUDE.md) and [docs/PLAN.md](docs/PLAN.md).
+Design notes and the reasoning behind how it is built are in [CLAUDE.md](CLAUDE.md) and
+[docs/PLAN.md](docs/PLAN.md).
