@@ -14,8 +14,17 @@
   be: GitHub release assets carry no access-control-allow-origin header, so a page
   fetching them from another origin is blocked by the browser and flashing never
   begins. CI publishes merged.bin next to this file when a release is cut.
+
+  ESP Web Tools itself is served from this origin too, mirrored into vendor/ by
+  tools/vendor_installer_deps.sh. It used to load from unpkg at a floating major
+  version, which meant the code that writes to somebody's device could change
+  without this repository changing, and that a CDN outage broke flashing — while
+  that script was being written, unpkg was returning HTTP 500 for one of the
+  chunks. Subresource integrity was not an answer: the entry module is ~3 KB and
+  dynamically imports everything that does the actual work, so the hash would
+  have covered almost none of what runs.
 -->
-<script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
+<script type="module" src="vendor/esp-web-tools/install-button.js"></script>
 <style>
   :root { color-scheme: dark light; }
   body {

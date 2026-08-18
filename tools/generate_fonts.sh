@@ -38,18 +38,24 @@ mkdir -p "${out_dir}"
 echo "Fetching Montserrat-Medium.ttf from LVGL ${LVGL_TAG}"
 curl -fsSL "${TTF_URL}" -o "${work_dir}/Montserrat-Medium.ttf"
 
+# Run from the work directory and pass bare filenames. lv_font_conv copies its
+# own invocation verbatim into a comment at the top of each generated file, so
+# absolute paths here end up committed — which put the machine's home directory,
+# username and a mktemp path into four tracked source files.
+cd "${work_dir}"
+
 for size in "${SIZES[@]}"; do
-	out="${out_dir}/puck_font_${size}.c"
 	echo "Generating puck_font_${size}"
 	npx --yes lv_font_conv \
-		--font "${work_dir}/Montserrat-Medium.ttf" \
+		--font Montserrat-Medium.ttf \
 		--range "${RANGE}" \
 		--size "${size}" \
 		--bpp "${BPP}" \
 		--format lvgl \
 		--lv-include lvgl.h \
 		--no-compress \
-		-o "${out}"
+		-o "puck_font_${size}.c"
+	cp "puck_font_${size}.c" "${out_dir}/"
 done
 
 echo

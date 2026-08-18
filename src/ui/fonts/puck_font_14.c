@@ -1,7 +1,7 @@
 /*******************************************************************************
  * Size: 14 px
  * Bpp: 4
- * Opts: --font /var/folders/d1/6740cst91zxbtr69p0_nyggr0000gn/T/tmp.ShUTvx28A3/Montserrat-Medium.ttf --range 0x20-0x7E,0xA3,0xB0,0xB7 --size 14 --bpp 4 --format lvgl --lv-include lvgl.h --no-compress -o /Users/markbateman/GitHub/SigenStorPuck/src/ui/fonts/puck_font_14.c
+ * Opts: --font Montserrat-Medium.ttf --range 0x20-0x7E,0xA3,0xB0,0xB7 --size 14 --bpp 4 --format lvgl --lv-include lvgl.h --no-compress -o puck_font_14.c
  ******************************************************************************/
 
 #ifdef LV_LVGL_H_INCLUDE_SIMPLE
