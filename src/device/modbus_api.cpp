@@ -86,6 +86,24 @@ bool read_exactly(uint8_t* buffer, size_t count, uint32_t deadline_ms) {
   return true;
 }
 
+// The exception codes a Sigenergy plant can realistically send back. Named
+// rather than left as a number, because the number alone sends you reading a
+// protocol specification to find out that you addressed a register the device
+// does not have.
+const char* modbus_exception_name(uint8_t code) {
+  switch (code) {
+    case 0x01: return "illegal function";
+    case 0x02: return "illegal data address";
+    case 0x03: return "illegal data value";
+    case 0x04: return "device failure";
+    case 0x05: return "acknowledge";
+    case 0x06: return "device busy";
+    case 0x0A: return "gateway path unavailable";
+    case 0x0B: return "gateway target did not respond";
+    default: return "unknown";
+  }
+}
+
 // One read of `words` registers starting at `start`, from Modbus address `unit`.
 //
 // Only the read path exists here, and only FC 0x03. A status display has no
@@ -141,9 +159,20 @@ FetchResult read_span(uint8_t unit, uint16_t start, uint16_t words, uint16_t* ou
   const uint8_t function = header[7];
   if ((function & 0x80) != 0) {
     uint8_t code = 0;
-    if (read_exactly(&code, 1, deadline) && detail != nullptr) {
+    const bool got_code = read_exactly(&code, 1, deadline);
+    if (got_code && detail != nullptr) {
       *detail = code;
     }
+    // Named, and with the span that caused it. The poll log can only report one
+    // number for the whole cycle, and "modbus error (http 2)" gives you nothing
+    // to act on: an exception is the plant telling you precisely what it did not
+    // like, and which unit and which registers were asked for is the whole of the
+    // answer. Printed on every occurrence — a plant answering exceptions is not a
+    // steady state, and the poll backoff keeps this to once a minute.
+    Serial.printf("[modbus] unit %u rejected %u registers at %u: exception %u (%s)\n",
+                  static_cast<unsigned>(unit), static_cast<unsigned>(words),
+                  static_cast<unsigned>(start), static_cast<unsigned>(code),
+                  modbus_exception_name(code));
     return FetchResult::ProtocolError;
   }
   if (function != MODBUS_FC_READ_ONLY) {
