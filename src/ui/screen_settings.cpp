@@ -51,14 +51,17 @@ lv_obj_t* screen_settings_create(lv_obj_t* parent) {
   lv_obj_align(s_qr, LV_ALIGN_CENTER, 0, -38);
 
   // The name first: it is the one worth remembering. The IP under it is what
-  // actually works when mDNS does not.
-  s_host = make_label(s_root, PUCK_FONT_BODY, PUCK_COLOUR_TEXT, 88);
+  // actually works when mDNS does not — which is why it is set the same size and
+  // the same brightness rather than demoted to a muted footnote. Both of these
+  // exist to be read off the glass and typed into a phone, and the QR encodes the
+  // IP precisely because it is the address least likely to fail.
+  s_host = make_label(s_root, PUCK_FONT_BODY, PUCK_COLOUR_TEXT, 86);
   lv_label_set_text(s_host, "");
 
-  s_ip = make_label(s_root, PUCK_FONT_SMALL, PUCK_COLOUR_MUTED, 114);
+  s_ip = make_label(s_root, PUCK_FONT_BODY, PUCK_COLOUR_TEXT, 116);
   lv_label_set_text(s_ip, "");
 
-  s_hint = make_label(s_root, PUCK_FONT_SMALL, PUCK_COLOUR_MUTED, 148);
+  s_hint = make_label(s_root, PUCK_FONT_SMALL, PUCK_COLOUR_MUTED, 152);
   lv_label_set_text(s_hint, "scan, or type it in a browser");
 
   screen_settings_set_address("", "");
