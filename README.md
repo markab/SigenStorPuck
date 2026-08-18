@@ -285,5 +285,5 @@ pio run -e sim && .pio/build/sim/program
 `n`/`p` change fixture, `[`/`]` change screen, `d` shows the parsed data behind what you
 are looking at. `--modbus` previews the shorter five-screen arrangement.
 
-Design notes and the reasoning behind how it is built are in [CLAUDE.md](CLAUDE.md) and
-[docs/PLAN.md](docs/PLAN.md).
+`--selftest` runs the checks that need no hardware: the Modbus register decoder, the
+history ring, the button gestures, the solar forecast model and the screen-off window.

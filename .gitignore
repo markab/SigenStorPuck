@@ -21,5 +21,14 @@ build/
 secrets.h
 *.local.ini
 
+# Working design notes, kept out of the repository rather than out of the project.
+# They document SigenStorDisplay's API contract and auth scheme in detail, and that
+# product has not been released — so publishing this repository would publish its
+# interface. Both files stay on disk and every "see PLAN.md §x" in the source still
+# resolves locally; they are simply not shipped. Keep a copy somewhere durable: a
+# fresh clone will not bring them back.
+CLAUDE.md
+docs/PLAN.md
+
 # Release artifacts, built by tools/package_release.sh
 dist/
