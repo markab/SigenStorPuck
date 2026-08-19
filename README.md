@@ -269,8 +269,8 @@ edge, either side of centre.
 
 | | |
 |---|---|
-| [`SigenStorPuckStand.3mf`](docs/stl/SigenStorPuckStand.3mf) | The one to print. Carries all three parts, positioned as designed. Every slicer opens it. |
-| [`SigenStorPuckStand.stl`](docs/stl/SigenStorPuckStand.stl) | The same geometry as a single mesh. Mostly so GitHub will show it in its own 3D viewer — click it and drag to spin it. |
+| [`SigenStorPuckStand.3mf`](docs/stl/SigenStorPuckStand.3mf) | The one to print. Carries all three parts, positioned as designed. |
+| [`SigenStorPuckStand.stl`](docs/stl/SigenStorPuckStand.stl) | The same geometry as a single mesh. |
 
 60 × 45 × 109 mm overall.
 
