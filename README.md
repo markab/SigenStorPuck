@@ -261,18 +261,18 @@ address in your router and grant it again.
 
 ## The stand
 
-A desk stand for the Puck. It drops into the circular cradle and rests on the lipped
-base. Three parts in the file: the stand itself and two small caps that sit at the top
+A desk stand for the Puck. It seats into the round face at the front and sits on the
+moulded base. Three parts in the file: the stand itself and two small caps at the top
 edge, either side of centre.
 
-<p align="center"><img src="docs/img/stand.png" width="320" alt="The printed stand: a rounded upright with a circular cradle for the Puck and a lipped base"></p>
+<p align="center"><img src="docs/img/stand.png" width="320" alt="The printed stand seen from the front: a rounded upright with a circular recess for the Puck, two caps at the top edge, and a moulded base"></p>
 
 | | |
 |---|---|
 | [`SigenStorPuckStand.3mf`](docs/stl/SigenStorPuckStand.3mf) | The one to print. Carries all three parts, positioned as designed. Every slicer opens it. |
 | [`SigenStorPuckStand.stl`](docs/stl/SigenStorPuckStand.stl) | The same geometry as a single mesh. Mostly so GitHub will show it in its own 3D viewer — click it and drag to spin it. |
 
-60 × 45 × 109 mm overall, well inside any printer's bed.
+60 × 45 × 109 mm overall.
 
 ## Hardware
 
