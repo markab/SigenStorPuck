@@ -32,6 +32,27 @@ enum class HaEntity : uint8_t {
 
 enum class HaValueKind : uint8_t { Power, Energy, Percent, Temperature, Boolean };
 
+// Units are captured from the live template response and reused for Recorder
+// history. The history request deliberately uses `no_attributes`, so it cannot
+// discover a unit from each historical state without downloading substantially
+// more JSON.
+enum class HaUnit : uint8_t {
+  Unknown = 0,
+  Watts,
+  Kilowatts,
+  WattHours,
+  KilowattHours,
+  Percent,
+  Celsius,
+};
+
+enum class HaValueStatus : uint8_t {
+  Available = 0,
+  Unavailable,
+  InvalidNumber,
+  UnsupportedUnit,
+};
+
 struct HaEntityDescriptor {
   const char* payload_key;
   const char* nvs_key;
@@ -53,9 +74,16 @@ struct HaParseInfo {
   size_t unavailable = 0;
   size_t invalid_number = 0;
   size_t unsupported_unit = 0;
+  uint32_t local_midnight_ts = 0;
+  uint32_t next_local_midnight_ts = 0;
+  HaUnit units[HA_ENTITY_COUNT] = {};
 };
 
 bool ha_entity_id_valid(const char* entity_id);
+
+HaUnit ha_unit_from_text(const char* unit);
+HaValueStatus ha_normalise_state(const char* state, HaUnit unit, HaValueKind kind,
+                                 MaybeFloat* out);
 
 static constexpr size_t HA_TEMPLATE_MAX = 6144;
 // Builds the Jinja template posted to Home Assistant. Only configured entities

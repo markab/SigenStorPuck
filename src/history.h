@@ -3,9 +3,9 @@
 // buttons have stepped back to.
 //
 // Deliberately not persisted. NVS is a key-value store that a per-minute blob
-// write would wear out, and a filesystem partition is real complexity for a
-// mains-powered device that rarely restarts. A reboot starts the chart empty and
-// it fills over the following hours.
+// write would wear out, and a filesystem partition is real complexity. Sources
+// may repopulate this same RAM bank after boot; otherwise it fills from live
+// readings as before.
 //
 // Lives outside src/device/ on purpose: the simulator compiles this file, which
 // is the only way chart work can happen on the desktop as CLAUDE.md requires.
@@ -21,9 +21,13 @@
 // 466 px panel, which is the point: the extra resolution is what the min/max
 // envelope needs to show PV under broken cloud as a band rather than a line.
 static constexpr uint32_t HISTORY_MINUTES = 1440;  // 24 h
+// A local civil day can contain 25 hours when daylight saving ends. The charts
+// still default to a 24-hour window, but an authoritative source window may use
+// these extra slots so that transition day's first hour is not discarded.
+static constexpr uint32_t HISTORY_CAPACITY_MINUTES = 1500;
 
-// Samples are int16 scaled by this, so one series costs 2.9 KB — and there are
-// two banks of every series, so a series added here costs 5.8 KB. The range is
+// Samples are int16 scaled by this, so one series costs 3 KB — and there are
+// two banks of every series, so a series added here costs 6 KB. The range is
 // then +-327.67, comfortably past any domestic kW figure and any percentage.
 static constexpr int32_t HISTORY_SCALE = 100;
 
@@ -36,8 +40,8 @@ enum class HistorySeries : uint8_t {
 
 // Which day a ring holds.
 //
-// One ring cannot hold two. It indexes by minute modulo a day and keeps a single
-// head, so a minute more than a day behind that head is indistinguishable from a
+// One ring cannot hold two. It indexes by minute modulo a bounded 25-hour civil
+// day and keeps a single head, so an older minute is indistinguishable from a
 // clock jump — and is treated as one, wiping the ring. So stepping back a day
 // needs somewhere else to put it, or today would be destroyed and have to be
 // re-fetched on the way back.
@@ -100,6 +104,13 @@ void history_reduce(HistoryBank which, HistorySeries series, uint32_t from_minut
 // hand, as the simulator does.
 void history_set_timezone(HistoryBank which, int32_t minutes_east);
 
+// Supplies an authoritative local-day boundary when the source knows it. Home
+// Assistant renders both local midnights using its timezone database, which is
+// more accurate than reconstructing midnight from the current UTC offset on a
+// daylight-saving transition day. The half-open interval may be 23, 24 or 25 h.
+void history_set_day_window(HistoryBank which, uint32_t from_minute,
+                            uint32_t to_minute);
+
 // Which bank the charts draw. Writing names its bank explicitly; reading is a
 // property of what is on screen, so it is held here rather than threaded through
 // every band. history_record() always writes Live — the reading that just
@@ -126,3 +137,7 @@ bool history_window(HistoryBank which, uint32_t* from_minute, uint32_t* to_minut
 // Feeds a series directly, for the simulator's synthetic day (§D3) and for tests.
 // `minute` is absolute, matching history_head_minute().
 void history_put(HistoryBank which, HistorySeries series, uint32_t minute, float value);
+
+// Reads one exact minute. Primarily useful to merge a bounded backfill with live
+// samples and in host tests; missing/out-of-window values remain unknown.
+MaybeFloat history_value(HistoryBank which, HistorySeries series, uint32_t minute);

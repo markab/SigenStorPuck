@@ -1,0 +1,70 @@
+#include "history_backfill_retry.h"
+
+HistoryBackfillOutcome history_backfill_outcome(FetchResult result, int http_status) {
+  switch (result) {
+    case FetchResult::Ok:
+      return HistoryBackfillOutcome::Success;
+    case FetchResult::EntityUnavailable:
+      return HistoryBackfillOutcome::NoData;
+    case FetchResult::NoNetwork:
+    case FetchResult::ConnectFailed:
+    case FetchResult::TlsFailed:
+    case FetchResult::ClockUnset:
+    case FetchResult::ReadTimeout:
+      return HistoryBackfillOutcome::TransientFailure;
+    case FetchResult::HttpError:
+      return http_status == 429 || http_status >= 500
+                 ? HistoryBackfillOutcome::TransientFailure
+                 : HistoryBackfillOutcome::PermanentFailure;
+    case FetchResult::NotConfigured:
+    case FetchResult::Unauthorised:
+    case FetchResult::BadPayload:
+    case FetchResult::ProtocolError:
+      return HistoryBackfillOutcome::PermanentFailure;
+  }
+  return HistoryBackfillOutcome::PermanentFailure;
+}
+
+void HistoryBackfillRetry::activate(uint32_t cutoff_ts) {
+  if (active_ || finished_ || cutoff_ts == 0) {
+    return;
+  }
+  cutoff_ts_ = cutoff_ts;
+  active_ = true;
+}
+
+bool HistoryBackfillRetry::due(uint32_t now_ms) const {
+  return active_ && !finished_ &&
+         (attempts_ == 0 || static_cast<int32_t>(now_ms - next_attempt_ms_) >= 0);
+}
+
+void HistoryBackfillRetry::record(HistoryBackfillOutcome outcome, uint32_t now_ms) {
+  if (!active_ || finished_) {
+    return;
+  }
+  ++attempts_;
+  if (outcome == HistoryBackfillOutcome::Success ||
+      outcome == HistoryBackfillOutcome::NoData ||
+      outcome == HistoryBackfillOutcome::PermanentFailure || attempts_ >= MAX_ATTEMPTS) {
+    active_ = false;
+    finished_ = true;
+    return;
+  }
+  next_attempt_ms_ = now_ms + RETRY_DELAY_MS;
+}
+
+bool HistoryBackfillRetry::active() const {
+  return active_;
+}
+
+bool HistoryBackfillRetry::finished() const {
+  return finished_;
+}
+
+uint8_t HistoryBackfillRetry::attempts() const {
+  return attempts_;
+}
+
+uint32_t HistoryBackfillRetry::cutoff_ts() const {
+  return cutoff_ts_;
+}

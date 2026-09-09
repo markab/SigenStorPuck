@@ -55,6 +55,7 @@ SourceCapabilities data_source_capabilities(DataSource source) {
       break;
     case DataSource::HomeAssistant:
       capabilities.forecast = true;
+      capabilities.today_history_backfill = true;
       break;
   }
   return capabilities;

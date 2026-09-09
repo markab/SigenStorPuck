@@ -190,14 +190,20 @@ lv_obj_t* screen_solar_create(lv_obj_t* parent) {
   s_remaining_caption = make_caption(s_root, "REMAINING", COLUMN_X, ROW_ONE_LABEL_Y);
   s_remaining = make_label(s_root, PUCK_FONT_BODY, PUCK_COLOUR_TEXT, COLUMN_X, ROW_ONE_VALUE_Y);
   lv_label_set_text(s_remaining, "--");
+  lv_obj_add_flag(s_remaining_caption, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(s_remaining, LV_OBJ_FLAG_HIDDEN);
 
   s_versus_caption = make_caption(s_root, "VS FORECAST", -COLUMN_X, ROW_TWO_LABEL_Y);
   s_versus = make_label(s_root, PUCK_FONT_BODY, PUCK_COLOUR_TEXT, -COLUMN_X, ROW_TWO_VALUE_Y);
   lv_label_set_text(s_versus, "--");
+  lv_obj_add_flag(s_versus_caption, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(s_versus, LV_OBJ_FLAG_HIDDEN);
 
   s_peak_caption = make_caption(s_root, "PEAK", COLUMN_X, ROW_TWO_LABEL_Y);
   s_peak = make_label(s_root, PUCK_FONT_BODY, PUCK_COLOUR_TEXT, COLUMN_X, ROW_TWO_VALUE_Y);
   lv_label_set_text(s_peak, "--");
+  lv_obj_add_flag(s_peak_caption, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(s_peak, LV_OBJ_FLAG_HIDDEN);
 
   return s_root;
 }

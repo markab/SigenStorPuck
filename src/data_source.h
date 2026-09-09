@@ -14,6 +14,7 @@ struct SourceCapabilities {
   bool live = false;
   bool daily_totals = false;
   bool local_history = false;
+  bool today_history_backfill = false;
   bool historical_days = false;
   bool full_day_series = false;
   bool forecast = false;

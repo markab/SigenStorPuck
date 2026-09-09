@@ -6,6 +6,7 @@
 
 #include "modbus_api.h"
 #include "home_assistant_api.h"
+#include "history_backfill_retry.h"
 #include "settings.h"
 #include "sigen_api.h"
 #include "solar_api.h"
@@ -138,6 +139,7 @@ void publish_status(const PollStatus& status) {
 
 void poll_task(void* /*argument*/) {
   PollStatus status;
+  HistoryBackfillRetry history_backfill;
 
   // Read once, not per cycle: the source applies on the next boot, so it cannot
   // change under this loop, and re-reading it would invite paths to interleave.
@@ -166,6 +168,12 @@ void poll_task(void* /*argument*/) {
       status.last_ok_ms = millis();
       status.ever_succeeded = true;
       publish(fetched, status);
+      if (capabilities.today_history_backfill) {
+        // The cutoff is latched from the first successful HA reading. Recorder
+        // owns only earlier minutes; this and later live samples therefore win
+        // cleanly if the delayed request overlaps normal polling.
+        history_backfill.activate(fetched.ts);
+      }
     } else {
       // Not configured is not a failure to back off from — there is simply
       // nothing to do until someone visits the settings page.
@@ -193,6 +201,28 @@ void poll_task(void* /*argument*/) {
                       fetch_result_name(result), http_status, status.consecutive_failures,
                       static_cast<unsigned>(ESP.getFreeHeap()),
                       static_cast<unsigned>(ESP.getMaxAllocHeap()));
+      }
+    }
+
+    // Recorder is optional enrichment. Its result never changes PollStatus or
+    // the last good live Snapshot, and empty/excluded/malformed history is not
+    // retried forever. Only transient transport/server failures receive two
+    // delayed retries.
+    if (capabilities.today_history_backfill && history_backfill.due(millis())) {
+      int history_status = 0;
+      size_t points = 0;
+      const FetchResult history = home_assistant_api_fetch_history(
+          history_backfill.cutoff_ts(), &history_status, &points);
+      const HistoryBackfillOutcome outcome =
+          history_backfill_outcome(history, history_status);
+      history_backfill.record(outcome, millis());
+      if (history == FetchResult::Ok) {
+        Serial.printf("[poll] Home Assistant Recorder restored %u chart points\n",
+                      static_cast<unsigned>(points));
+      } else if (history_backfill.finished()) {
+        Serial.printf("[poll] Home Assistant Recorder unavailable: %s (http %d) — "
+                      "charts will fill from live polls only\n",
+                      fetch_result_name(history), history_status);
       }
     }
 

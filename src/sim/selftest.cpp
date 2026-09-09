@@ -16,7 +16,9 @@
 #include "button_gesture.h"
 #include "day_series.h"
 #include "history.h"
+#include "history_backfill_retry.h"
 #include "home_assistant.h"
+#include "home_assistant_history.h"
 #include "data_source.h"
 #include "modbus_regs.h"
 #include "screen_window.h"
@@ -83,10 +85,11 @@ void test_data_sources() {
   check(modbus.live && modbus.daily_totals && modbus.local_history && modbus.forecast &&
             !modbus.historical_days && !modbus.detailed_flows,
         "modbus capabilities are local/live");
-  check(ha.live && ha.daily_totals && ha.local_history && ha.forecast &&
+  check(ha.live && ha.daily_totals && ha.local_history && ha.today_history_backfill &&
+            ha.forecast &&
             !ha.historical_days && !ha.full_day_series && !ha.detailed_flows &&
             !ha.tariff_cost,
-        "HA capabilities include optional forecast but not history or detail");
+        "HA capabilities include optional today backfill but not past days or detail");
 
   check(static_cast<uint8_t>(SolarForecastSource::Disabled) == 0,
         "disabled forecast source persists as 0");
@@ -136,6 +139,9 @@ void test_home_assistant_template() {
         "template references configured PV only");
   check(strstr(output, "states('sensor.battery_soc')") != nullptr,
         "template references configured SOC");
+  check(strstr(output, "as_timestamp(today_at())") != nullptr &&
+            strstr(output, "timedelta(days=1)") != nullptr,
+        "template asks HA for DST-aware local day boundaries");
   check(strstr(output, "\"gp\"") == nullptr, "unconfigured grid omitted");
   check(strstr(output, "Authorization") == nullptr, "template contains no credentials");
 
@@ -348,6 +354,7 @@ void test_home_assistant_payload() {
   printf("home assistant payload\n");
   const char* valid =
       "{\"v\":1,\"ts\":1788970000,\"tz\":60,"
+      "\"mid\":1788908400,\"next\":1788994800,"
       "\"pp\":{\"s\":\"3420\",\"u\":\"W\"},"
       "\"gp\":{\"s\":\"-1.1\",\"u\":\"kW\"},"
       "\"bp\":{\"s\":\"-500\",\"u\":\"W\"},"
@@ -372,6 +379,12 @@ void test_home_assistant_payload() {
   check_near(snapshot.today.solar.value, 8.45f, "Wh converts to kWh");
   check_near(snapshot.today.imported.value, 3.2f, "kWh remains kWh");
   check(snapshot.today.present, "configured daily entity makes today present");
+  check(info.local_midnight_ts == 1788908400u &&
+            info.next_local_midnight_ts == 1788994800u,
+        "HA payload retains authoritative local midnight boundaries");
+  check(info.units[static_cast<size_t>(HaEntity::PvPower)] == HaUnit::Watts &&
+            info.units[static_cast<size_t>(HaEntity::GridPower)] == HaUnit::Kilowatts,
+        "live parse retains units for Recorder history");
   check(!snapshot.today.exported.known, "missing daily entity remains unknown");
   check(!snapshot.solar.configured, "HA forecast disabled payload behaves as before");
 
@@ -688,6 +701,283 @@ void test_history() {
   check(history_generation(HistoryBank::Live) != before, "a backwards clock jump resets the ring");
 
   history_reset(HistoryBank::Live);
+}
+
+HaHistoryParseResult parse_history_in_chunks(HaHistoryParser* parser, const char* json,
+                                             size_t chunk_size,
+                                             HaHistoryStats* stats = nullptr) {
+  const size_t length = strlen(json);
+  for (size_t offset = 0; offset < length; offset += chunk_size) {
+    const size_t remaining = length - offset;
+    const size_t count = remaining < chunk_size ? remaining : chunk_size;
+    if (!parser->feed(reinterpret_cast<const uint8_t*>(json + offset), count)) {
+      break;
+    }
+  }
+  return parser->finish(stats);
+}
+
+void test_home_assistant_history() {
+  printf("home assistant history\n");
+  constexpr uint32_t MIDNIGHT = 1786838400u;  // 2026-08-16 00:00:00Z
+  constexpr uint32_t NEXT_MIDNIGHT = MIDNIGHT + 86400u;
+  constexpr uint32_t CUTOFF = MIDNIGHT + 10 * 60u;
+
+  const char* entity_ids[HA_ENTITY_COUNT] = {};
+  HaUnit units[HA_ENTITY_COUNT] = {};
+  entity_ids[static_cast<size_t>(HaEntity::PvPower)] = "sensor.pv";
+  units[static_cast<size_t>(HaEntity::PvPower)] = HaUnit::Watts;
+  entity_ids[static_cast<size_t>(HaEntity::GridPower)] = "sensor.grid";
+  units[static_cast<size_t>(HaEntity::GridPower)] = HaUnit::Watts;
+  entity_ids[static_cast<size_t>(HaEntity::BatteryPower)] = "sensor.battery";
+  units[static_cast<size_t>(HaEntity::BatteryPower)] = HaUnit::Watts;
+  entity_ids[static_cast<size_t>(HaEntity::BatterySoc)] = "sensor.soc";
+  units[static_cast<size_t>(HaEntity::BatterySoc)] = HaUnit::Percent;
+
+  HaHistoryField fields[HA_HISTORY_MAX_FIELDS];
+  const size_t field_count = ha_history_fields_build(entity_ids, units, fields);
+  check(field_count == 4, "history requests only PV, SOC and fallback load inputs");
+  check(fields[0].entity == HaEntity::PvPower &&
+            fields[1].entity == HaEntity::BatterySoc &&
+            fields[2].entity == HaEntity::GridPower &&
+            fields[3].entity == HaEntity::BatteryPower,
+        "fallback history field order is deterministic");
+
+  entity_ids[static_cast<size_t>(HaEntity::HomePower)] = "sensor.home";
+  units[static_cast<size_t>(HaEntity::HomePower)] = HaUnit::Kilowatts;
+  entity_ids[static_cast<size_t>(HaEntity::EvPower)] = "sensor.ev";
+  units[static_cast<size_t>(HaEntity::EvPower)] = HaUnit::Kilowatts;
+  const size_t direct_count = ha_history_fields_build(entity_ids, units, fields);
+  check(direct_count == 4 && fields[2].entity == HaEntity::HomePower &&
+            fields[3].entity == HaEntity::EvPower,
+        "direct home history fetches home and optional EV, not derivation inputs");
+  entity_ids[static_cast<size_t>(HaEntity::HomePower)] = nullptr;
+  entity_ids[static_cast<size_t>(HaEntity::EvPower)] = nullptr;
+  entity_ids[static_cast<size_t>(HaEntity::BatteryPower)] = nullptr;
+  check(ha_history_fields_build(entity_ids, units, fields) == 3,
+        "partially configured chart mappings remain independently usable");
+  entity_ids[static_cast<size_t>(HaEntity::BatteryPower)] = "sensor.battery";
+  ha_history_fields_build(entity_ids, units, fields);
+
+  const char* valid =
+      "[[{\"entity_id\":\"sensor.pv\",\"state\":\"1000\","
+      "\"last_changed\":\"2026-08-16T00:00:00Z\"},"
+      "{\"state\":\"unknown\",\"last_changed\":\"2026-08-16T00:03:00Z\"},"
+      "{\"state\":\"unavailable\",\"last_changed\":\"2026-08-16T00:04:00Z\"},"
+      "{\"state\":\"not-a-number\",\"last_changed\":\"2026-08-16T00:04:30Z\"},"
+      "{\"state\":\"2000\",\"last_changed\":\"2026-08-16T00:05:00Z\"}],"
+      "[{\"entity_id\":\"sensor.soc\",\"state\":\"55\","
+      "\"last_changed\":\"2026-08-16T00:00:00Z\"}],"
+      "[{\"entity_id\":\"sensor.grid\",\"state\":\"-1000\","
+      "\"last_changed\":\"2026-08-16T00:00:00Z\"}],"
+      "[{\"entity_id\":\"sensor.battery\",\"state\":\"-500\","
+      "\"last_changed\":\"2026-08-16T00:00:00Z\"}]]";
+  history_reset(HistoryBank::Live);
+  HaHistoryParser parser(fields, field_count, MIDNIGHT, NEXT_MIDNIGHT, CUTOFF);
+  check(parser.ready(), "bounded history workspace allocates");
+  HaHistoryStats stats;
+  check(parse_history_in_chunks(&parser, valid, 7, &stats) ==
+            HaHistoryParseResult::Applied,
+        "valid Recorder payload parses incrementally");
+  check(history_sample_count(HistoryBank::Live, HistorySeries::Pv) == 8,
+        "unknown and unavailable PV intervals remain gaps");
+  check(history_sample_count(HistoryBank::Live, HistorySeries::Soc) == 10,
+        "stable SOC is carried forward at one-minute cadence");
+  check(history_sample_count(HistoryBank::Live, HistorySeries::Load) == 8,
+        "derived load follows availability of every required input");
+  check_near(history_value(HistoryBank::Live, HistorySeries::Pv, MIDNIGHT / 60).value,
+             1.0f, "historical W converts to kW");
+  check_near(history_value(HistoryBank::Live, HistorySeries::Load, MIDNIGHT / 60).value,
+             0.5f, "signed grid and battery values use the live load equation");
+  check_near(history_value(HistoryBank::Live, HistorySeries::Load,
+                           MIDNIGHT / 60 + 5).value,
+             1.5f, "derived load resumes after a usable PV state");
+  check(stats.usable_states == 5 && stats.points_written == 26,
+        "backfill statistics count states and downsampled chart points");
+
+  history_reset(HistoryBank::Live);
+  HaHistoryField home_ev_fields[] = {
+      {HaEntity::HomePower, "sensor.home", HaUnit::Kilowatts},
+      {HaEntity::EvPower, "sensor.ev", HaUnit::Watts},
+  };
+  const char* direct_load =
+      "[[{\"entity_id\":\"sensor.home\",\"state\":\"1.25\","
+      "\"last_changed\":\"2026-08-16T00:00:00Z\"}],"
+      "[{\"entity_id\":\"sensor.ev\",\"state\":\"500\","
+      "\"last_updated\":\"2026-08-16T00:00:00Z\"}]]";
+  HaHistoryParser direct_parser(home_ev_fields, 2, MIDNIGHT, NEXT_MIDNIGHT, CUTOFF);
+  check(parse_history_in_chunks(&direct_parser, direct_load, 17) ==
+            HaHistoryParseResult::Applied,
+        "direct home and EV history parse with their live units");
+  check_near(history_value(HistoryBank::Live, HistorySeries::Load,
+                           MIDNIGHT / 60 + 9).value,
+             1.75f, "direct mapped home is preferred and EV is added to chart load");
+
+  history_reset(HistoryBank::Live);
+  HaHistoryField direct_fields[] = {
+      {HaEntity::HomePower, "sensor.home", HaUnit::Watts},
+  };
+  const char* zero =
+      "[[{\"entity_id\":\"sensor.home\",\"state\":\"0\","
+      "\"last_changed\":\"2026-08-16T00:00:00Z\"}]]";
+  HaHistoryParser zero_parser(direct_fields, 1, MIDNIGHT, NEXT_MIDNIGHT, CUTOFF);
+  check(parse_history_in_chunks(&zero_parser, zero, strlen(zero)) ==
+            HaHistoryParseResult::Applied,
+        "genuine historical zero is applied");
+  const MaybeFloat zero_value =
+      history_value(HistoryBank::Live, HistorySeries::Load, MIDNIGHT / 60 + 9);
+  check(zero_value.known && zero_value.value == 0.0f,
+        "genuine historical zero remains a known zero");
+
+  history_reset(HistoryBank::Live);
+  HaHistoryParser empty_parser(direct_fields, 1, MIDNIGHT, NEXT_MIDNIGHT, CUTOFF);
+  check(parse_history_in_chunks(&empty_parser, "[]", 1) == HaHistoryParseResult::NoData,
+        "empty Recorder history is a permanent no-data result");
+  const char* missing =
+      "[[{\"entity_id\":\"sensor.not_recorded\",\"state\":\"1\","
+      "\"last_changed\":\"2026-08-16T00:00:00Z\"}]]";
+  HaHistoryParser missing_parser(direct_fields, 1, MIDNIGHT, NEXT_MIDNIGHT, CUTOFF);
+  check(parse_history_in_chunks(&missing_parser, missing, 13) == HaHistoryParseResult::NoData,
+        "missing or entity-excluded history stays optional");
+
+  history_put(HistoryBank::Live, HistorySeries::Pv, CUTOFF / 60, 9.0f);
+  HaHistoryParser malformed_parser(direct_fields, 1, MIDNIGHT, NEXT_MIDNIGHT, CUTOFF);
+  check(parse_history_in_chunks(&malformed_parser, "[[{bad}]]", 3) ==
+            HaHistoryParseResult::BadPayload,
+        "malformed Recorder JSON is rejected");
+  HaHistoryParser structural_parser(direct_fields, 1, MIDNIGHT, NEXT_MIDNIGHT, CUTOFF);
+  check(parse_history_in_chunks(&structural_parser, "[[],]", 2) ==
+            HaHistoryParseResult::BadPayload,
+        "malformed Recorder array structure is rejected");
+  check_near(history_value(HistoryBank::Live, HistorySeries::Pv, CUTOFF / 60).value,
+             9.0f, "malformed history preserves existing live samples");
+
+  HaHistoryField unsupported[] = {
+      {HaEntity::PvPower, "sensor.pv", HaUnit::Unknown},
+  };
+  HaHistoryParser unsupported_parser(unsupported, 1, MIDNIGHT, NEXT_MIDNIGHT, CUTOFF);
+  const char* one_pv =
+      "[[{\"entity_id\":\"sensor.pv\",\"state\":\"42\","
+      "\"last_changed\":\"2026-08-16T00:00:00Z\"}]]";
+  check(parse_history_in_chunks(&unsupported_parser, one_pv, 9) ==
+            HaHistoryParseResult::NoData,
+        "unsupported live unit cannot turn Recorder states into chart values");
+
+  history_reset(HistoryBank::Live);
+  history_put(HistoryBank::Live, HistorySeries::Pv, CUTOFF / 60, 9.0f);
+  HaHistoryField pv_field[] = {
+      {HaEntity::PvPower, "sensor.pv", HaUnit::Watts},
+  };
+  const char* overlap =
+      "[[{\"entity_id\":\"sensor.pv\",\"state\":\"1000\","
+      "\"last_changed\":\"2026-08-16T00:09:00Z\"},"
+      "{\"state\":\"2000\",\"last_changed\":\"2026-08-16T00:10:00Z\"}]]";
+  HaHistoryParser overlap_parser(pv_field, 1, MIDNIGHT, NEXT_MIDNIGHT, CUTOFF);
+  check(parse_history_in_chunks(&overlap_parser, overlap, 11) ==
+            HaHistoryParseResult::Applied,
+        "history up to the first live minute is applied");
+  check_near(history_value(HistoryBank::Live, HistorySeries::Pv, CUTOFF / 60).value,
+             9.0f, "Recorder overlap cannot replace the first live sample");
+
+  uint32_t spring_midnight = 0;
+  uint32_t spring_next = 0;
+  uint32_t spring_sample = 0;
+  uint32_t spring_cutoff = 0;
+  check(ha_history_timestamp_parse("2026-03-29T00:00:00+00:00", &spring_midnight) &&
+            ha_history_timestamp_parse("2026-03-30T00:00:00+01:00", &spring_next) &&
+            ha_history_timestamp_parse("2026-03-29T02:15:00+01:00", &spring_sample) &&
+            ha_history_timestamp_parse("2026-03-29T03:00:00+01:00", &spring_cutoff),
+        "ISO timestamps retain their explicit DST offsets");
+  check(spring_next - spring_midnight == 23 * 3600u,
+        "local-midnight boundary may be a 23-hour DST day");
+  uint32_t autumn_midnight = 0;
+  uint32_t autumn_next = 0;
+  check(ha_history_timestamp_parse("2026-10-25T00:00:00+01:00", &autumn_midnight) &&
+            ha_history_timestamp_parse("2026-10-26T00:00:00+00:00", &autumn_next) &&
+            autumn_next - autumn_midnight == 25 * 3600u,
+        "local-midnight boundary may be a 25-hour DST day");
+  const char* autumn_payload =
+      "[[{\"entity_id\":\"sensor.pv\",\"state\":\"1000\","
+      "\"last_changed\":\"2026-10-25T00:00:00+01:00\"}]]";
+  history_reset(HistoryBank::Live);
+  HaHistoryParser autumn_parser(pv_field, 1, autumn_midnight, autumn_next,
+                                 autumn_next - 60);
+  check(parse_history_in_chunks(&autumn_parser, autumn_payload, 19) ==
+            HaHistoryParseResult::Applied &&
+            history_value(HistoryBank::Live, HistorySeries::Pv,
+                          autumn_midnight / 60).known &&
+            history_value(HistoryBank::Live, HistorySeries::Pv,
+                          autumn_next / 60 - 2).known,
+        "25-hour Recorder day retains both its first and final historical hours");
+  char dst_payload[256];
+  snprintf(dst_payload, sizeof(dst_payload),
+           "[[{\"entity_id\":\"sensor.pv\",\"state\":\"1000\","
+           "\"last_changed\":\"2026-03-29T02:15:00+01:00\"}]]");
+  history_reset(HistoryBank::Live);
+  HaHistoryParser dst_parser(pv_field, 1, spring_midnight, spring_next, spring_cutoff);
+  check(parse_history_in_chunks(&dst_parser, dst_payload, 5) ==
+            HaHistoryParseResult::Applied,
+        "DST-day Recorder sample is backfilled");
+  uint32_t from = 0;
+  uint32_t to = 0;
+  check(history_window(HistoryBank::Live, &from, &to) &&
+            from == spring_midnight / 60 && to == spring_next / 60,
+        "chart uses HA's exact local-midnight window across DST");
+  check(history_value(HistoryBank::Live, HistorySeries::Pv, spring_sample / 60).known,
+        "offset timestamp lands in the correct absolute minute");
+
+  // Existing fallback remains: if Recorder never supplies anything, normal
+  // snapshots still build the chart from boot onward.
+  history_reset(HistoryBank::Live);
+  Snapshot live;
+  live.valid = true;
+  live.ts = CUTOFF;
+  live.power.pv = {true, 3.0f};
+  history_record(live);
+  check_near(history_value(HistoryBank::Live, HistorySeries::Pv, CUTOFF / 60).value,
+             3.0f, "live-from-boot recording is independent of Recorder");
+}
+
+void test_history_backfill_retry() {
+  printf("history backfill retry\n");
+  check(history_backfill_outcome(FetchResult::NoNetwork) ==
+            HistoryBackfillOutcome::TransientFailure &&
+            history_backfill_outcome(FetchResult::HttpError, 503) ==
+                HistoryBackfillOutcome::TransientFailure &&
+            history_backfill_outcome(FetchResult::HttpError, 429) ==
+                HistoryBackfillOutcome::TransientFailure,
+        "network, server and rate-limit failures are retryable");
+  check(history_backfill_outcome(FetchResult::BadPayload) ==
+            HistoryBackfillOutcome::PermanentFailure &&
+            history_backfill_outcome(FetchResult::HttpError, 404) ==
+                HistoryBackfillOutcome::PermanentFailure &&
+            history_backfill_outcome(FetchResult::EntityUnavailable) ==
+                HistoryBackfillOutcome::NoData,
+        "malformed, missing-endpoint and no-data results are not retried");
+  HistoryBackfillRetry retry;
+  check(!retry.due(0), "Recorder waits for the first successful live poll");
+  retry.activate(12345);
+  check(retry.due(100) && retry.cutoff_ts() == 12345,
+        "first live success activates an immediate backfill");
+  retry.record(HistoryBackfillOutcome::TransientFailure, 100);
+  check(!retry.due(30099) && retry.due(30100) && retry.attempts() == 1,
+        "transient failure waits thirty seconds before retrying");
+  retry.record(HistoryBackfillOutcome::TransientFailure, 30100);
+  check(retry.due(60100), "a second transient failure permits the final retry");
+  retry.record(HistoryBackfillOutcome::TransientFailure, 60100);
+  check(retry.finished() && !retry.active() && retry.attempts() == 3,
+        "transient failures stop after three attempts");
+
+  HistoryBackfillRetry no_data;
+  no_data.activate(1);
+  no_data.record(HistoryBackfillOutcome::NoData, 0);
+  check(no_data.finished() && no_data.attempts() == 1,
+        "empty or non-recorded history is not retried");
+  HistoryBackfillRetry malformed;
+  malformed.activate(1);
+  malformed.record(HistoryBackfillOutcome::PermanentFailure, 0);
+  check(malformed.finished() && malformed.attempts() == 1,
+        "malformed or unauthorised history is not retried");
 }
 
 // A day payload straight from /api/day/series, at the shape the device asks for.
@@ -1118,6 +1408,8 @@ int run_selftest() {
   test_snapshot();
   test_day_baseline();
   test_history();
+  test_home_assistant_history();
+  test_history_backfill_retry();
   test_day_series();
   test_history_banks();
   test_button_gestures();

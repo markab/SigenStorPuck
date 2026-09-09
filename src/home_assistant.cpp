@@ -59,11 +59,7 @@ bool state_unavailable(const char* state) {
          strcasecmp(state, "unavailable") == 0 || state[0] == '\0';
 }
 
-bool numeric_state(JsonVariantConst entry, float* out) {
-  if (!entry.is<JsonObjectConst>()) {
-    return false;
-  }
-  const char* text = entry["s"] | static_cast<const char*>(nullptr);
+bool numeric_state(const char* text, float* out) {
   if (state_unavailable(text)) {
     return false;
   }
@@ -80,57 +76,28 @@ bool numeric_state(JsonVariantConst entry, float* out) {
   return true;
 }
 
-bool normalise(JsonVariantConst entry, HaValueKind kind, MaybeFloat* out, HaParseInfo* info) {
+bool normalise(JsonVariantConst entry, HaEntity entity, MaybeFloat* out, HaParseInfo* info) {
   const char* state = entry["s"] | static_cast<const char*>(nullptr);
-  if (state_unavailable(state)) {
-    ++info->unavailable;
-    return false;
-  }
-
-  float value = 0.0f;
-  if (!numeric_state(entry, &value)) {
-    ++info->invalid_number;
-    return false;
-  }
-
   const char* unit = entry["u"] | static_cast<const char*>(nullptr);
-  bool supported = false;
-  switch (kind) {
-    case HaValueKind::Power:
-      if (unit != nullptr && strcmp(unit, "W") == 0) {
-        value /= 1000.0f;
-        supported = true;
-      } else if (unit != nullptr && strcmp(unit, "kW") == 0) {
-        supported = true;
-      }
+  const size_t index = static_cast<size_t>(entity);
+  info->units[index] = ha_unit_from_text(unit);
+  const HaValueStatus status =
+      ha_normalise_state(state, info->units[index], HA_ENTITIES[index].kind, out);
+  switch (status) {
+    case HaValueStatus::Available:
+      ++info->available;
+      return true;
+    case HaValueStatus::Unavailable:
+      ++info->unavailable;
       break;
-    case HaValueKind::Energy:
-      if (unit != nullptr && strcmp(unit, "Wh") == 0) {
-        value /= 1000.0f;
-        supported = true;
-      } else if (unit != nullptr && strcmp(unit, "kWh") == 0) {
-        supported = true;
-      }
+    case HaValueStatus::InvalidNumber:
+      ++info->invalid_number;
       break;
-    case HaValueKind::Percent:
-      supported = unit != nullptr && strcmp(unit, "%") == 0;
-      break;
-    case HaValueKind::Temperature:
-      supported = unit != nullptr &&
-                  (strcmp(unit, "°C") == 0 || strcmp(unit, "C") == 0 ||
-                   strcmp(unit, "degC") == 0);
-      break;
-    case HaValueKind::Boolean:
+    case HaValueStatus::UnsupportedUnit:
+      ++info->unsupported_unit;
       break;
   }
-  if (!supported) {
-    ++info->unsupported_unit;
-    return false;
-  }
-  out->known = true;
-  out->value = value;
-  ++info->available;
-  return true;
+  return false;
 }
 
 MaybeFloat parse_number(JsonObjectConst root, HaEntity entity, HaParseInfo* info) {
@@ -140,7 +107,7 @@ MaybeFloat parse_number(JsonObjectConst root, HaEntity entity, HaParseInfo* info
     return value;
   }
   ++info->configured;
-  normalise(root[descriptor.payload_key], descriptor.kind, &value, info);
+  normalise(root[descriptor.payload_key], entity, &value, info);
   return value;
 }
 
@@ -173,6 +140,80 @@ void parse_boolean(JsonObjectConst root, HaEntity entity, bool* known, bool* val
 
 }  // namespace
 
+HaUnit ha_unit_from_text(const char* unit) {
+  if (unit == nullptr) {
+    return HaUnit::Unknown;
+  }
+  if (strcmp(unit, "W") == 0) {
+    return HaUnit::Watts;
+  }
+  if (strcmp(unit, "kW") == 0) {
+    return HaUnit::Kilowatts;
+  }
+  if (strcmp(unit, "Wh") == 0) {
+    return HaUnit::WattHours;
+  }
+  if (strcmp(unit, "kWh") == 0) {
+    return HaUnit::KilowattHours;
+  }
+  if (strcmp(unit, "%") == 0) {
+    return HaUnit::Percent;
+  }
+  if (strcmp(unit, "°C") == 0 || strcmp(unit, "C") == 0 || strcmp(unit, "degC") == 0) {
+    return HaUnit::Celsius;
+  }
+  return HaUnit::Unknown;
+}
+
+HaValueStatus ha_normalise_state(const char* state, HaUnit unit, HaValueKind kind,
+                                 MaybeFloat* out) {
+  if (out == nullptr) {
+    return HaValueStatus::InvalidNumber;
+  }
+  *out = MaybeFloat{};
+  if (state_unavailable(state)) {
+    return HaValueStatus::Unavailable;
+  }
+  float value = 0.0f;
+  if (!numeric_state(state, &value)) {
+    return HaValueStatus::InvalidNumber;
+  }
+
+  bool supported = false;
+  switch (kind) {
+    case HaValueKind::Power:
+      if (unit == HaUnit::Watts) {
+        value /= 1000.0f;
+        supported = true;
+      } else {
+        supported = unit == HaUnit::Kilowatts;
+      }
+      break;
+    case HaValueKind::Energy:
+      if (unit == HaUnit::WattHours) {
+        value /= 1000.0f;
+        supported = true;
+      } else {
+        supported = unit == HaUnit::KilowattHours;
+      }
+      break;
+    case HaValueKind::Percent:
+      supported = unit == HaUnit::Percent;
+      break;
+    case HaValueKind::Temperature:
+      supported = unit == HaUnit::Celsius;
+      break;
+    case HaValueKind::Boolean:
+      break;
+  }
+  if (!supported) {
+    return HaValueStatus::UnsupportedUnit;
+  }
+  out->known = true;
+  out->value = value;
+  return HaValueStatus::Available;
+}
+
 bool ha_entity_id_valid(const char* entity_id) {
   if (entity_id == nullptr || entity_id[0] == '\0' || strlen(entity_id) > HA_ENTITY_ID_MAX) {
     return false;
@@ -203,7 +244,9 @@ bool ha_template_build(const char* const entity_ids[HA_ENTITY_COUNT], char* out,
   size_t used = 0;
   const char* prefix =
       "{\"v\":1,\"ts\":{{as_timestamp(now())|int}},"
-      "\"tz\":{{(now().utcoffset().total_seconds()/60)|int}}";
+      "\"tz\":{{(now().utcoffset().total_seconds()/60)|int}},"
+      "\"mid\":{{as_timestamp(today_at())|int}},"
+      "\"next\":{{as_timestamp(today_at()+timedelta(days=1))|int}}";
   const int prefix_length = snprintf(out, out_size, "%s", prefix);
   if (prefix_length < 0 || static_cast<size_t>(prefix_length) >= out_size) {
     out[0] = '\0';
@@ -264,6 +307,12 @@ bool ha_payload_parse(const char* json, size_t length, Snapshot* out, HaParseInf
   if (root["tz"].is<int>()) {
     built.tz_offset_min.known = true;
     built.tz_offset_min.value = root["tz"].as<int32_t>();
+  }
+  if (root["mid"].is<uint32_t>()) {
+    parsed_info.local_midnight_ts = root["mid"].as<uint32_t>();
+  }
+  if (root["next"].is<uint32_t>()) {
+    parsed_info.next_local_midnight_ts = root["next"].as<uint32_t>();
   }
 
   built.power.pv = parse_number(root, HaEntity::PvPower, &parsed_info);

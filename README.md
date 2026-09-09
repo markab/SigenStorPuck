@@ -40,7 +40,7 @@ built in and ready for when it is, but until then those parts are unavailable.
 | **Cost** screen | — | — | ● |
 | **Settings** screen | ● | ● | ● |
 | Solar forecast | ● disabled, Puck, or HA entities | ● calculated on the Puck | ● from the server |
-| Daily charts | ◐ from when the Puck was switched on | ◐ from when the Puck was switched on | ● the whole day, and after a restart |
+| Today's charts | ◐ restored from HA Recorder when available; otherwise from boot | ◐ from when the Puck was switched on | ● the whole day, and after a restart |
 | Step back through past days | — | — | ● up to 7 days |
 | Tariff rates and savings | — | — | ● |
 
@@ -63,15 +63,18 @@ Which screens appear at all is up to you — see **Screens** under Settings.
 | <img src="docs/img/power.png" width="300" alt="Power flow"> | <img src="docs/img/battery.png" width="300" alt="Battery"> |
 | **Power** — what is happening right now. Solar at the top, then clockwise: battery, home, EV, grid, around the plant in the middle. Dots run along each leg in the direction the power is going, faster when there is more of it. The ring is your state of charge.<br><br>*Works on all three sources when the corresponding values are available.* | **Battery** — charge level around the bezel, capacity in kWh, and how long until it is full or empty. Below that: charged and discharged today, battery health, and temperature.<br><br>*Works on all three sources. On Modbus, temperature and the daily totals need an inverter added under Plant; on HA, each figure needs its mapping.* |
 | <img src="docs/img/solar.png" width="300" alt="Solar"> | <img src="docs/img/load.png" width="300" alt="Load"> |
-| **Solar** — generation so far today, with the ring showing progress against the day's forecast. Then the forecast total, how much is still to come, how you are doing against it, and the expected peak.<br><br>*Works on all three sources.* Home Assistant can use no forecast, calculate one on the Puck, or map HA forecast entities. | **Load** — everything used today, with what is being drawn right now.<br><br>*Partial on HA and Modbus.* The headline total, live figure and locally recorded curve work. The four source-breakdown figures need a **SigenStorDisplay Server**. |
+| **Solar** — generation so far today, with the ring showing progress against the day's forecast. Then the forecast total and whichever optional remaining, progress and peak values are available; unavailable optional figures are hidden rather than shown as blank rows.<br><br>*Works on all three sources.* Home Assistant can use no forecast, calculate one on the Puck, or map HA forecast entities. | **Load** — everything used today, with what is being drawn right now.<br><br>*Partial on HA and Modbus.* The headline total, live figure and locally recorded curve work. The four source-breakdown figures need a **SigenStorDisplay Server**. |
 | <img src="docs/img/flows.png" width="300" alt="Energy flows"> | <img src="docs/img/cost.png" width="300" alt="Cost"> |
 | **Flows** — where today's energy came from and where it went. Sources down the left, destinations down the right, one ribbon per path. The ring is how self-sufficient you have been.<br><br>**SigenStorDisplay Server Only.** | **Cost** — what you have saved today, the unit rate you are paying right now, and the next few tariff slots coloured against it.<br><br>**SigenStorDisplay Server Only.** |
 | <img src="docs/img/settings.png" width="300" alt="Settings"> | |
 | **Settings** — always the last screen. Scan the code with your phone, or type either address into a browser, to reach the settings page.<br><br>*Works on all three sources.* | |
 
 Behind the solar, load and battery screens is that day's own curve, drawn faintly so it
-does not compete with the figures. On Home Assistant and Modbus the curve builds up from
-the moment the Puck is switched on, so it starts empty after a restart and fills through the day. With a
+does not compete with the figures. In Home Assistant mode the Puck starts one optional,
+entity-filtered Recorder backfill after its first successful live poll and restores today's
+available PV, battery and load curves. If Recorder is disabled, unavailable, excludes an
+entity or has no history, the live readings continue normally and the affected curves
+simply fill from boot. Modbus curves always fill from boot. With a
 **SigenStorDisplay Server** the whole day is fetched, so the curve is complete straight
 away.
 
@@ -161,6 +164,13 @@ per live poll. Home Assistant renders only the
 configured entities and their units into a compact response; the Puck does not fetch
 entities one at a time or download all HA states. In this mode the Puck never opens a
 Modbus connection.
+
+After the first successful live poll following a boot, the Puck also makes one filtered
+Home Assistant Recorder history request for the mapped entities needed by today's Solar,
+Battery and Load curves. Recorder is optional: an empty, excluded or unavailable entity
+leaves a gap, and a failed history request never invalidates live data. Transient failures
+are retried twice; no-data and malformed responses are not retried. No previous day is
+downloaded or made browseable.
 
 #### Direct Modbus
 
@@ -281,7 +291,8 @@ Open-Meteo model without changing HA live acquisition or contacting Modbus. For
 **Home Assistant entities**, the semantic mappings may point to any suitable HA
 integration. Today's total forecast is required to make the Solar screen meaningful;
 remaining energy, actual-vs-forecast percentage, and peak power are optional. They are
-included in the same compact HA template request as live data.
+included in the same compact HA template request as live data and are hidden individually
+on the Solar screen when unavailable.
 
 <table>
 <tr><th width="32%">Option</th><th>What it does</th></tr>
@@ -389,14 +400,15 @@ pio run -e sim && .pio/build/sim/program
 `n`/`p` change fixture, `[`/`]` change screen, `d` shows the parsed data behind what you
 are looking at. `--modbus` previews the shorter five-screen arrangement also used by HA.
 
-`--selftest` runs the checks that need no hardware: Home Assistant template/payload and
-unit handling, source compatibility, the Modbus register decoder, history ring, button
-gestures, solar forecast model and screen-off window.
+`--selftest` runs the checks that need no hardware: Home Assistant template/payload,
+Recorder parsing and unit handling, source compatibility, the Modbus register decoder,
+history ring, button gestures, solar forecast model and screen-off window.
 
 ## Home Assistant V1 scope
 
 Home Assistant provides live power, battery values, configured today's totals and an
-optional solar forecast from HA entities or the Puck's native model. Live polls feed the
-existing local history rings and charts. Recorder backfill, previous-day browsing,
-detailed source-to-sink flows, tariffs and costs/savings remain deliberately unimplemented;
-forecast support does not add historical chart backfill.
+optional solar forecast from HA entities or the Puck's native model. A single optional
+Recorder request can restore today's chart after restart; without usable Recorder history,
+the same charts fill from live polls beginning at boot. Previous-day browsing, past-day
+chart retrieval, detailed source-to-sink flows, tariffs and costs/savings remain
+deliberately unimplemented. The day controls therefore remain `LIVE ONLY` in HA mode.
