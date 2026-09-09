@@ -11,6 +11,8 @@ constexpr const char* NAMESPACE = "sigenstorpuck";
 
 constexpr const char* KEY_BASE_URL = "base_url";
 constexpr const char* KEY_TOKEN = "token";
+constexpr const char* KEY_HA_URL = "ha_url";
+constexpr const char* KEY_HA_TOKEN = "ha_token";
 constexpr const char* KEY_POLL = "poll_s";
 constexpr const char* KEY_BRIGHTNESS = "bright";
 constexpr const char* KEY_DIM = "dim_s";
@@ -62,6 +64,17 @@ void settings_begin() {
   }
   s_settings.base_url = prefs.getString(KEY_BASE_URL, "");
   s_settings.token = prefs.getString(KEY_TOKEN, "");
+  if (prefs.isKey(KEY_HA_URL)) {
+    s_settings.ha_base_url = prefs.getString(KEY_HA_URL, "");
+  }
+  if (prefs.isKey(KEY_HA_TOKEN)) {
+    s_settings.ha_token = prefs.getString(KEY_HA_TOKEN, "");
+  }
+  for (size_t i = 0; i < HA_ENTITY_COUNT; ++i) {
+    if (prefs.isKey(HA_ENTITIES[i].nvs_key)) {
+      s_settings.ha_entities[i] = prefs.getString(HA_ENTITIES[i].nvs_key, "");
+    }
+  }
   s_settings.poll_interval_s = prefs.getUInt(KEY_POLL, s_settings.poll_interval_s);
   s_settings.brightness = prefs.getUChar(KEY_BRIGHTNESS, s_settings.brightness);
   s_settings.dim_after_s = prefs.getUInt(KEY_DIM, s_settings.dim_after_s);
@@ -82,12 +95,10 @@ void settings_begin() {
   // token but was never asked to choose. Reading the default over the top of that
   // would switch a working display to a plant it has no address for. What it has
   // stored is the better evidence of what it was set up as.
-  if (prefs.isKey(KEY_SOURCE)) {
-    s_settings.source =
-        prefs.getUChar(KEY_SOURCE, 0) == 1 ? DataSource::Modbus : DataSource::Server;
-  } else if (!s_settings.base_url.isEmpty() && !s_settings.token.isEmpty()) {
-    s_settings.source = DataSource::Server;
-  }
+  const bool has_source = prefs.isKey(KEY_SOURCE);
+  s_settings.source = data_source_restore(
+      has_source, has_source ? prefs.getUChar(KEY_SOURCE, 0) : 0,
+      !s_settings.base_url.isEmpty() && !s_settings.token.isEmpty());
   if (prefs.isKey(KEY_HOSTNAME)) {
     const String stored = prefs.getString(KEY_HOSTNAME, "");
     if (!stored.isEmpty()) {
@@ -127,10 +138,22 @@ void settings_begin() {
                   s_settings.modbus_host.isEmpty() ? "(unset)" : s_settings.modbus_host.c_str(),
                   s_settings.modbus_port, s_settings.modbus_plant_address,
                   s_settings.poll_interval_s);
-  } else {
+  } else if (s_settings.source == DataSource::Server) {
     Serial.printf("[settings] source=server server=%s token=%s poll=%us\n",
                   s_settings.base_url.isEmpty() ? "(unset)" : s_settings.base_url.c_str(),
                   s_settings.token.isEmpty() ? "(unset)" : settings_token_masked().c_str(),
+                  s_settings.poll_interval_s);
+  } else {
+    Serial.printf("[settings] source=home assistant server=%s token=%s mappings=%u poll=%us\n",
+                  s_settings.ha_base_url.isEmpty() ? "(unset)" : s_settings.ha_base_url.c_str(),
+                  s_settings.ha_token.isEmpty() ? "(unset)" : "stored",
+                  static_cast<unsigned>([]() {
+                    size_t count = 0;
+                    for (const String& entity : s_settings.ha_entities) {
+                      count += entity.isEmpty() ? 0 : 1;
+                    }
+                    return count;
+                  }()),
                   s_settings.poll_interval_s);
   }
 }
@@ -157,6 +180,68 @@ bool settings_set_server(const String& base_url, const String& token) {
   Serial.printf("[settings] server set to %s (token %s)\n", base_url.c_str(),
                 settings_token_masked().c_str());
   return true;
+}
+
+bool settings_set_home_assistant(const String& base_url, const String& token,
+                                 const String* entities, size_t count) {
+  if (base_url.isEmpty() || entities == nullptr || count != HA_ENTITY_COUNT) {
+    return false;
+  }
+  for (size_t i = 0; i < count; ++i) {
+    if (!entities[i].isEmpty() && !ha_entity_id_valid(entities[i].c_str())) {
+      return false;
+    }
+  }
+
+  Preferences prefs;
+  if (!prefs.begin(NAMESPACE, /*readOnly=*/false)) {
+    return false;
+  }
+  bool ok = prefs.putString(KEY_HA_URL, base_url) > 0;
+  if (!token.isEmpty()) {
+    ok = prefs.putString(KEY_HA_TOKEN, token) > 0 && ok;
+  }
+  for (size_t i = 0; i < count; ++i) {
+    if (entities[i].isEmpty()) {
+      if (prefs.isKey(HA_ENTITIES[i].nvs_key)) {
+        ok = prefs.remove(HA_ENTITIES[i].nvs_key) && ok;
+      }
+    } else {
+      ok = prefs.putString(HA_ENTITIES[i].nvs_key, entities[i]) > 0 && ok;
+    }
+  }
+  prefs.end();
+  if (!ok) {
+    return false;
+  }
+
+  s_settings.ha_base_url = base_url;
+  if (!token.isEmpty()) {
+    s_settings.ha_token = token;
+  }
+  for (size_t i = 0; i < count; ++i) {
+    s_settings.ha_entities[i] = entities[i];
+  }
+  size_t mapped = 0;
+  for (const String& entity : s_settings.ha_entities) {
+    mapped += entity.isEmpty() ? 0 : 1;
+  }
+  Serial.printf("[settings] home assistant set to %s (token stored, %u mappings)\n",
+                base_url.c_str(),
+                static_cast<unsigned>(mapped));
+  return true;
+}
+
+bool settings_home_assistant_is_configured() {
+  if (s_settings.ha_base_url.isEmpty() || s_settings.ha_token.isEmpty()) {
+    return false;
+  }
+  for (const String& entity : s_settings.ha_entities) {
+    if (!entity.isEmpty()) {
+      return true;
+    }
+  }
+  return false;
 }
 
 bool settings_set_display(uint8_t brightness, uint32_t dim_after_s, uint8_t dim_brightness) {
@@ -223,7 +308,7 @@ bool settings_set_source(DataSource source) {
   prefs.end();
   s_settings.source = source;
   Serial.printf("[settings] source set to %s (applies on next boot)\n",
-                source == DataSource::Modbus ? "modbus" : "server");
+                data_source_name(source));
   return true;
 }
 
@@ -388,6 +473,9 @@ bool settings_is_provisioned() {
     // address alone.
     return !s_settings.modbus_host.isEmpty();
   }
+  if (s_settings.source == DataSource::HomeAssistant) {
+    return settings_home_assistant_is_configured();
+  }
   return !s_settings.base_url.isEmpty() && !s_settings.token.isEmpty();
 }
 
@@ -402,6 +490,17 @@ String settings_token_masked() {
   return String("...") + s_settings.token.substring(length - 4);
 }
 
+String settings_ha_token_masked() {
+  const size_t length = s_settings.ha_token.length();
+  if (length == 0) {
+    return String("(unset)");
+  }
+  if (length <= 4) {
+    return String("****");
+  }
+  return String("...") + s_settings.ha_token.substring(length - 4);
+}
+
 void settings_forget_server() {
   Preferences prefs;
   if (prefs.begin(NAMESPACE, /*readOnly=*/false)) {
@@ -412,6 +511,16 @@ void settings_forget_server() {
   s_settings.base_url = "";
   s_settings.token = "";
   Serial.println("[settings] server details cleared");
+}
+
+void settings_forget_home_assistant() {
+  Preferences prefs;
+  if (prefs.begin(NAMESPACE, /*readOnly=*/false)) {
+    prefs.remove(KEY_HA_TOKEN);
+    prefs.end();
+  }
+  s_settings.ha_token = "";
+  Serial.println("[settings] Home Assistant token cleared");
 }
 
 bool settings_set_orientation(uint8_t quarter_turns) {

@@ -63,6 +63,7 @@ bool snapshot_parse(const char* json, size_t length, Snapshot* out) {
   parsed.power.home = maybe_float(power["home"]);
   parsed.power.ev = maybe_float(power["ev"]);
   parsed.power.plant = maybe_float(power["plant"]);
+  parsed.power.off_grid_known = !power["off_grid"].isNull();
   parsed.power.off_grid = power["off_grid"] | false;
 
   JsonVariantConst battery = doc["battery"];

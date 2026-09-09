@@ -1,4 +1,4 @@
-// Checks for the parts of the Modbus path that do not need a plant (PLAN.md §D).
+// Checks for acquisition and shared logic that do not need a plant or HA instance.
 //
 // Run with `.pio/build/sim/program --selftest`. Desktop-only, like the rest of
 // src/sim/, but everything it exercises is shared with the firmware — which is
@@ -16,6 +16,8 @@
 #include "button_gesture.h"
 #include "day_series.h"
 #include "history.h"
+#include "home_assistant.h"
+#include "data_source.h"
 #include "modbus_regs.h"
 #include "screen_window.h"
 #include "solar_forecast.h"
@@ -51,6 +53,159 @@ void check_within(float actual, float expected, float fraction, const char* what
     ++s_failures;
     printf("  FAIL  %s (got %.5f, wanted %.5f)\n", what, actual, expected);
   }
+}
+
+void test_data_sources() {
+  printf("data sources\n");
+  check(static_cast<uint8_t>(DataSource::Server) == 0, "server persisted value remains 0");
+  check(static_cast<uint8_t>(DataSource::Modbus) == 1, "modbus persisted value remains 1");
+  check(static_cast<uint8_t>(DataSource::HomeAssistant) == 2, "HA is appended as value 2");
+  check(data_source_from_stored(0) == DataSource::Server, "stored server decodes");
+  check(data_source_from_stored(1) == DataSource::Modbus, "stored modbus decodes");
+  check(data_source_from_stored(2) == DataSource::HomeAssistant, "stored HA decodes");
+  check(data_source_from_stored(99) == DataSource::Server,
+        "unknown stored source preserves legacy server fallback");
+  check(data_source_restore(false, 0, false) == DataSource::Modbus,
+        "older empty NVS retains fresh-install Modbus default");
+  check(data_source_restore(false, 0, true) == DataSource::Server,
+        "older NVS with server credentials remains on Server");
+  check(data_source_restore(true, 1, true) == DataSource::Modbus,
+        "explicit stored source wins over legacy credential inference");
+
+  const SourceCapabilities server = data_source_capabilities(DataSource::Server);
+  const SourceCapabilities modbus = data_source_capabilities(DataSource::Modbus);
+  const SourceCapabilities ha = data_source_capabilities(DataSource::HomeAssistant);
+  check(server.historical_days && server.full_day_series && server.detailed_flows &&
+            server.tariff_cost,
+        "server capabilities include history and detailed features");
+  check(modbus.live && modbus.daily_totals && modbus.local_history && modbus.forecast &&
+            !modbus.historical_days && !modbus.detailed_flows,
+        "modbus capabilities are local/live");
+  check(ha.live && ha.daily_totals && ha.local_history && !ha.forecast &&
+            !ha.historical_days && !ha.full_day_series && !ha.detailed_flows &&
+            !ha.tariff_cost,
+        "HA V1 capabilities are honest");
+}
+
+void test_home_assistant_template() {
+  printf("home assistant template\n");
+  check(ha_entity_id_valid("sensor.pv_power"), "normal entity id accepted");
+  check(ha_entity_id_valid("binary_sensor.off_grid_2"), "binary entity id accepted");
+  check(!ha_entity_id_valid("sensor.PV Power"), "unsafe entity id rejected");
+  check(!ha_entity_id_valid("sensor"), "entity id needs a domain separator");
+  check(!ha_entity_id_valid("sensor.bad' }}"), "template injection rejected");
+
+  const char* entities[HA_ENTITY_COUNT] = {};
+  entities[static_cast<size_t>(HaEntity::PvPower)] = "sensor.pv_power";
+  entities[static_cast<size_t>(HaEntity::BatterySoc)] = "sensor.battery_soc";
+  char output[HA_TEMPLATE_MAX];
+  check(ha_template_build(entities, output, sizeof(output)), "template builds");
+  check(strstr(output, "states('sensor.pv_power')") != nullptr,
+        "template references configured PV only");
+  check(strstr(output, "states('sensor.battery_soc')") != nullptr,
+        "template references configured SOC");
+  check(strstr(output, "\"gp\"") == nullptr, "unconfigured grid omitted");
+  check(strstr(output, "Authorization") == nullptr, "template contains no credentials");
+
+  char too_small[32];
+  check(!ha_template_build(entities, too_small, sizeof(too_small)),
+        "short template buffer is rejected");
+}
+
+void test_home_assistant_payload() {
+  printf("home assistant payload\n");
+  const char* valid =
+      "{\"v\":1,\"ts\":1788970000,\"tz\":60,"
+      "\"pp\":{\"s\":\"3420\",\"u\":\"W\"},"
+      "\"gp\":{\"s\":\"-1.1\",\"u\":\"kW\"},"
+      "\"bp\":{\"s\":\"-500\",\"u\":\"W\"},"
+      "\"hp\":{\"s\":\"2.75\",\"u\":\"kW\"},"
+      "\"ep\":{\"s\":\"0\",\"u\":\"W\"},"
+      "\"og\":{\"s\":\"off\",\"u\":null},"
+      "\"soc\":{\"s\":\"64.5\",\"u\":\"%\"},"
+      "\"tmp\":{\"s\":\"24.2\",\"u\":\"°C\"},"
+      "\"dpv\":{\"s\":\"8450\",\"u\":\"Wh\"},"
+      "\"dim\":{\"s\":\"3.2\",\"u\":\"kWh\"}}";
+  Snapshot snapshot;
+  HaParseInfo info;
+  check(ha_payload_parse(valid, strlen(valid), &snapshot, &info), "valid HA payload parses");
+  check_near(snapshot.power.pv.value, 3.42f, "W converts to kW");
+  check_near(snapshot.power.grid.value, -1.1f, "negative grid power retained");
+  check_near(snapshot.power.batt.value, -0.5f, "negative battery W retained and converted");
+  check_near(snapshot.power.home.value, 2.75f, "direct home mapping is preferred");
+  check(snapshot.power.ev.known && snapshot.power.ev.value == 0.0f,
+        "genuine mapped EV zero remains known");
+  check(snapshot.power.off_grid_known && !snapshot.power.off_grid,
+        "on-grid boolean remains known false");
+  check_near(snapshot.today.solar.value, 8.45f, "Wh converts to kWh");
+  check_near(snapshot.today.imported.value, 3.2f, "kWh remains kWh");
+  check(snapshot.today.present, "configured daily entity makes today present");
+  check(!snapshot.today.exported.known, "missing daily entity remains unknown");
+
+  const char* fallback =
+      "{\"v\":1,\"ts\":1788970000,"
+      "\"pp\":{\"s\":\"4\",\"u\":\"kW\"},"
+      "\"gp\":{\"s\":\"-1\",\"u\":\"kW\"},"
+      "\"bp\":{\"s\":\"1.5\",\"u\":\"kW\"}}";
+  check(ha_payload_parse(fallback, strlen(fallback), &snapshot, &info),
+        "payload without optional EV parses");
+  check(snapshot.power.ev.known && snapshot.power.ev.value == 0.0f,
+        "unconfigured optional EV explicitly means no EV leg");
+  check_near(snapshot.power.home.value, 1.5f, "home fallback uses Puck sign equation");
+
+  const char* bad_states =
+      "{\"v\":1,\"ts\":1788970000,"
+      "\"pp\":{\"s\":\"unknown\",\"u\":\"W\"},"
+      "\"gp\":{\"s\":\"unavailable\",\"u\":\"W\"},"
+      "\"bp\":{\"s\":\"not-a-number\",\"u\":\"kW\"},"
+      "\"ep\":{\"s\":\"unavailable\",\"u\":\"kW\"},"
+      "\"soc\":{\"s\":\"50\",\"u\":\"widgets\"},"
+      "\"hp\":{\"s\":\"0\",\"u\":\"kW\"}}";
+  check(ha_payload_parse(bad_states, strlen(bad_states), &snapshot, &info),
+        "individual bad HA states do not corrupt the payload");
+  check(!snapshot.power.pv.known && !snapshot.power.grid.known &&
+            !snapshot.power.batt.known,
+        "unknown unavailable and non-numeric remain unknown");
+  check(snapshot.power.home.known && snapshot.power.home.value == 0.0f,
+        "genuine direct home zero remains known");
+  check(!snapshot.power.ev.known, "configured unavailable EV remains unknown");
+  check(!snapshot.battery.soc_pct.known && info.unsupported_unit == 1,
+        "unsupported unit remains unknown and is reported");
+  check(info.unavailable == 3 && info.invalid_number == 1,
+        "unavailable and malformed states are diagnosed");
+
+  const char* ev_unavailable =
+      "{\"v\":1,\"ts\":1788970000,"
+      "\"pp\":{\"s\":\"4\",\"u\":\"kW\"},"
+      "\"gp\":{\"s\":\"0\",\"u\":\"kW\"},"
+      "\"bp\":{\"s\":\"1\",\"u\":\"kW\"},"
+      "\"ep\":{\"s\":\"unavailable\",\"u\":\"kW\"}}";
+  check(ha_payload_parse(ev_unavailable, strlen(ev_unavailable), &snapshot, &info),
+        "unavailable configured EV payload parses");
+  check(!snapshot.power.home.known,
+        "home is not derived when configured EV is unavailable");
+
+  const char* home_unavailable =
+      "{\"v\":1,\"ts\":1788970000,"
+      "\"pp\":{\"s\":\"4\",\"u\":\"kW\"},"
+      "\"gp\":{\"s\":\"0\",\"u\":\"kW\"},"
+      "\"bp\":{\"s\":\"1\",\"u\":\"kW\"},"
+      "\"hp\":{\"s\":\"unavailable\",\"u\":\"kW\"}}";
+  check(ha_payload_parse(home_unavailable, strlen(home_unavailable), &snapshot, &info),
+        "unavailable direct home payload parses");
+  check(!snapshot.power.home.known,
+        "configured direct home is not replaced by a derived value while unavailable");
+
+  snapshot.ts = 1234;
+  check(!ha_payload_parse("{bad", 4, &snapshot, &info), "malformed returned payload rejected");
+  check(snapshot.ts == 1234, "malformed payload preserves last good Snapshot");
+  check(!ha_payload_parse("{\"v\":1}", 7, &snapshot, &info),
+        "payload without timestamp rejected");
+
+  check(ha_http_status(200) == HaHttpStatus::Ok, "HTTP 200 accepted");
+  check(ha_http_status(401) == HaHttpStatus::Unauthorised, "HTTP 401 is unauthorised");
+  check(ha_http_status(403) == HaHttpStatus::Unauthorised, "HTTP 403 is unauthorised");
+  check(ha_http_status(500) == HaHttpStatus::HttpError, "other HTTP errors stay distinct");
 }
 
 float decode_one(uint8_t key, const uint16_t* words, size_t count) {
@@ -686,6 +841,9 @@ void test_screen_window() {
 int run_selftest() {
   s_failures = 0;
   s_checks = 0;
+  test_data_sources();
+  test_home_assistant_template();
+  test_home_assistant_payload();
   test_decode();
   test_plan();
   test_snapshot();

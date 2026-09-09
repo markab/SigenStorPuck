@@ -1,21 +1,15 @@
 // Persistent settings, in NVS.
 //
-// The server URL and the kiosk token live here and nowhere else — never in the
-// tree, never in a build flag (see CLAUDE.md).
+// Source credentials live here and in NVS only — never in the tree or a build
+// flag. Settings pages return only masked token suffixes.
 
 #pragma once
 
 #include <Arduino.h>
 
+#include "data_source.h"
+#include "home_assistant.h"
 #include "solar_forecast.h"
-
-// Where readings come from (docs/PLAN.md §D1). One firmware carries both paths;
-// this picks which one the poll task uses, and it takes effect on the next boot
-// like `orientation` does — changing it also changes how many screens exist.
-enum class DataSource : uint8_t {
-  Server = 0,  // SigenStor Display's /api/summary over HTTP(S)
-  Modbus = 1,  // straight to the plant over Modbus TCP, LAN only
-};
 
 enum class ModbusDeviceType : uint8_t {
   Inverter = 0,
@@ -63,6 +57,13 @@ struct Settings {
   String base_url;
   // The server's read-only kiosk token. 365-day, revocable.
   String token;
+
+  // Home Assistant REST API. Entity IDs are indexed by the semantic HaEntity
+  // enum; empty strings are genuinely unconfigured and no integration naming is
+  // assumed.
+  String ha_base_url;
+  String ha_token;
+  String ha_entities[HA_ENTITY_COUNT];
 
   // The gateway or inverter exposing Modbus TCP. Enable access for this device's
   // IP in the Sigen app, which whitelists by address.
@@ -167,6 +168,12 @@ const Settings& settings_get();
 // if NVS rejected the write.
 bool settings_set_server(const String& base_url, const String& token);
 
+// A blank token keeps the stored one. Entity mappings are replaced as a set, so
+// clearing a field removes that mapping.
+bool settings_set_home_assistant(const String& base_url, const String& token,
+                                 const String* entities, size_t count);
+bool settings_home_assistant_is_configured();
+
 // Which data source to use on the next boot.
 bool settings_set_source(DataSource source);
 
@@ -230,8 +237,8 @@ bool settings_set_check_updates(bool enabled);
 bool settings_set_solar(bool location_set, float latitude, float longitude, float system_loss,
                         float inverter_cap_kw, const PvArray* arrays, size_t count);
 
-// True once there is enough stored to be worth polling: a base URL and a token
-// on the server path, a host on the Modbus path.
+// True once the selected source has its required endpoint, credential and, for
+// Home Assistant, at least one entity mapping.
 bool settings_is_provisioned();
 
 // The token with all but its last four characters replaced. Everything that
@@ -239,7 +246,9 @@ bool settings_is_provisioned();
 // can tell one device's enrolment from another, and that is not a good reason to
 // put a working credential on a web page or in a serial log.
 String settings_token_masked();
+String settings_ha_token_masked();
 
 // Wipes the server URL and token. WiFi credentials are WiFiManager's and are not
 // touched here.
 void settings_forget_server();
+void settings_forget_home_assistant();

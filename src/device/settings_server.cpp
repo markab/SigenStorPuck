@@ -4,6 +4,7 @@
 
 #include "board_config.h"
 #include "enrol_url.h"
+#include "home_assistant_api.h"
 #include "modbus_api.h"
 #include "net.h"
 #include "poller.h"
@@ -36,6 +37,7 @@ const char* PAGE_STYLE =
     // colour. Uniform, which also separates the header block from the first section.
     "h2{font-size:1rem;margin-top:2.2rem;padding-top:1.2rem;"
     "border-top:1px solid #333;color:#9ab}"
+    "h3{font-size:.9rem;margin:1.4rem 0 .5rem;color:#ccc}"
     // `select` belongs here with the text fields. Left out, it falls back to
     // inline flow and lands on the same line as its own label, which is what put
     // the Type dropdown on top of the labels either side of it.
@@ -127,6 +129,23 @@ String escape_html(const String& text) {
   return out;
 }
 
+void append_poll_status(String* html, const PollStatus& status) {
+  *html += "<p class='hint gap'>Active source last poll: <code>";
+  *html += fetch_result_name(status.last_result);
+  *html += "</code>";
+  if (status.last_http_status != 0) {
+    *html += " (HTTP ";
+    *html += status.last_http_status;
+    *html += ")";
+  }
+  if (status.consecutive_failures > 0) {
+    *html += ", ";
+    *html += status.consecutive_failures;
+    *html += " consecutive failures";
+  }
+  *html += "</p>";
+}
+
 String page(const String& message, bool message_is_error) {
   const Settings& settings = settings_get();
   const PollStatus status = poller_status();
@@ -140,7 +159,7 @@ String page(const String& message, bool message_is_error) {
   const UpdateStatus update = updater_status();
 
   String html;
-  html.reserve(4096);
+  html.reserve(12288);
   html += "<!doctype html><html><head><meta charset=utf-8>";
   html += "<meta name=viewport content='width=device-width,initial-scale=1'>";
   // Come back for the answer, but only while there is one coming. Any other state
@@ -207,22 +226,72 @@ String page(const String& message, bool message_is_error) {
   html += "</code>.<br>Takes effect after a restart.</p>";
   html += "<button type=submit>Save</button></form>";
 
-  // Both sources are configurable whichever one is running, so the other can be
+  // All sources are configurable whichever one is running, so another can be
   // set up before switching to it — a device that had to be switched first and
   // configured second would spend the gap unable to reach anything.
   const bool modbus = settings.source == DataSource::Modbus;
+  const bool home_assistant = settings.source == DataSource::HomeAssistant;
+  const SourceCapabilities capabilities = data_source_capabilities(settings.source);
   html += "<h2>Data source</h2><form method=post action=/source>";
-  html += "<label class=opt><input type=radio name=src value=server";
-  html += modbus ? "" : " checked";
-  html += "> SigenStor Display server</label>";
+  html += "<label class=opt><input type=radio name=src value=ha";
+  html += home_assistant ? " checked" : "";
+  html += "> Home Assistant</label>";
   html += "<label class=opt><input type=radio name=src value=modbus";
   html += modbus ? " checked" : "";
   html += "> Plant over Modbus (LAN only)</label>";
+  html += "<label class=opt><input type=radio name=src value=server";
+  html += settings.source == DataSource::Server ? " checked" : "";
+  html += "> SigenStor Display server</label>";
   html += "<p class='hint gap'>Takes effect after a restart.</p>";
   html += "<button type=submit>Save</button></form>";
+  append_poll_status(&html, status);
+
+  html += "<h2>Home Assistant</h2>";
+  if (!home_assistant) {
+    html += "<p class=hint>Not in use: select Home Assistant above and restart to poll it.</p>";
+  }
+  html += "<form method=post action=/home-assistant>";
+  html += "<label for=haurl>Home Assistant base URL</label>";
+  html += "<input id=haurl name=haurl value='";
+  html += escape_html(settings.ha_base_url);
+  html += "' placeholder='http://homeassistant.local:8123'>";
+  html += "<label for=hatoken>Long-lived access token</label>";
+  html += "<input id=hatoken name=hatoken type=password autocomplete=new-password placeholder='currently ";
+  html += escape_html(settings_ha_token_masked());
+  html += "'>";
+  html += "<p class=hint>Leave blank to keep the stored token. The token is never shown here.</p>";
+  html += "<p class='hint gap'>At least one mapping is required; every individual mapping "
+          "is optional. Power must report W or kW; energy must report Wh or kWh.</p>";
+  for (size_t i = 0; i < HA_ENTITY_COUNT; ++i) {
+    if (i == static_cast<size_t>(HaEntity::PvPower)) {
+      html += "<h3>Live</h3>";
+    } else if (i == static_cast<size_t>(HaEntity::BatterySoc)) {
+      html += "<h3>Battery</h3>";
+    } else if (i == static_cast<size_t>(HaEntity::TodayPv)) {
+      html += "<h3>Today's energy</h3>";
+    }
+    const HaEntityDescriptor& entity = HA_ENTITIES[i];
+    html += "<label for=";
+    html += entity.form_name;
+    html += ">";
+    html += entity.label;
+    html += " entity</label><input id=";
+    html += entity.form_name;
+    html += " name=";
+    html += entity.form_name;
+    html += " maxlength=96 value='";
+    html += escape_html(settings.ha_entities[i]);
+    html += "' placeholder='sensor.example_";
+    html += entity.form_name + 3;
+    html += "'>";
+  }
+  html += "<button type=submit>Save</button></form>";
+  html += "<form method=post action=/ha-test><button class=secondary type=submit>";
+  html += "Test Home Assistant connection</button></form>";
+
   html += "<h2>Server</h2>";
-  if (modbus) {
-    html += "<p class=hint>Not in use: the data source is set to Modbus.</p>";
+  if (settings.source != DataSource::Server) {
+    html += "<p class=hint>Not in use: the data source is set to another source.</p>";
   }
   html += "<form method=post action=/save>";
   html += "<label for=enrol>Paste the enrolment URL from Admin &rarr; Kiosk devices</label>";
@@ -243,31 +312,12 @@ String page(const String& message, bool message_is_error) {
   html += "<p class=hint>Leave blank to keep the stored token.</p>";
   html += "<button type=submit>Save</button></form>";
 
-  // Between the two buttons, which is where it is wanted: pressing Test connection
-  // and then scrolling three sections down to find out what happened was the whole
-  // problem with keeping this in a Status section of its own.
-  html += "<p class='hint gap'>Last poll: <code>";
-  html += fetch_result_name(status.last_result);
-  html += "</code>";
-  if (status.last_http_status != 0) {
-    html += " (HTTP ";
-    html += status.last_http_status;
-    html += ")";
-  }
-  if (status.consecutive_failures > 0) {
-    // Only when there are any. A permanent "0" is noise directly under a button.
-    html += ", ";
-    html += status.consecutive_failures;
-    html += " consecutive failures";
-  }
-  html += "</p>";
-
   html += "<form method=post action=/test><button class=secondary type=submit>";
-  html += "Test connection</button></form>";
+  html += "Test server connection</button></form>";
 
   html += "<h2>Plant (Modbus)</h2>";
   if (!modbus) {
-    html += "<p class=hint>Not in use: the data source is set to the server.</p>";
+    html += "<p class=hint>Not in use: the data source is set to another source.</p>";
   }
   html += "<form method=post action=/modbus><div class=row>";
   // An IP address needs about twice the room a port or an address does.
@@ -323,8 +373,11 @@ String page(const String& message, bool message_is_error) {
   // as you flip the radio button reads as a fault in the page.
   html += "<h2>Solar forecast</h2>";
   if (!modbus) {
-    html += "<p class=hint>Not in use: with a server in the path the forecast comes "
-            "from it, computed by the same model that feeds the dashboard.</p>";
+    html += "<p class=hint>Not in use: ";
+    html += capabilities.forecast
+                ? "the selected source supplies its own forecast."
+                : "the selected source does not provide a forecast in this version.";
+    html += "</p>";
   } else {
     html += "<p class=hint>";
     if (!settings.solar_location_set) {
@@ -475,11 +528,11 @@ String page(const String& message, bool message_is_error) {
   html += "<table class=screens><tr><th></th><th>Show</th><th>Auto-cycle</th></tr>";
   for (PuckScreen screen : PUCK_SCREEN_ORDER) {
     const uint8_t i = static_cast<uint8_t>(screen);
-    const bool server_only = (PUCK_SERVER_ONLY_SCREENS & (1u << i)) != 0;
+    const bool needs_detail = (PUCK_DETAILED_SCREENS & (1u << i)) != 0;
     // A screen the source cannot fill is shown struck through rather than hidden,
     // so the list is the same shape whichever source is configured and nobody
     // wonders where two of them went.
-    const bool unavailable = modbus && server_only;
+    const bool unavailable = needs_detail && !capabilities.detailed_flows;
     html += "<tr><td>";
     html += unavailable ? "<s>" : "";
     html += SCREEN_NAME[i];
@@ -568,6 +621,8 @@ String page(const String& message, bool message_is_error) {
   html += "Restart Device</button></form>";
   html += "<form method=post action=/forget-server><button class=secondary type=submit>";
   html += "Forget server and token</button></form>";
+  html += "<form method=post action=/forget-ha><button class=secondary type=submit>";
+  html += "Forget Home Assistant token</button></form>";
   html += "<form method=post action=/forget-wifi><button class=secondary type=submit>";
   html += "Forget WiFi and restart</button></form>";
 
@@ -701,6 +756,122 @@ void handle_test() {
   send_page(message, true);
 }
 
+void handle_home_assistant() {
+  String base = s_server.arg("haurl");
+  base.trim();
+  const EnrolUrl parsed = enrol_url_parse(base.c_str());
+  if (!parsed.ok) {
+    send_page("The Home Assistant URL must start with http:// or https:// and include a host.",
+              true);
+    return;
+  }
+
+  String token = s_server.arg("hatoken");
+  token.trim();
+  if (token.isEmpty() && settings_get().ha_token.isEmpty()) {
+    send_page("No Home Assistant token is stored yet, so one is needed.", true);
+    return;
+  }
+
+  String entities[HA_ENTITY_COUNT];
+  size_t mapped = 0;
+  for (size_t i = 0; i < HA_ENTITY_COUNT; ++i) {
+    entities[i] = s_server.arg(HA_ENTITIES[i].form_name);
+    entities[i].trim();
+    if (!entities[i].isEmpty()) {
+      if (!ha_entity_id_valid(entities[i].c_str())) {
+        send_page(String("Invalid entity ID for ") + HA_ENTITIES[i].label +
+                      ". Use a lowercase domain.object_id entity ID.",
+                  true);
+        return;
+      }
+      ++mapped;
+    }
+  }
+  if (mapped == 0) {
+    send_page("Map at least one Home Assistant entity.", true);
+    return;
+  }
+  if (!settings_set_home_assistant(String(parsed.base), token, entities, HA_ENTITY_COUNT)) {
+    send_page("Could not store the Home Assistant settings.", true);
+    return;
+  }
+  poller_wake();
+  send_page(settings_get().source == DataSource::HomeAssistant
+                ? "Home Assistant settings saved."
+                : "Home Assistant settings saved. Select that data source and restart to poll it.",
+            false);
+}
+
+void handle_ha_test() {
+  Snapshot snapshot;
+  int status_code = 0;
+  HaParseInfo info;
+  const FetchResult result = home_assistant_api_fetch(&snapshot, &status_code, &info);
+
+  String message;
+  if (result == FetchResult::Ok) {
+    message = "Connected to Home Assistant. ";
+    message += info.available;
+    message += " of ";
+    message += info.configured;
+    message += " mapped entities returned usable values";
+    const size_t bad = info.unavailable + info.invalid_number + info.unsupported_unit;
+    if (bad > 0) {
+      message += "; ";
+      message += bad;
+      message += " remain unknown";
+      if (info.unsupported_unit > 0) {
+        message += " (";
+        message += info.unsupported_unit;
+        message += " unsupported unit";
+        message += info.unsupported_unit == 1 ? ")" : "s)";
+      }
+    }
+    message += ".";
+    send_page(message, false);
+    return;
+  }
+  switch (result) {
+    case FetchResult::Unauthorised:
+      message = "Home Assistant rejected the token (HTTP " + String(status_code) +
+                "). Create or enter a valid long-lived access token.";
+      break;
+    case FetchResult::EntityUnavailable:
+      message = "Home Assistant responded, but every mapped entity was unknown, unavailable, "
+                "non-numeric, or used an unsupported unit. Check the mappings and entity states.";
+      break;
+    case FetchResult::BadPayload:
+      message = "Home Assistant returned a malformed template response.";
+      break;
+    case FetchResult::ClockUnset:
+      message = "The clock is not set yet, so the Home Assistant HTTPS certificate cannot be "
+                "checked. Wait for NTP.";
+      break;
+    case FetchResult::TlsFailed:
+      message = "Could not establish Home Assistant HTTPS. Check that it is reachable and the "
+                "URL hostname matches a certificate trusted by the device.";
+      break;
+    case FetchResult::NotConfigured:
+      message = "Save a Home Assistant URL, token, and at least one entity mapping first.";
+      break;
+    case FetchResult::NoNetwork:
+      message = "The Puck is not connected to WiFi.";
+      break;
+    case FetchResult::ConnectFailed:
+      message = "Home Assistant is unreachable at the configured URL.";
+      break;
+    default:
+      message = String("Home Assistant test failed: ") + fetch_result_name(result);
+      if (status_code != 0) {
+        message += " (HTTP " + String(status_code) + ")";
+      }
+      message += ".";
+      break;
+  }
+  send_page(message, true);
+}
+
 void handle_display() {
   const long brightness = s_server.arg("bright").toInt();
   const long poll = s_server.arg("poll").toInt();
@@ -825,11 +996,16 @@ void handle_update_apply() {
 
 void handle_source() {
   const String choice = s_server.arg("src");
-  if (choice != "server" && choice != "modbus") {
+  if (choice != "server" && choice != "modbus" && choice != "ha") {
     send_page("Pick a data source.", true);
     return;
   }
-  const DataSource source = choice == "modbus" ? DataSource::Modbus : DataSource::Server;
+  DataSource source = DataSource::Server;
+  if (choice == "modbus") {
+    source = DataSource::Modbus;
+  } else if (choice == "ha") {
+    source = DataSource::HomeAssistant;
+  }
   if (!settings_set_source(source)) {
     send_page("Could not store the data source.", true);
     return;
@@ -916,7 +1092,7 @@ void handle_solar() {
   poller_wake();
   send_page(settings_get().source == DataSource::Modbus
                 ? "Solar settings saved."
-                : "Solar settings saved. They apply on the Modbus source only.",
+                : "Solar settings saved. The on-device forecast applies to Modbus only.",
             false);
 }
 
@@ -934,6 +1110,12 @@ void handle_forget_server() {
   send_page("Server details cleared.", false);
 }
 
+void handle_forget_home_assistant() {
+  settings_forget_home_assistant();
+  poller_wake();
+  send_page("Home Assistant token cleared. Entity mappings were kept.", false);
+}
+
 void handle_forget_wifi() {
   send_html(200, "<!doctype html><p>Forgetting WiFi and restarting. Join \"" +
                      String(net_setup_ap_name()) + "\" to set it up again.");
@@ -949,6 +1131,8 @@ void settings_server_begin() {
   }
   s_server.on("/", HTTP_GET, handle_root);
   s_server.on("/save", HTTP_POST, handle_save);
+  s_server.on("/home-assistant", HTTP_POST, handle_home_assistant);
+  s_server.on("/ha-test", HTTP_POST, handle_ha_test);
   s_server.on("/source", HTTP_POST, handle_source);
   s_server.on("/hostname", HTTP_POST, handle_hostname);
   s_server.on("/modbus", HTTP_POST, handle_modbus);
@@ -960,6 +1144,7 @@ void settings_server_begin() {
   s_server.on("/updates", HTTP_POST, handle_updates);
   s_server.on("/update-apply", HTTP_POST, handle_update_apply);
   s_server.on("/forget-server", HTTP_POST, handle_forget_server);
+  s_server.on("/forget-ha", HTTP_POST, handle_forget_home_assistant);
   s_server.on("/forget-wifi", HTTP_POST, handle_forget_wifi);
   s_server.onNotFound(handle_root);
   s_server.begin();

@@ -309,6 +309,7 @@ void modbus_to_snapshot(const ModbusValues& values, Snapshot* out) {
 
   // 0 = on grid, 1 or 2 = off grid. Unread is not "off grid".
   if (values.known[MB_PLANT_ON_OFF_GRID]) {
+    built.power.off_grid_known = true;
     built.power.off_grid = values.value[MB_PLANT_ON_OFF_GRID] != 0.0f;
   }
 

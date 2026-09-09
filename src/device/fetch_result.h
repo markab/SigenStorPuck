@@ -13,16 +13,17 @@
 
 enum class FetchResult {
   Ok,
-  NotConfigured,   // no server URL and token, or no Modbus host, stored yet
+  NotConfigured,   // selected source is missing its endpoint/credential/mappings
   NoNetwork,       // WiFi down
   ConnectFailed,   // could not reach the host
-  TlsFailed,       // server path: handshake refused — a real certificate problem
-  ClockUnset,      // server path: TLS cannot be validated because the clock is wrong
-  Unauthorised,    // server path: 401/403, the kiosk token has been revoked
-  HttpError,       // server path: any other HTTP status
-  BadPayload,      // server path: 200 but the JSON did not parse
+  TlsFailed,       // HTTP source: secure connection/handshake failed
+  ClockUnset,      // HTTP source: TLS cannot be validated because the clock is wrong
+  Unauthorised,    // HTTP source: 401/403, the configured token was rejected
+  HttpError,       // HTTP source: any other HTTP status
+  BadPayload,      // HTTP source: 200 but its compact response did not parse
   ProtocolError,   // Modbus path: an exception response, or a frame that made no sense
   ReadTimeout,     // Modbus path: connected, but the plant did not answer in time
+  EntityUnavailable,  // HA path: every configured entity was unknown/unavailable/bad
 };
 
 const char* fetch_result_name(FetchResult result);

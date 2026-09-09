@@ -42,7 +42,7 @@ lv_obj_t* s_ev = nullptr;
 lv_obj_t* s_from_solar = nullptr;
 lv_obj_t* s_from_grid = nullptr;
 bool s_live = true;
-bool s_with_server = true;
+bool s_with_breakdown = true;
 
 lv_obj_t* make_label(lv_obj_t* parent, const lv_font_t* font, uint32_t colour, lv_coord_t x,
                      lv_coord_t y) {
@@ -74,8 +74,8 @@ void set_figure(lv_obj_t* label, bool known, float kwh) {
 
 }  // namespace
 
-lv_obj_t* screen_load_create(lv_obj_t* parent, bool with_server) {
-  s_with_server = with_server;
+lv_obj_t* screen_load_create(lv_obj_t* parent, bool with_breakdown) {
+  s_with_breakdown = with_breakdown;
   s_root = lv_obj_create(parent);
   lv_obj_remove_style_all(s_root);
   lv_obj_set_size(s_root, PUCK_LCD_WIDTH, PUCK_LCD_HEIGHT);
@@ -123,7 +123,7 @@ lv_obj_t* screen_load_create(lv_obj_t* parent, bool with_server) {
   lv_label_set_text(s_rate, "--");
   lv_obj_center(s_rate);
 
-  if (!s_with_server) {
+  if (!s_with_breakdown) {
     // Nothing further to build: see the note on screen_load_create.
     return s_root;
   }
@@ -196,11 +196,11 @@ void screen_load_update(const Snapshot& snapshot) {
     lv_label_set_text(s_rate, text);
   }
 
-  if (!s_with_server) {
+  if (!s_with_breakdown) {
     return;  // the four figures were never built
   }
 
-  // The four figures come out of the day's flow split, which is server-only: the
+  // The four figures come out of the day's flow split, which requires detail:
   // plant's daily counters cannot say which source served the load.
   const bool split = have && f.solar_load.known;
   const float ev_day = (f.solar_ev.known ? f.solar_ev.value : 0.0f) +

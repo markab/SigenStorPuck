@@ -62,6 +62,9 @@ struct Snapshot {
     // derived here from pv - batt, which would disagree with the register
     // whenever losses, a DC charger or a second inverter are in play.
     MaybeFloat plant;
+    // Kept separate because false means on-grid, not "the entity/register was
+    // unavailable". Existing renderers can continue treating unknown as false.
+    bool off_grid_known = false;
     bool off_grid = false;
   };
   Power power;

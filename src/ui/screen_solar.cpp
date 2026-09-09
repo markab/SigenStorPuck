@@ -190,7 +190,7 @@ void screen_solar_update(const Snapshot& snapshot) {
   }
 
   // Today's generation. today.solar rather than a field of its own in the solar
-  // block, so this figure is the same one on both data sources — the Modbus path
+  // block, so this figure is the same one on every data source — the Modbus path
   // fills it from the pv_daily registers.
   const bool have_today = snapshot.valid && snapshot.today.present;
   const MaybeFloat generated = have_today ? snapshot.today.solar : MaybeFloat{};

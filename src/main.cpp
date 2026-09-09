@@ -106,7 +106,7 @@ void refresh_overlay(bool have_snapshot, const PollStatus& status) {
       break;
   }
 
-  const bool modbus = settings_get().source == DataSource::Modbus;
+  const DataSource source = settings_get().source;
 
   // One address per line rather than run together with "or": these are things to
   // be typed, and a reader picking the one their phone can resolve should be able
@@ -126,8 +126,13 @@ void refresh_overlay(bool have_snapshot, const PollStatus& status) {
     // Different instruction per source: there is no enrolment URL to paste when
     // the Puck talks to the plant directly, and telling someone to find one would
     // send them looking for something that does not exist.
-    detail = modbus ? "Scan, or open this and set the plant's IP address"
-                    : "Scan, or open this and paste the enrolment URL";
+    if (source == DataSource::Modbus) {
+      detail = "Scan, or open this and set the plant's IP address";
+    } else if (source == DataSource::HomeAssistant) {
+      detail = "Scan, or open this and configure Home Assistant";
+    } else {
+      detail = "Scan, or open this and paste the enrolment URL";
+    }
     set_overlay("Not configured", where.c_str(), detail.c_str(), true);
     return;
   }
@@ -135,7 +140,10 @@ void refresh_overlay(bool have_snapshot, const PollStatus& status) {
   // A revoked token is not a network fault and will never fix itself, so it says
   // so rather than sitting on "waiting for data" forever.
   if (status.last_result == FetchResult::Unauthorised) {
-    set_overlay("Re-enrol needed", where.c_str(), "The kiosk token was revoked. Re-enrol at");
+    set_overlay(source == DataSource::HomeAssistant ? "HA token rejected" : "Re-enrol needed",
+                where.c_str(), source == DataSource::HomeAssistant
+                                     ? "Check the Home Assistant token at"
+                                     : "The kiosk token was revoked. Re-enrol at");
     return;
   }
 
@@ -146,7 +154,13 @@ void refresh_overlay(bool have_snapshot, const PollStatus& status) {
       // Naming what is unreachable, because on the Modbus path "the server" is
       // not a thing that exists and the first place to look is the Sigen app's
       // Modbus whitelist.
-      detail = modbus ? String("Cannot reach the plant\n") : String("Cannot reach the server\n");
+      if (source == DataSource::Modbus) {
+        detail = "Cannot reach the plant\n";
+      } else if (source == DataSource::HomeAssistant) {
+        detail = "Cannot read Home Assistant\n";
+      } else {
+        detail = "Cannot reach the server\n";
+      }
       detail += fetch_result_name(status.last_result);
       set_overlay("No data", nullptr, detail.c_str());
     } else {
@@ -299,14 +313,15 @@ void setup() {
   // are built once, so the masks and the data source both apply on the next boot
   // — same as `orientation`.
   UiConfig ui_config;
-  ui_config.with_server_screens = settings_get().source != DataSource::Modbus;
+  const SourceCapabilities source_capabilities =
+      data_source_capabilities(settings_get().source);
+  ui_config.with_detailed_screens = source_capabilities.detailed_flows;
   ui_config.visible = settings_get().screens_visible;
   ui_config.rotate = settings_get().screens_rotate;
   ui_create(lv_scr_act(), ui_config);
-  // No dated API behind the Modbus source — it has daily counters and no history
-  // to step into — so the buttons refuse rather than moving an indicator over
-  // figures that will never change.
-  ui_set_day_stepping(ui_config.with_server_screens);
+  // Sources without a dated API have no history to step into, so the buttons
+  // refuse rather than moving an indicator over figures that will never change.
+  ui_set_day_stepping(source_capabilities.historical_days);
   display_set_brightness(settings_get().brightness);
   // A named boot screen rather than a bare word: on a device that takes a couple
   // of seconds to find WiFi, this is the only proof it is alive.

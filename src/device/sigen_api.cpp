@@ -72,6 +72,8 @@ const char* fetch_result_name(FetchResult result) {
       return "modbus error";
     case FetchResult::ReadTimeout:
       return "read timeout";
+    case FetchResult::EntityUnavailable:
+      return "entities unavailable";
   }
   return "unknown";
 }
