@@ -54,6 +54,7 @@ SourceCapabilities data_source_capabilities(DataSource source) {
       capabilities.forecast = true;
       break;
     case DataSource::HomeAssistant:
+      capabilities.forecast = true;
       break;
   }
   return capabilities;

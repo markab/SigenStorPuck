@@ -34,12 +34,12 @@ built in and ready for when it is, but until then those parts are unavailable.
 |---|:--:|:--:|:--:|
 | **Power** screen | ● | ● | ● |
 | **Battery** screen | ● | ● | ● |
-| **Solar** screen | ◐ actual generation; no forecast | ● | ● |
+| **Solar** screen | ◐ by default; ● with forecast configured | ● | ● |
 | **Load** screen | ◐ headline and live draw only | ◐ headline and live draw only | ● |
 | **Flows** screen | — | — | ● |
 | **Cost** screen | — | — | ● |
 | **Settings** screen | ● | ● | ● |
-| Solar forecast | — | ● calculated on the Puck | ● from the server |
+| Solar forecast | ● disabled, Puck, or HA entities | ● calculated on the Puck | ● from the server |
 | Daily charts | ◐ from when the Puck was switched on | ◐ from when the Puck was switched on | ● the whole day, and after a restart |
 | Step back through past days | — | — | ● up to 7 days |
 | Tariff rates and savings | — | — | ● |
@@ -63,7 +63,7 @@ Which screens appear at all is up to you — see **Screens** under Settings.
 | <img src="docs/img/power.png" width="300" alt="Power flow"> | <img src="docs/img/battery.png" width="300" alt="Battery"> |
 | **Power** — what is happening right now. Solar at the top, then clockwise: battery, home, EV, grid, around the plant in the middle. Dots run along each leg in the direction the power is going, faster when there is more of it. The ring is your state of charge.<br><br>*Works on all three sources when the corresponding values are available.* | **Battery** — charge level around the bezel, capacity in kWh, and how long until it is full or empty. Below that: charged and discharged today, battery health, and temperature.<br><br>*Works on all three sources. On Modbus, temperature and the daily totals need an inverter added under Plant; on HA, each figure needs its mapping.* |
 | <img src="docs/img/solar.png" width="300" alt="Solar"> | <img src="docs/img/load.png" width="300" alt="Load"> |
-| **Solar** — generation so far today, with the ring showing progress against the day's forecast. Then the forecast total, how much is still to come, how you are doing against it, and the expected peak.<br><br>*Full on Modbus and Server.* Home Assistant V1 shows actual generation but does not fetch a forecast. | **Load** — everything used today, with what is being drawn right now.<br><br>*Partial on HA and Modbus.* The headline total, live figure and locally recorded curve work. The four source-breakdown figures need a **SigenStorDisplay Server**. |
+| **Solar** — generation so far today, with the ring showing progress against the day's forecast. Then the forecast total, how much is still to come, how you are doing against it, and the expected peak.<br><br>*Works on all three sources.* Home Assistant can use no forecast, calculate one on the Puck, or map HA forecast entities. | **Load** — everything used today, with what is being drawn right now.<br><br>*Partial on HA and Modbus.* The headline total, live figure and locally recorded curve work. The four source-breakdown figures need a **SigenStorDisplay Server**. |
 | <img src="docs/img/flows.png" width="300" alt="Energy flows"> | <img src="docs/img/cost.png" width="300" alt="Cost"> |
 | **Flows** — where today's energy came from and where it went. Sources down the left, destinations down the right, one ribbon per path. The ring is how self-sufficient you have been.<br><br>**SigenStorDisplay Server Only.** | **Cost** — what you have saved today, the unit rate you are paying right now, and the next few tariff slots coloured against it.<br><br>**SigenStorDisplay Server Only.** |
 | <img src="docs/img/settings.png" width="300" alt="Settings"> | |
@@ -151,7 +151,10 @@ removes the Puck's access.
 4. Map the entity IDs your installation provides. Grey Sigenergy entity IDs shown in the
    fields are example placeholders only: they are not configured or saved unless typed,
    and other Home Assistant integrations should use their own entity IDs.
-5. Save, use **Test Home Assistant connection**, then restart the Puck.
+5. Optionally, choose whether solar forecasting is disabled, calculated on the Puck, or
+   read from semantic Home Assistant entities. The default is disabled, preserving
+   existing HA behaviour.
+6. Save, use **Test Home Assistant connection**, then restart the Puck.
 
 The Puck sends one [`POST /api/template`](https://developers.home-assistant.io/docs/api/rest/#post-apitemplate)
 per live poll. Home Assistant renders only the
@@ -224,6 +227,7 @@ provides it. SOC and today's totals enable their corresponding figures.
 | Battery capacity | Wh or kWh |
 | Battery temperature | °C (`°C`, `C`, or `degC`) |
 | Today's six energy totals | PV generation, load, import, export, battery charge and discharge, each in Wh or kWh |
+| Solar forecast | Today's total and remaining energy in Wh or kWh, actual-vs-forecast in `%`, and peak power in W or kW |
 
 Every mapping can be overridden or cleared individually. If home/load power is not
 mapped, the Puck derives it only when PV, grid, battery, and EV are all known:
@@ -267,9 +271,17 @@ certificate chains to a CA trusted by the device.
 
 ### Solar forecast
 
-*Used on the Modbus source only.* With a **SigenStorDisplay Server** the forecast comes
-from the server. Home Assistant V1 does not fetch a forecast, so these settings are also
-ignored there.
+Direct Modbus always calculates the forecast on the Puck. With a
+**SigenStorDisplay Server** it comes from the server. Home Assistant users explicitly
+choose **Disabled**, **Calculate on Puck**, or **Home Assistant entities**; missing settings
+from an older installation default safely to Disabled.
+
+For **Calculate on Puck**, the location and roof fields below use the existing cached
+Open-Meteo model without changing HA live acquisition or contacting Modbus. For
+**Home Assistant entities**, the semantic mappings may point to any suitable HA
+integration. Today's total forecast is required to make the Solar screen meaningful;
+remaining energy, actual-vs-forecast percentage, and peak power are optional. They are
+included in the same compact HA template request as live data.
 
 <table>
 <tr><th width="32%">Option</th><th>What it does</th></tr>
@@ -383,9 +395,8 @@ gestures, solar forecast model and screen-off window.
 
 ## Home Assistant V1 scope
 
-Home Assistant provides live power, battery values and configured today's totals. Live
-polls feed the existing local history rings and charts. Recorder backfill, previous-day
-browsing, detailed source-to-sink flows, tariffs, costs/savings and solar forecasts are
-deliberately not approximated in V1. Those features remain available only from the
-sources shown in the capability table above and are natural future extensions of the
-HA source module.
+Home Assistant provides live power, battery values, configured today's totals and an
+optional solar forecast from HA entities or the Puck's native model. Live polls feed the
+existing local history rings and charts. Recorder backfill, previous-day browsing,
+detailed source-to-sink flows, tariffs and costs/savings remain deliberately unimplemented;
+forecast support does not add historical chart backfill.

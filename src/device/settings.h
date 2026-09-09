@@ -10,6 +10,7 @@
 #include "data_source.h"
 #include "home_assistant.h"
 #include "solar_forecast.h"
+#include "solar_source.h"
 
 enum class ModbusDeviceType : uint8_t {
   Inverter = 0,
@@ -64,6 +65,9 @@ struct Settings {
   String ha_base_url;
   String ha_token;
   String ha_entities[HA_ENTITY_COUNT];
+  // Absent on older NVS, where Disabled preserves HA's original no-forecast
+  // behaviour. Modbus and Server ignore this HA-specific preference.
+  SolarForecastSource ha_solar_forecast_source = SolarForecastSource::Disabled;
 
   // The gateway or inverter exposing Modbus TCP. Enable access for this device's
   // IP in the Sigen app, which whitelists by address.
@@ -122,12 +126,12 @@ struct Settings {
   uint8_t screens_visible = 0xFF;
   uint8_t screens_rotate = 0xFF;
 
-  // --- native PV forecast, Modbus path only (docs/PLAN.md §D4) --------------
+  // --- native PV forecast (docs/PLAN.md §D4) --------------------------------
   //
-  // Unused when the source is Server: there the forecast arrives in
-  // /api/summary's `solar` block, already computed by the model that feeds the
-  // dashboard, and a second opinion from the same coordinates would only be a
-  // number that disagrees with the website.
+  // Used by direct Modbus and optionally by Home Assistant. With Server the
+  // forecast arrives in /api/summary's `solar` block, already computed by the
+  // model that feeds the dashboard, and a second opinion from the same
+  // coordinates would only be a number that disagrees with the website.
   //
   // Kept as a flag rather than inferred from the coordinates being non-zero.
   // 0,0 is in the Gulf of Guinea and nobody's roof is there, but "we assumed you
@@ -171,7 +175,8 @@ bool settings_set_server(const String& base_url, const String& token);
 // A blank token keeps the stored one. Entity mappings are replaced as a set, so
 // clearing a field removes that mapping.
 bool settings_set_home_assistant(const String& base_url, const String& token,
-                                 const String* entities, size_t count);
+                                 const String* entities, size_t count,
+                                 SolarForecastSource forecast_source);
 bool settings_home_assistant_is_configured();
 
 // Which data source to use on the next boot.

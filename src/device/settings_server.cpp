@@ -37,8 +37,19 @@ const char* PAGE_STYLE =
     // colour. Uniform, which also separates the header block from the first section.
     "h2{font-size:1rem;margin-top:2.2rem;padding-top:1.2rem;"
     "border-top:1px solid #333;color:#9ab}"
-    "details.source>summary{font-size:1rem;font-weight:600;margin-top:2.2rem;padding-top:1.2rem;"
-    "border-top:1px solid #333;color:#9ab;cursor:pointer}"
+    // Keep the native disclosure semantics, but make the whole row read and feel
+    // like the control. Safari uses its own marker pseudo-element; Firefox uses
+    // ::marker, so both are suppressed before drawing one clear chevron.
+    "details.source>summary{font-size:1rem;font-weight:600;margin-top:2.2rem;"
+    "padding:.65rem .25rem;min-height:44px;box-sizing:border-box;border-top:1px solid #333;"
+    "color:#9ab;cursor:pointer;display:flex;align-items:center;justify-content:space-between;"
+    "list-style:none;touch-action:manipulation}"
+    "details.source>summary::-webkit-details-marker{display:none}"
+    "details.source>summary::marker{content:''}"
+    "details.source>summary::after{content:'\\203a';font-size:1.5rem;line-height:1;"
+    "width:1.5rem;text-align:center;transition:transform .15s ease}"
+    "details.source[open]>summary::after{transform:rotate(90deg)}"
+    "details.source>summary:focus-visible{outline:2px solid #0a84ff;outline-offset:2px}"
     "h3{font-size:.9rem;margin:1.4rem 0 .5rem;color:#ccc}"
     // `select` belongs here with the text fields. Left out, it falls back to
     // inline flow and lands on the same line as its own label, which is what put
@@ -252,6 +263,8 @@ String page(const String& message, bool message_is_error) {
   const bool modbus = settings.source == DataSource::Modbus;
   const bool home_assistant = settings.source == DataSource::HomeAssistant;
   const bool server = settings.source == DataSource::Server;
+  const SolarForecastSource ha_forecast_source = settings.ha_solar_forecast_source;
+  const bool puck_forecast = solar_forecast_uses_puck(settings.source, ha_forecast_source);
   const SourceCapabilities capabilities = data_source_capabilities(settings.source);
   html += "<h2>Data source</h2><form method=post action=/source>";
   html += "<label class=opt><input type=radio name=src value=ha";
@@ -284,8 +297,9 @@ String page(const String& message, bool message_is_error) {
   html += "<p class='hint gap'>Grey placeholders are examples only. Enter the entity IDs "
           "exposed by your own Home Assistant integration; mappings are vendor-neutral and "
           "fully configurable.</p>";
-  html += "<p class=hint>At least one mapping is required; every individual mapping is "
-          "optional. Power must report W or kW; energy must report Wh or kWh.</p>";
+  html += "<p class=hint>At least one live, battery, or today's energy mapping is required; "
+          "each individual mapping is optional. Power must report W or kW; energy must "
+          "report Wh or kWh.</p>";
   for (size_t i = 0; i < HA_ENTITY_COUNT; ++i) {
     if (i == static_cast<size_t>(HaEntity::PvPower)) {
       html += "<h3>Live</h3>";
@@ -293,6 +307,26 @@ String page(const String& message, bool message_is_error) {
       html += "<h3>Battery</h3>";
     } else if (i == static_cast<size_t>(HaEntity::TodayPv)) {
       html += "<h3>Today's energy</h3>";
+    } else if (i == static_cast<size_t>(HaEntity::ForecastToday)) {
+      html += "<h3>Solar forecast</h3>";
+      html += "<p class=hint>Choose one source for the existing Solar screen. This does not "
+              "change where live power data comes from.</p>";
+      html += "<label class=opt><input type=radio name=haforecast value=disabled";
+      html += ha_forecast_source == SolarForecastSource::Disabled ? " checked" : "";
+      html += "> Disabled</label>";
+      html += "<label class=opt><input type=radio name=haforecast value=puck";
+      html += ha_forecast_source == SolarForecastSource::Puck ? " checked" : "";
+      html += "> Calculate on Puck</label>";
+      html += "<label class=opt><input type=radio name=haforecast value=ha";
+      html += ha_forecast_source == SolarForecastSource::HomeAssistant ? " checked" : "";
+      html += "> Home Assistant entities</label>";
+      html += "<p class='hint gap'>For Calculate on Puck, save this form and configure the "
+              "location and roof arrays in Solar forecast below. Home Assistant remains the "
+              "only live plant data source.</p>";
+      html += "<h3>Home Assistant forecast entities</h3>";
+      html += "<p class=hint>Used only when Home Assistant entities is selected. Today "
+              "forecast is required; the other three mappings are optional. Energy must "
+              "report Wh or kWh, peak power W or kW, and percentage %.</p>";
     }
     const HaEntityDescriptor& entity = HA_ENTITIES[i];
     html += "<label for=";
@@ -397,15 +431,23 @@ String page(const String& message, bool message_is_error) {
   //
   // Still available for preconfiguration, but collapsed when the selected source
   // cannot use it so its many inputs do not interrupt that source's tab sequence.
-  append_source_section_start(&html, "Solar forecast", modbus);
-  if (!modbus) {
+  append_source_section_start(&html, "Solar forecast", puck_forecast);
+  if (!puck_forecast) {
     html += "<p class=hint>Not in use: ";
-    html += capabilities.forecast
-                ? "the selected source supplies its own forecast."
-                : "the selected source does not provide a forecast in this version.";
+    if (server) {
+      html += "the selected source supplies its own forecast.";
+    } else if (ha_forecast_source == SolarForecastSource::HomeAssistant) {
+      html += "Home Assistant forecast entities are selected.";
+    } else {
+      html += "solar forecast is disabled for Home Assistant.";
+    }
     html += "</p>";
   } else {
     html += "<p class=hint>";
+    if (home_assistant) {
+      html += "Calculate on Puck is selected. These fields describe the roof; live plant "
+              "data still comes only from Home Assistant.<br>";
+    }
     if (!settings.solar_location_set) {
       html += "Leave the location blank for no forecast — the solar screen then hides "
               "its ring rather than showing an empty one.";
@@ -475,7 +517,7 @@ String page(const String& message, bool message_is_error) {
     html += "></div></div>";
   }
   html += "<button type=submit>Save</button></form>";
-  append_source_section_end(&html, modbus);
+  append_source_section_end(&html, puck_forecast);
 
   html += "<h2>Display</h2><form method=post action=/display><div class=row>";
   html += "<div><label for=bright>Brightness (0-255)</label><input id=bright name=bright type=number min=10 max=255 value=";
@@ -800,6 +842,17 @@ void handle_home_assistant() {
     return;
   }
 
+  SolarForecastSource forecast_source = SolarForecastSource::Disabled;
+  const String forecast_choice = s_server.arg("haforecast");
+  if (forecast_choice == "puck") {
+    forecast_source = SolarForecastSource::Puck;
+  } else if (forecast_choice == "ha") {
+    forecast_source = SolarForecastSource::HomeAssistant;
+  } else if (forecast_choice != "disabled") {
+    send_page("Pick a Home Assistant solar forecast source.", true);
+    return;
+  }
+
   String entities[HA_ENTITY_COUNT];
   size_t mapped = 0;
   for (size_t i = 0; i < HA_ENTITY_COUNT; ++i) {
@@ -812,14 +865,17 @@ void handle_home_assistant() {
                   true);
         return;
       }
-      ++mapped;
+      if (i < HA_FORECAST_ENTITY_FIRST) {
+        ++mapped;
+      }
     }
   }
   if (mapped == 0) {
-    send_page("Map at least one Home Assistant entity.", true);
+    send_page("Map at least one Home Assistant live, battery or daily entity.", true);
     return;
   }
-  if (!settings_set_home_assistant(String(parsed.base), token, entities, HA_ENTITY_COUNT)) {
+  if (!settings_set_home_assistant(String(parsed.base), token, entities, HA_ENTITY_COUNT,
+                                   forecast_source)) {
     send_page("Could not store the Home Assistant settings.", true);
     return;
   }
@@ -1117,9 +1173,10 @@ void handle_solar() {
   // The poll task notices the change on its own and refetches or recomputes as
   // the edit warrants; waking it just means not waiting a poll interval to see it.
   poller_wake();
-  send_page(settings_get().source == DataSource::Modbus
+  send_page(solar_forecast_uses_puck(settings_get().source,
+                                     settings_get().ha_solar_forecast_source)
                 ? "Solar settings saved."
-                : "Solar settings saved. The on-device forecast applies to Modbus only.",
+                : "Solar settings saved. They are not used by the selected forecast source.",
             false);
 }
 

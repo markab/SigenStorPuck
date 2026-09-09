@@ -42,10 +42,9 @@ struct Snapshot {
   uint32_t age_s = 0;    // seconds since the plant reading was taken
   int32_t alarms = 0;    // count of active alarms
 
-  // Minutes east of UTC. Optional, and absent from /api/summary today — the
-  // server knows the timezone but does not send it (see the tariff-slot note in
-  // CLAUDE.md). Parsed anyway so it starts working the day it is added, and
-  // filled from plant_system_timezone (30002) on the Modbus path.
+  // Minutes east of UTC. Optional: HA supplies it in the compact template,
+  // Modbus reads plant_system_timezone (30002), and the native forecast can
+  // replace either with the offset derived for its configured location.
   //
   // What needs it: anchoring the day charts to local midnight. Without it they
   // fall back to a rolling 24 h window, which spans two part-days.
@@ -125,15 +124,15 @@ struct Snapshot {
   };
   Today today;
 
-  // Today's PV forecast, from the server's Open-Meteo model.
+  // Today's PV forecast, supplied by Server, HA entities, or the Puck's native
+  // Open-Meteo model.
   //
-  // No `generated` field: that is `today.solar`, which the Modbus path fills
-  // from the pv_daily registers. One number that cannot disagree with itself,
-  // and the screen's headline figure works on both data sources.
+  // No `generated` field: that is `today.solar`, filled by the source's daily
+  // generation value. One number that cannot disagree with itself, and the
+  // screen's headline figure works on every source.
   //
-  // `configured` is false when the server has no location or no array with a
-  // kWp set, and on the Modbus source there is no server to ask — so it is also
-  // false for the whole of §D. Same shape as Cost, for the same reason: a client
+  // `configured` is false when the selected forecast source is disabled or
+  // lacks its minimum input. Same shape as Cost, for the same reason: a client
   // should prompt rather than render a misleading zero.
   struct Solar {
     bool configured = false;

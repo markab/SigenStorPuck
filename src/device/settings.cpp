@@ -13,6 +13,7 @@ constexpr const char* KEY_BASE_URL = "base_url";
 constexpr const char* KEY_TOKEN = "token";
 constexpr const char* KEY_HA_URL = "ha_url";
 constexpr const char* KEY_HA_TOKEN = "ha_token";
+constexpr const char* KEY_HA_SOLAR_SOURCE = "ha_sol_src";
 constexpr const char* KEY_POLL = "poll_s";
 constexpr const char* KEY_BRIGHTNESS = "bright";
 constexpr const char* KEY_DIM = "dim_s";
@@ -74,6 +75,10 @@ void settings_begin() {
     if (prefs.isKey(HA_ENTITIES[i].nvs_key)) {
       s_settings.ha_entities[i] = prefs.getString(HA_ENTITIES[i].nvs_key, "");
     }
+  }
+  if (prefs.isKey(KEY_HA_SOLAR_SOURCE)) {
+    s_settings.ha_solar_forecast_source =
+        solar_forecast_source_from_stored(prefs.getUChar(KEY_HA_SOLAR_SOURCE, 0));
   }
   s_settings.poll_interval_s = prefs.getUInt(KEY_POLL, s_settings.poll_interval_s);
   s_settings.brightness = prefs.getUChar(KEY_BRIGHTNESS, s_settings.brightness);
@@ -144,7 +149,8 @@ void settings_begin() {
                   s_settings.token.isEmpty() ? "(unset)" : settings_token_masked().c_str(),
                   s_settings.poll_interval_s);
   } else {
-    Serial.printf("[settings] source=home assistant server=%s token=%s mappings=%u poll=%us\n",
+    Serial.printf("[settings] source=home assistant server=%s token=%s mappings=%u "
+                  "forecast=%s poll=%us\n",
                   s_settings.ha_base_url.isEmpty() ? "(unset)" : s_settings.ha_base_url.c_str(),
                   s_settings.ha_token.isEmpty() ? "(unset)" : "stored",
                   static_cast<unsigned>([]() {
@@ -153,7 +159,7 @@ void settings_begin() {
                       count += entity.isEmpty() ? 0 : 1;
                     }
                     return count;
-                  }()),
+                  }()), solar_forecast_source_name(s_settings.ha_solar_forecast_source),
                   s_settings.poll_interval_s);
   }
 }
@@ -183,7 +189,8 @@ bool settings_set_server(const String& base_url, const String& token) {
 }
 
 bool settings_set_home_assistant(const String& base_url, const String& token,
-                                 const String* entities, size_t count) {
+                                 const String* entities, size_t count,
+                                 SolarForecastSource forecast_source) {
   if (base_url.isEmpty() || entities == nullptr || count != HA_ENTITY_COUNT) {
     return false;
   }
@@ -201,6 +208,7 @@ bool settings_set_home_assistant(const String& base_url, const String& token,
   if (!token.isEmpty()) {
     ok = prefs.putString(KEY_HA_TOKEN, token) > 0 && ok;
   }
+  ok = prefs.putUChar(KEY_HA_SOLAR_SOURCE, static_cast<uint8_t>(forecast_source)) > 0 && ok;
   for (size_t i = 0; i < count; ++i) {
     if (entities[i].isEmpty()) {
       if (prefs.isKey(HA_ENTITIES[i].nvs_key)) {
@@ -222,13 +230,14 @@ bool settings_set_home_assistant(const String& base_url, const String& token,
   for (size_t i = 0; i < count; ++i) {
     s_settings.ha_entities[i] = entities[i];
   }
+  s_settings.ha_solar_forecast_source = forecast_source;
   size_t mapped = 0;
   for (const String& entity : s_settings.ha_entities) {
     mapped += entity.isEmpty() ? 0 : 1;
   }
-  Serial.printf("[settings] home assistant set to %s (token stored, %u mappings)\n",
-                base_url.c_str(),
-                static_cast<unsigned>(mapped));
+  Serial.printf("[settings] home assistant set to %s (token stored, %u mappings, forecast %s)\n",
+                base_url.c_str(), static_cast<unsigned>(mapped),
+                solar_forecast_source_name(forecast_source));
   return true;
 }
 
@@ -236,8 +245,10 @@ bool settings_home_assistant_is_configured() {
   if (s_settings.ha_base_url.isEmpty() || s_settings.ha_token.isEmpty()) {
     return false;
   }
-  for (const String& entity : s_settings.ha_entities) {
-    if (!entity.isEmpty()) {
+  // Forecast entities cannot provision the main data source by themselves. At
+  // least one live/battery/daily mapping must still produce the HA Snapshot.
+  for (size_t i = 0; i < HA_FORECAST_ENTITY_FIRST; ++i) {
+    if (!s_settings.ha_entities[i].isEmpty()) {
       return true;
     }
   }

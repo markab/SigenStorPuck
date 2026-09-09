@@ -98,8 +98,8 @@ bool snapshot_parse(const char* json, size_t length, Snapshot* out) {
   }
 
   // Absent entirely from a server older than 0.15.0, which leaves configured
-  // false and every figure unknown — exactly the state the Modbus source is in
-  // permanently, so the screen needs no separate "old server" path.
+  // false and every figure unknown — the same honest shape used by any source
+  // whose forecast is disabled or incomplete.
   JsonVariantConst solar = doc["solar"];
   parsed.solar.configured = solar["configured"] | false;
   parsed.solar.forecast_kwh = maybe_float(solar["forecast"]);

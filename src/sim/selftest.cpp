@@ -21,6 +21,7 @@
 #include "modbus_regs.h"
 #include "screen_window.h"
 #include "solar_forecast.h"
+#include "solar_source.h"
 
 namespace {
 
@@ -81,10 +82,40 @@ void test_data_sources() {
   check(modbus.live && modbus.daily_totals && modbus.local_history && modbus.forecast &&
             !modbus.historical_days && !modbus.detailed_flows,
         "modbus capabilities are local/live");
-  check(ha.live && ha.daily_totals && ha.local_history && !ha.forecast &&
+  check(ha.live && ha.daily_totals && ha.local_history && ha.forecast &&
             !ha.historical_days && !ha.full_day_series && !ha.detailed_flows &&
             !ha.tariff_cost,
-        "HA V1 capabilities are honest");
+        "HA capabilities include optional forecast but not history or detail");
+
+  check(static_cast<uint8_t>(SolarForecastSource::Disabled) == 0,
+        "disabled forecast source persists as 0");
+  check(static_cast<uint8_t>(SolarForecastSource::Puck) == 1,
+        "Puck forecast source persists as 1");
+  check(static_cast<uint8_t>(SolarForecastSource::HomeAssistant) == 2,
+        "HA forecast source persists as 2");
+  check(solar_forecast_source_from_stored(0) == SolarForecastSource::Disabled,
+        "stored disabled forecast source decodes");
+  check(solar_forecast_source_from_stored(1) == SolarForecastSource::Puck,
+        "stored Puck forecast source decodes");
+  check(solar_forecast_source_from_stored(2) == SolarForecastSource::HomeAssistant,
+        "stored HA forecast source decodes");
+  check(solar_forecast_source_from_stored(99) == SolarForecastSource::Disabled,
+        "missing or unknown forecast setting preserves disabled behaviour");
+  check(solar_forecast_uses_puck(DataSource::Modbus, SolarForecastSource::Disabled),
+        "Modbus keeps its native forecast regardless of the HA preference");
+  check(!solar_forecast_uses_puck(DataSource::Server, SolarForecastSource::Puck),
+        "Server forecast is never replaced by the Puck cache");
+  check(solar_forecast_uses_puck(DataSource::HomeAssistant, SolarForecastSource::Puck),
+        "HA can select the native forecast cache");
+  check(!solar_forecast_uses_puck(DataSource::HomeAssistant,
+                                  SolarForecastSource::HomeAssistant),
+        "HA entity forecast does not invoke the native forecast");
+  check(solar_forecast_uses_home_assistant(DataSource::HomeAssistant,
+                                           SolarForecastSource::HomeAssistant),
+        "HA entity forecast is selected only for HA acquisition");
+  check(!solar_forecast_uses_home_assistant(DataSource::Modbus,
+                                            SolarForecastSource::HomeAssistant),
+        "HA forecast preference cannot change Modbus acquisition");
 }
 
 void test_home_assistant_template() {
@@ -107,6 +138,23 @@ void test_home_assistant_template() {
   check(strstr(output, "\"gp\"") == nullptr, "unconfigured grid omitted");
   check(strstr(output, "Authorization") == nullptr, "template contains no credentials");
 
+  entities[static_cast<size_t>(HaEntity::ForecastToday)] =
+      "sensor.solar_forecast_today";
+  check(ha_template_build(entities, output, sizeof(output)),
+        "live and forecast mappings share one template");
+  check(strstr(output, "states('sensor.solar_forecast_today')") != nullptr,
+        "template includes configured forecast entity");
+
+  char longest_id[HA_ENTITY_ID_MAX + 1];
+  memcpy(longest_id, "sensor.", 7);
+  memset(longest_id + 7, 'a', HA_ENTITY_ID_MAX - 7);
+  longest_id[HA_ENTITY_ID_MAX] = '\0';
+  for (size_t i = 0; i < HA_ENTITY_COUNT; ++i) {
+    entities[i] = longest_id;
+  }
+  check(ha_template_build(entities, output, sizeof(output)),
+        "template buffer holds every maximum-length mapping");
+
   char too_small[32];
   check(!ha_template_build(entities, too_small, sizeof(too_small)),
         "short template buffer is rejected");
@@ -117,7 +165,8 @@ void test_home_assistant_settings_metadata() {
   const char* expected_form_order[HA_ENTITY_COUNT] = {
       "ha_pp",  "ha_gp",  "ha_bp",  "ha_hp",  "ha_ep",  "ha_xp",
       "ha_og",  "ha_soc", "ha_soh", "ha_cap", "ha_tmp", "ha_dpv",
-      "ha_dld", "ha_dim", "ha_dex", "ha_dch", "ha_dds",
+      "ha_dld", "ha_dim", "ha_dex", "ha_dch", "ha_dds", "ha_sft",
+      "ha_sfr", "ha_sfp", "ha_sfk",
   };
   const char* expected_placeholders[HA_ENTITY_COUNT] = {
       "sensor.sigen_plant_pv_power",
@@ -137,6 +186,10 @@ void test_home_assistant_settings_metadata() {
       "sensor.sigen_plant_daily_grid_export_energy",
       "sensor.sigen_plant_daily_battery_charge_energy",
       "sensor.sigen_plant_daily_battery_discharge_energy",
+      "sensor.example_solar_forecast_today",
+      "sensor.example_solar_forecast_remaining",
+      "sensor.example_solar_forecast_percentage",
+      "sensor.example_solar_forecast_peak",
   };
 
   for (size_t i = 0; i < HA_ENTITY_COUNT; ++i) {
@@ -165,6 +218,98 @@ void test_home_assistant_settings_metadata() {
         "persisted mapping remains the actual entity value");
   check(strstr(output, HA_ENTITIES[static_cast<size_t>(HaEntity::PvPower)].placeholder) == nullptr,
         "persisted mapping is not replaced by its placeholder");
+}
+
+void test_home_assistant_forecast() {
+  printf("home assistant forecast\n");
+  Snapshot snapshot;
+  HaParseInfo info;
+  const char* converted =
+      "{\"v\":1,\"ts\":1788970000,"
+      "\"pp\":{\"s\":\"1.5\",\"u\":\"kW\"},"
+      "\"sft\":{\"s\":\"12.5\",\"u\":\"kWh\"},"
+      "\"sfr\":{\"s\":\"3200\",\"u\":\"Wh\"},"
+      "\"sfp\":{\"s\":\"108\",\"u\":\"%\"},"
+      "\"sfk\":{\"s\":\"6500\",\"u\":\"W\"}}";
+  check(ha_payload_parse(converted, strlen(converted), &snapshot, &info),
+        "HA forecast payload parses");
+  check(snapshot.solar.configured, "known total makes HA forecast configured");
+  check_near(snapshot.solar.forecast_kwh.value, 12.5f, "forecast accepts kWh");
+  check_near(snapshot.solar.remaining_kwh.value, 3.2f, "forecast converts Wh to kWh");
+  check_near(snapshot.solar.vs_forecast_pct.value, 108.0f, "forecast accepts percentage");
+  check_near(snapshot.solar.peak_kw.value, 6.5f, "forecast converts W to kW");
+
+  const char* direct_peak =
+      "{\"v\":1,\"ts\":1788970000,"
+      "\"sft\":{\"s\":\"0\",\"u\":\"Wh\"},"
+      "\"sfp\":{\"s\":\"0\",\"u\":\"%\"},"
+      "\"sfk\":{\"s\":\"4.2\",\"u\":\"kW\"}}";
+  check(ha_payload_parse(direct_peak, strlen(direct_peak), &snapshot, &info),
+        "zero and direct-kW forecast payload parses");
+  check(snapshot.solar.configured && snapshot.solar.forecast_kwh.known &&
+            snapshot.solar.forecast_kwh.value == 0.0f,
+        "genuine zero forecast remains known and configured");
+  check_near(snapshot.solar.peak_kw.value, 4.2f, "forecast accepts kW");
+  check(snapshot.solar.vs_forecast_pct.known && snapshot.solar.vs_forecast_pct.value == 0.0f,
+        "genuine zero forecast percentage remains known");
+  check(!snapshot.solar.remaining_kwh.known,
+        "unmapped optional forecast value remains unknown");
+
+  const char* partial =
+      "{\"v\":1,\"ts\":1788970000,"
+      "\"sft\":{\"s\":\"9.1\",\"u\":\"kWh\"}}";
+  check(ha_payload_parse(partial, strlen(partial), &snapshot, &info),
+        "partial HA forecast parses");
+  check(snapshot.solar.configured && snapshot.solar.forecast_kwh.known,
+        "today total alone is a useful configured forecast");
+
+  const char* missing_total =
+      "{\"v\":1,\"ts\":1788970000,"
+      "\"sfr\":{\"s\":\"2.0\",\"u\":\"kWh\"}}";
+  check(ha_payload_parse(missing_total, strlen(missing_total), &snapshot, &info),
+        "forecast without total still parses");
+  check(!snapshot.solar.configured && snapshot.solar.remaining_kwh.known,
+        "supporting value alone does not claim a configured forecast");
+
+  const char* bad =
+      "{\"v\":1,\"ts\":1788970000,"
+      "\"sft\":{\"s\":\"unknown\",\"u\":\"kWh\"},"
+      "\"sfr\":{\"s\":\"unavailable\",\"u\":\"kWh\"},"
+      "\"sfp\":{\"s\":\"not-a-number\",\"u\":\"%\"},"
+      "\"sfk\":{\"s\":\"5\",\"u\":\"MW\"}}";
+  check(ha_payload_parse(bad, strlen(bad), &snapshot, &info),
+        "bad individual forecast values do not spoil the snapshot");
+  check(!snapshot.solar.configured && !snapshot.solar.forecast_kwh.known &&
+            !snapshot.solar.remaining_kwh.known && !snapshot.solar.vs_forecast_pct.known &&
+            !snapshot.solar.peak_kw.known,
+        "unknown unavailable malformed and unsupported forecast values stay unknown");
+  check(info.unavailable == 2 && info.invalid_number == 1 && info.unsupported_unit == 1,
+        "bad forecast states are classified accurately");
+
+  const char* unsupported_total =
+      "{\"v\":1,\"ts\":1788970000,"
+      "\"sft\":{\"s\":\"12\",\"u\":\"MJ\"}}";
+  check(ha_payload_parse(unsupported_total, strlen(unsupported_total), &snapshot, &info),
+        "unsupported total unit leaves a valid snapshot");
+  check(!snapshot.solar.configured && !snapshot.solar.forecast_kwh.known,
+        "unsupported total unit cannot configure the forecast");
+}
+
+void test_server_forecast() {
+  printf("server forecast\n");
+  const char* payload =
+      "{\"v\":1,\"ts\":1788970000,\"ok\":true,"
+      "\"solar\":{\"configured\":true,\"forecast\":14.2,\"remaining\":5.1,"
+      "\"vs_forecast\":103,\"peak_kw\":4.8}}";
+  Snapshot snapshot;
+  check(snapshot_parse(payload, strlen(payload), &snapshot),
+        "server snapshot with forecast parses");
+  check(snapshot.solar.configured, "server keeps its own configured forecast");
+  check_near(snapshot.solar.forecast_kwh.value, 14.2f, "server forecast total unchanged");
+  check_near(snapshot.solar.remaining_kwh.value, 5.1f, "server forecast remaining unchanged");
+  check_near(snapshot.solar.vs_forecast_pct.value, 103.0f,
+             "server forecast percentage unchanged");
+  check_near(snapshot.solar.peak_kw.value, 4.8f, "server forecast peak unchanged");
 }
 
 void test_home_assistant_payload() {
@@ -196,6 +341,7 @@ void test_home_assistant_payload() {
   check_near(snapshot.today.imported.value, 3.2f, "kWh remains kWh");
   check(snapshot.today.present, "configured daily entity makes today present");
   check(!snapshot.today.exported.known, "missing daily entity remains unknown");
+  check(!snapshot.solar.configured, "HA forecast disabled payload behaves as before");
 
   const char* fallback =
       "{\"v\":1,\"ts\":1788970000,"
@@ -742,6 +888,15 @@ void test_button_gestures() {
 void test_solar_forecast() {
   printf("solar forecast\n");
 
+  PvArray arrays[SOLAR_MAX_ARRAYS];
+  check(!solar_site_configured(false, arrays, SOLAR_MAX_ARRAYS),
+        "native forecast needs a location");
+  check(!solar_site_configured(true, arrays, SOLAR_MAX_ARRAYS),
+        "native forecast needs a positive-size array");
+  arrays[2].kwp = 4.5f;
+  check(solar_site_configured(true, arrays, SOLAR_MAX_ARRAYS),
+        "native forecast accepts a location and one array");
+
   constexpr float LAT = 51.5072f;   // London, the reference site
   constexpr float LON = -0.1276f;
 
@@ -842,6 +997,29 @@ void test_solar_forecast() {
   solar_forecast_day(site, DAY, hours, 24, DAY, slots);
   summary = solar_summarise(slots, DAY, DAY);
   check(summary.forecast_kwh == 0.0f, "no arrays forecasts nothing");
+
+  // The same cached native result can augment an HA Snapshot without replacing
+  // any HA-acquired values or involving the Modbus representation.
+  Snapshot ha_snapshot;
+  ha_snapshot.valid = true;
+  ha_snapshot.power.pv = {true, 2.4f};
+  ha_snapshot.today.present = true;
+  ha_snapshot.today.solar = {true, 6.0f};
+  const SolarSummary cached = {12.0f, 4.0f, 5.5f};
+  solar_summary_apply(cached, 60, &ha_snapshot);
+  check(ha_snapshot.power.pv.known && ha_snapshot.power.pv.value == 2.4f,
+        "native forecast leaves HA live PV intact");
+  check(ha_snapshot.solar.configured, "native cache configures an HA Snapshot");
+  check_near(ha_snapshot.solar.forecast_kwh.value, 12.0f,
+             "native cache supplies HA forecast total");
+  check_near(ha_snapshot.solar.remaining_kwh.value, 4.0f,
+             "native cache supplies HA remaining forecast");
+  check_near(ha_snapshot.solar.vs_forecast_pct.value, 75.0f,
+             "native cache uses HA daily PV for forecast percentage");
+  check_near(ha_snapshot.solar.peak_kw.value, 5.5f,
+             "native cache supplies HA forecast peak");
+  check(ha_snapshot.tz_offset_min.known && ha_snapshot.tz_offset_min.value == 60,
+        "native cache supplies the forecast location timezone");
 }
 
 // --- screen-off window -----------------------------------------------------
@@ -899,7 +1077,9 @@ int run_selftest() {
   test_data_sources();
   test_home_assistant_template();
   test_home_assistant_settings_metadata();
+  test_home_assistant_forecast();
   test_home_assistant_payload();
+  test_server_forecast();
   test_decode();
   test_plan();
   test_snapshot();

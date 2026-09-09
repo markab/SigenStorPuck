@@ -23,6 +23,10 @@ enum class HaEntity : uint8_t {
   TodayGridExport,
   TodayBatteryCharge,
   TodayBatteryDischarge,
+  ForecastToday,
+  ForecastRemaining,
+  ForecastPercentage,
+  ForecastPeak,
   Count,
 };
 
@@ -38,6 +42,8 @@ struct HaEntityDescriptor {
 };
 
 static constexpr size_t HA_ENTITY_COUNT = static_cast<size_t>(HaEntity::Count);
+static constexpr size_t HA_FORECAST_ENTITY_FIRST =
+    static_cast<size_t>(HaEntity::ForecastToday);
 static constexpr size_t HA_ENTITY_ID_MAX = 96;
 extern const HaEntityDescriptor HA_ENTITIES[HA_ENTITY_COUNT];
 

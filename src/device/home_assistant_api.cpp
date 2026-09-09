@@ -11,6 +11,7 @@
 
 #include "board_config.h"
 #include "settings.h"
+#include "solar_source.h"
 
 namespace {
 
@@ -46,9 +47,17 @@ FetchResult home_assistant_api_fetch(Snapshot* out, int* status_code,
   const Settings& settings = settings_get();
   const String base_url = settings.ha_base_url;
   const String token = settings.ha_token;
+  const bool include_forecast = solar_forecast_uses_home_assistant(
+      DataSource::HomeAssistant, settings.ha_solar_forecast_source);
   String entities[HA_ENTITY_COUNT];
   for (size_t i = 0; i < HA_ENTITY_COUNT; ++i) {
-    entities[i] = settings.ha_entities[i];
+    // Forecast mappings share this one compact template response, but are not
+    // queried when Disabled or the Puck cache is selected.
+    if (i >= HA_FORECAST_ENTITY_FIRST && !include_forecast) {
+      entities[i] = "";
+    } else {
+      entities[i] = settings.ha_entities[i];
+    }
   }
 
   const bool secure = base_url.startsWith("https://");

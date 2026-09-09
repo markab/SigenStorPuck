@@ -63,7 +63,8 @@ FetchResult s_last_result = FetchResult::NotConfigured;
 // half-configured array, it is an empty slot.
 bool site_from_settings(SolarSite* out) {
   const Settings& settings = settings_get();
-  if (!settings.solar_location_set) {
+  if (!solar_site_configured(settings.solar_location_set, settings.solar_arrays,
+                             SOLAR_MAX_ARRAYS)) {
     return false;
   }
   out->latitude = settings.latitude;
@@ -76,7 +77,7 @@ bool site_from_settings(SolarSite* out) {
       out->array[out->array_count++] = settings.solar_arrays[i];
     }
   }
-  return out->array_count > 0;
+  return true;
 }
 
 bool same_site(const SolarSite& a, const SolarSite& b) {
@@ -288,27 +289,8 @@ void solar_api_apply(Snapshot* snapshot) {
     return;
   }
 
-  // Ahead of the forecast block: a chart anchored to the wrong midnight is the
-  // more visible of the two errors this fetch prevents.
-  snapshot->tz_offset_min.known = true;
-  snapshot->tz_offset_min.value = s_utc_offset_min;
-
   const SolarSummary summary = solar_summarise(s_slot_kwh, s_day_start, now);
-
-  snapshot->solar.configured = true;
-  snapshot->solar.forecast_kwh = {true, summary.forecast_kwh};
-  snapshot->solar.remaining_kwh = {true, summary.remaining_kwh};
-  snapshot->solar.peak_kw = {true, summary.peak_kw};
-
-  // Actual against what the forecast said should have arrived by now. The floor
-  // is the server's own: before dawn the denominator is a rounding error and the
-  // ratio swings between nothing and thousands of per cent.
-  const float so_far = summary.forecast_kwh - summary.remaining_kwh;
-  if (snapshot->today.present && snapshot->today.solar.known && so_far > 0.05f) {
-    snapshot->solar.vs_forecast_pct = {true, snapshot->today.solar.value / so_far * 100.0f};
-  } else {
-    snapshot->solar.vs_forecast_pct = {};
-  }
+  solar_summary_apply(summary, s_utc_offset_min, snapshot);
 }
 
 bool solar_api_ready() {

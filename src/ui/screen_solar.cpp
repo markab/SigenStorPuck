@@ -21,8 +21,8 @@ namespace {
 //   3. The readings on top.
 //
 // The ring is the one part that has nothing to show without a forecast, so it is
-// hidden rather than drawn empty on the Modbus source — an unfilled track reads
-// as a confident zero.
+// hidden rather than drawn empty when the selected source has no forecast — an
+// unfilled track reads as a confident zero.
 
 // Full width and clipped to the bezel, for the reasons set out on screen 2: a
 // rectangle either lies across the ring at its corners or ends in open screen.
@@ -75,8 +75,8 @@ lv_obj_t* make_caption(lv_obj_t* parent, const char* text, lv_coord_t x, lv_coor
   return label;
 }
 
-// One of the forecast figures. All four share the same failure: the server has
-// no location or no array configured, or there is no server at all.
+// One of the forecast figures. All four share the selected forecast source's
+// configured state, while each individual value may still be unknown.
 void set_forecast_figure(lv_obj_t* label, const Snapshot& snapshot, const MaybeFloat& value,
                          int decimals, const char* unit) {
   if (!snapshot.valid || !snapshot.solar.configured) {
@@ -190,8 +190,8 @@ void screen_solar_update(const Snapshot& snapshot) {
   }
 
   // Today's generation. today.solar rather than a field of its own in the solar
-  // block, so this figure is the same one on every data source — the Modbus path
-  // fills it from the pv_daily registers.
+  // block, so this figure is the same one on every data source — Modbus fills it
+  // from pv_daily registers and HA from the configured daily entity.
   const bool have_today = snapshot.valid && snapshot.today.present;
   const MaybeFloat generated = have_today ? snapshot.today.solar : MaybeFloat{};
   if (generated.known) {

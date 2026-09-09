@@ -42,6 +42,14 @@ const HaEntityDescriptor HA_ENTITIES[HA_ENTITY_COUNT] = {
      "sensor.sigen_plant_daily_battery_charge_energy", HaValueKind::Energy},
     {"dds", "ha_dds", "ha_dds", "Today: battery discharge",
      "sensor.sigen_plant_daily_battery_discharge_energy", HaValueKind::Energy},
+    {"sft", "ha_sft", "ha_sft", "Today forecast",
+     "sensor.example_solar_forecast_today", HaValueKind::Energy},
+    {"sfr", "ha_sfr", "ha_sfr", "Remaining today",
+     "sensor.example_solar_forecast_remaining", HaValueKind::Energy},
+    {"sfp", "ha_sfp", "ha_sfp", "Actual vs forecast",
+     "sensor.example_solar_forecast_percentage", HaValueKind::Percent},
+    {"sfk", "ha_sfk", "ha_sfk", "Peak power",
+     "sensor.example_solar_forecast_peak", HaValueKind::Power},
 };
 
 namespace {
@@ -310,6 +318,15 @@ bool ha_payload_parse(const char* json, size_t length, Snapshot* out, HaParseInf
   built.today.exported = parse_number(root, HaEntity::TodayGridExport, &parsed_info);
   built.today.charge = parse_number(root, HaEntity::TodayBatteryCharge, &parsed_info);
   built.today.discharge = parse_number(root, HaEntity::TodayBatteryDischarge, &parsed_info);
+
+  built.solar.forecast_kwh = parse_number(root, HaEntity::ForecastToday, &parsed_info);
+  built.solar.remaining_kwh = parse_number(root, HaEntity::ForecastRemaining, &parsed_info);
+  built.solar.vs_forecast_pct = parse_number(root, HaEntity::ForecastPercentage, &parsed_info);
+  built.solar.peak_kw = parse_number(root, HaEntity::ForecastPeak, &parsed_info);
+  // Today's total is the Solar screen's anchor: it supplies the denominator for
+  // the ring and gives the optional remaining/percentage/peak figures context.
+  // A total alone is useful; the three supporting mappings need not all exist.
+  built.solar.configured = built.solar.forecast_kwh.known;
 
   *out = built;
   if (info != nullptr) {

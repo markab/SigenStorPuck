@@ -9,6 +9,7 @@
 #include "settings.h"
 #include "sigen_api.h"
 #include "solar_api.h"
+#include "solar_source.h"
 #include "updater.h"
 #include "ui/ui.h"
 
@@ -105,6 +106,8 @@ FetchResult fetch_source(DataSource source, Snapshot* out, int* detail) {
     case DataSource::Modbus:
       return modbus_api_fetch(out, detail);
     case DataSource::HomeAssistant:
+      // A Puck-calculated forecast is merged later; it never changes HA's live
+      // acquisition into a Modbus request.
       return home_assistant_api_fetch(out, detail);
   }
   return FetchResult::NotConfigured;
@@ -145,6 +148,8 @@ void poll_task(void* /*argument*/) {
     Snapshot fetched;
     int http_status = 0;
     const FetchResult result = fetch_source(source, &fetched, &http_status);
+    const SolarForecastSource ha_forecast_source =
+        settings_get().ha_solar_forecast_source;
 
     status.last_result = result;
     status.last_http_status = http_status;
@@ -154,7 +159,7 @@ void poll_task(void* /*argument*/) {
       // screens and history_record() see one complete snapshot rather than a
       // reading that grows a solar block a moment later. No I/O here — this is
       // the cached figures, refreshed further down between polls.
-      if (source == DataSource::Modbus) {
+      if (solar_forecast_uses_puck(source, ha_forecast_source)) {
         solar_api_apply(&fetched);
       }
       status.consecutive_failures = 0;
@@ -286,8 +291,9 @@ void poll_task(void* /*argument*/) {
     // The forecast fetch keeps the same company for the same reason: it is
     // another TLS session on this stack, and it decides for itself whether one is
     // due — at most one an hour. Server source excluded because there the
-    // forecast comes in the summary payload already.
-    if (source == DataSource::Modbus) {
+    // forecast comes in the summary payload already. HA can explicitly opt into
+    // this same cache without changing its live acquisition path.
+    if (solar_forecast_uses_puck(source, ha_forecast_source)) {
       solar_api_service();
     }
     updater_service();
