@@ -148,8 +148,9 @@ removes the Puck's access.
    and port where needed, such as `http://homeassistant.local:8123`.
 3. Paste the long-lived access token. It is stored in the Puck's NVS, never compiled into
    firmware, and the settings page will only show a masked suffix after saving.
-4. Map the entity IDs your installation provides. The page contains no vendor defaults;
-   IDs such as `sensor.example_pv_power` in this README are examples only.
+4. Map the entity IDs your installation provides. Grey Sigenergy entity IDs shown in the
+   fields are example placeholders only: they are not configured or saved unless typed,
+   and other Home Assistant integrations should use their own entity IDs.
 5. Save, use **Test Home Assistant connection**, then restart the Puck.
 
 The Puck sends one [`POST /api/template`](https://developers.home-assistant.io/docs/api/rest/#post-apitemplate)

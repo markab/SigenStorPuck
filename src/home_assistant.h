@@ -33,6 +33,7 @@ struct HaEntityDescriptor {
   const char* nvs_key;
   const char* form_name;
   const char* label;
+  const char* placeholder;
   HaValueKind kind;
 };
 

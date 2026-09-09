@@ -112,6 +112,61 @@ void test_home_assistant_template() {
         "short template buffer is rejected");
 }
 
+void test_home_assistant_settings_metadata() {
+  printf("home assistant settings metadata\n");
+  const char* expected_form_order[HA_ENTITY_COUNT] = {
+      "ha_pp",  "ha_gp",  "ha_bp",  "ha_hp",  "ha_ep",  "ha_xp",
+      "ha_og",  "ha_soc", "ha_soh", "ha_cap", "ha_tmp", "ha_dpv",
+      "ha_dld", "ha_dim", "ha_dex", "ha_dch", "ha_dds",
+  };
+  const char* expected_placeholders[HA_ENTITY_COUNT] = {
+      "sensor.sigen_plant_pv_power",
+      "sensor.sigen_plant_grid_active_power",
+      "sensor.sigen_plant_battery_power",
+      "sensor.sigen_plant_consumed_power",
+      "sensor.sigen_inverter_dc_charger_output_power",
+      "sensor.sigen_plant_plant_active_power",
+      "sensor.sigen_plant_grid_connection_status",
+      "sensor.sigen_plant_battery_state_of_charge",
+      "sensor.sigen_plant_battery_state_of_health",
+      "sensor.sigen_plant_rated_energy_capacity",
+      "sensor.sigen_inverter_battery_average_cell_temperature",
+      "sensor.sigen_plant_pv_daily_generation",
+      "sensor.sigen_plant_daily_load_consumption",
+      "sensor.sigen_plant_daily_grid_import_energy",
+      "sensor.sigen_plant_daily_grid_export_energy",
+      "sensor.sigen_plant_daily_battery_charge_energy",
+      "sensor.sigen_plant_daily_battery_discharge_energy",
+  };
+
+  for (size_t i = 0; i < HA_ENTITY_COUNT; ++i) {
+    check(strcmp(HA_ENTITIES[i].form_name, expected_form_order[i]) == 0,
+          "HA settings fields retain semantic tab order");
+    check(strcmp(HA_ENTITIES[i].placeholder, expected_placeholders[i]) == 0,
+          "HA settings field has its example placeholder");
+  }
+
+  // Placeholders are presentation metadata, not entity defaults. The API
+  // template is built only from the values supplied by persisted settings.
+  const char* empty[HA_ENTITY_COUNT] = {};
+  char output[HA_TEMPLATE_MAX];
+  check(ha_template_build(empty, output, sizeof(output)),
+        "empty mappings still produce a valid base template");
+  for (size_t i = 0; i < HA_ENTITY_COUNT; ++i) {
+    check(strstr(output, HA_ENTITIES[i].placeholder) == nullptr,
+          "placeholder is not treated as a configured mapping");
+  }
+
+  const char* configured[HA_ENTITY_COUNT] = {};
+  configured[static_cast<size_t>(HaEntity::PvPower)] = "sensor.persisted_pv_power";
+  check(ha_template_build(configured, output, sizeof(output)),
+        "persisted mapping builds a template");
+  check(strstr(output, "states('sensor.persisted_pv_power')") != nullptr,
+        "persisted mapping remains the actual entity value");
+  check(strstr(output, HA_ENTITIES[static_cast<size_t>(HaEntity::PvPower)].placeholder) == nullptr,
+        "persisted mapping is not replaced by its placeholder");
+}
+
 void test_home_assistant_payload() {
   printf("home assistant payload\n");
   const char* valid =
@@ -843,6 +898,7 @@ int run_selftest() {
   s_checks = 0;
   test_data_sources();
   test_home_assistant_template();
+  test_home_assistant_settings_metadata();
   test_home_assistant_payload();
   test_decode();
   test_plan();

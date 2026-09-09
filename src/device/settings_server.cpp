@@ -37,6 +37,8 @@ const char* PAGE_STYLE =
     // colour. Uniform, which also separates the header block from the first section.
     "h2{font-size:1rem;margin-top:2.2rem;padding-top:1.2rem;"
     "border-top:1px solid #333;color:#9ab}"
+    "details.source>summary{font-size:1rem;font-weight:600;margin-top:2.2rem;padding-top:1.2rem;"
+    "border-top:1px solid #333;color:#9ab;cursor:pointer}"
     "h3{font-size:.9rem;margin:1.4rem 0 .5rem;color:#ccc}"
     // `select` belongs here with the text fields. Left out, it falls back to
     // inline flow and lands on the same line as its own label, which is what put
@@ -146,6 +148,24 @@ void append_poll_status(String* html, const PollStatus& status) {
   *html += "</p>";
 }
 
+// The active source is ordinary document content, so its first field follows the
+// source selector directly in the browser's natural tab order. Inactive sources
+// stay configurable behind a native disclosure control; while closed, their form
+// controls are omitted from sequential focus navigation without custom tabindexes.
+void append_source_section_start(String* html, const char* title, bool active) {
+  if (active) {
+    *html += "<section class=source><h2>";
+  } else {
+    *html += "<details class=source><summary>";
+  }
+  *html += title;
+  *html += active ? "</h2>" : "</summary>";
+}
+
+void append_source_section_end(String* html, bool active) {
+  *html += active ? "</section>" : "</details>";
+}
+
 String page(const String& message, bool message_is_error) {
   const Settings& settings = settings_get();
   const PollStatus status = poller_status();
@@ -231,6 +251,7 @@ String page(const String& message, bool message_is_error) {
   // configured second would spend the gap unable to reach anything.
   const bool modbus = settings.source == DataSource::Modbus;
   const bool home_assistant = settings.source == DataSource::HomeAssistant;
+  const bool server = settings.source == DataSource::Server;
   const SourceCapabilities capabilities = data_source_capabilities(settings.source);
   html += "<h2>Data source</h2><form method=post action=/source>";
   html += "<label class=opt><input type=radio name=src value=ha";
@@ -246,7 +267,7 @@ String page(const String& message, bool message_is_error) {
   html += "<button type=submit>Save</button></form>";
   append_poll_status(&html, status);
 
-  html += "<h2>Home Assistant</h2>";
+  append_source_section_start(&html, "Home Assistant", home_assistant);
   if (!home_assistant) {
     html += "<p class=hint>Not in use: select Home Assistant above and restart to poll it.</p>";
   }
@@ -260,8 +281,11 @@ String page(const String& message, bool message_is_error) {
   html += escape_html(settings_ha_token_masked());
   html += "'>";
   html += "<p class=hint>Leave blank to keep the stored token. The token is never shown here.</p>";
-  html += "<p class='hint gap'>At least one mapping is required; every individual mapping "
-          "is optional. Power must report W or kW; energy must report Wh or kWh.</p>";
+  html += "<p class='hint gap'>Grey placeholders are examples only. Enter the entity IDs "
+          "exposed by your own Home Assistant integration; mappings are vendor-neutral and "
+          "fully configurable.</p>";
+  html += "<p class=hint>At least one mapping is required; every individual mapping is "
+          "optional. Power must report W or kW; energy must report Wh or kWh.</p>";
   for (size_t i = 0; i < HA_ENTITY_COUNT; ++i) {
     if (i == static_cast<size_t>(HaEntity::PvPower)) {
       html += "<h3>Live</h3>";
@@ -281,16 +305,17 @@ String page(const String& message, bool message_is_error) {
     html += entity.form_name;
     html += " maxlength=96 value='";
     html += escape_html(settings.ha_entities[i]);
-    html += "' placeholder='sensor.example_";
-    html += entity.form_name + 3;
+    html += "' placeholder='";
+    html += escape_html(entity.placeholder);
     html += "'>";
   }
   html += "<button type=submit>Save</button></form>";
   html += "<form method=post action=/ha-test><button class=secondary type=submit>";
   html += "Test Home Assistant connection</button></form>";
+  append_source_section_end(&html, home_assistant);
 
-  html += "<h2>Server</h2>";
-  if (settings.source != DataSource::Server) {
+  append_source_section_start(&html, "Server", server);
+  if (!server) {
     html += "<p class=hint>Not in use: the data source is set to another source.</p>";
   }
   html += "<form method=post action=/save>";
@@ -314,8 +339,9 @@ String page(const String& message, bool message_is_error) {
 
   html += "<form method=post action=/test><button class=secondary type=submit>";
   html += "Test server connection</button></form>";
+  append_source_section_end(&html, server);
 
-  html += "<h2>Plant (Modbus)</h2>";
+  append_source_section_start(&html, "Plant (Modbus)", modbus);
   if (!modbus) {
     html += "<p class=hint>Not in use: the data source is set to another source.</p>";
   }
@@ -365,13 +391,13 @@ String page(const String& message, bool message_is_error) {
     html += "> fitted</div></div></div>";
   }
   html += "<button type=submit>Save</button></form>";
+  append_source_section_end(&html, modbus);
 
   // --- solar forecast ------------------------------------------------------
   //
-  // Shown whichever source is selected, and marked out of use on the server one,
-  // exactly as the Modbus section above is. A section that appears and vanishes
-  // as you flip the radio button reads as a fault in the page.
-  html += "<h2>Solar forecast</h2>";
+  // Still available for preconfiguration, but collapsed when the selected source
+  // cannot use it so its many inputs do not interrupt that source's tab sequence.
+  append_source_section_start(&html, "Solar forecast", modbus);
   if (!modbus) {
     html += "<p class=hint>Not in use: ";
     html += capabilities.forecast
@@ -449,6 +475,7 @@ String page(const String& message, bool message_is_error) {
     html += "></div></div>";
   }
   html += "<button type=submit>Save</button></form>";
+  append_source_section_end(&html, modbus);
 
   html += "<h2>Display</h2><form method=post action=/display><div class=row>";
   html += "<div><label for=bright>Brightness (0-255)</label><input id=bright name=bright type=number min=10 max=255 value=";
