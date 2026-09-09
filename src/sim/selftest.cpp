@@ -21,6 +21,7 @@
 #include "modbus_regs.h"
 #include "screen_window.h"
 #include "solar_forecast.h"
+#include "solar_metric_layout.h"
 #include "solar_source.h"
 
 namespace {
@@ -310,6 +311,37 @@ void test_server_forecast() {
   check_near(snapshot.solar.vs_forecast_pct.value, 103.0f,
              "server forecast percentage unchanged");
   check_near(snapshot.solar.peak_kw.value, 4.8f, "server forecast peak unchanged");
+}
+
+void test_solar_metric_layout() {
+  printf("solar metric layout\n");
+  Snapshot snapshot;
+  SolarOptionalMetricSlots slots = solar_optional_metric_slots(snapshot);
+  check(slots.remaining == SolarOptionalMetricSlots::Hidden &&
+            slots.vs_forecast == SolarOptionalMetricSlots::Hidden &&
+            slots.peak == SolarOptionalMetricSlots::Hidden,
+        "unconfigured forecast hides every optional metric");
+
+  snapshot.valid = true;
+  snapshot.solar.configured = true;
+  snapshot.solar.forecast_kwh = {true, 8.0f};
+  slots = solar_optional_metric_slots(snapshot);
+  check(slots.remaining == SolarOptionalMetricSlots::Hidden &&
+            slots.vs_forecast == SolarOptionalMetricSlots::Hidden &&
+            slots.peak == SolarOptionalMetricSlots::Hidden,
+        "total-only forecast reserves no optional rows");
+
+  snapshot.solar.remaining_kwh = {true, 0.0f};
+  snapshot.solar.peak_kw = {true, 4.5f};
+  slots = solar_optional_metric_slots(snapshot);
+  check(slots.remaining == 1 && slots.vs_forecast == SolarOptionalMetricSlots::Hidden &&
+            slots.peak == 2,
+        "known optional metrics pack without a gap and preserve genuine zero");
+
+  snapshot.solar.vs_forecast_pct = {true, 93.0f};
+  slots = solar_optional_metric_slots(snapshot);
+  check(slots.remaining == 1 && slots.vs_forecast == 2 && slots.peak == 3,
+        "all optional metrics use the three available slots in semantic order");
 }
 
 void test_home_assistant_payload() {
@@ -1080,6 +1112,7 @@ int run_selftest() {
   test_home_assistant_forecast();
   test_home_assistant_payload();
   test_server_forecast();
+  test_solar_metric_layout();
   test_decode();
   test_plan();
   test_snapshot();

@@ -5,6 +5,7 @@
 #include "board_config.h"
 #include "chart_band.h"
 #include "format.h"
+#include "solar_metric_layout.h"
 #include "theme.h"
 
 namespace {
@@ -52,9 +53,13 @@ lv_obj_t* s_generated = nullptr;
 lv_obj_t* s_caption = nullptr;
 lv_obj_t* s_pill = nullptr;
 lv_obj_t* s_rate = nullptr;
+lv_obj_t* s_forecast_caption = nullptr;
 lv_obj_t* s_forecast = nullptr;
+lv_obj_t* s_remaining_caption = nullptr;
 lv_obj_t* s_remaining = nullptr;
+lv_obj_t* s_versus_caption = nullptr;
 lv_obj_t* s_versus = nullptr;
+lv_obj_t* s_peak_caption = nullptr;
 lv_obj_t* s_peak = nullptr;
 bool s_live = true;
 
@@ -88,6 +93,26 @@ void set_forecast_figure(lv_obj_t* label, const Snapshot& snapshot, const MaybeF
   puck_format_magnitude(value, decimals, scratch, sizeof(scratch));
   snprintf(text, sizeof(text), "%s%s", scratch, unit);
   lv_label_set_text(label, text);
+}
+
+void position_optional_figure(lv_obj_t* caption, lv_obj_t* value, int8_t slot) {
+  if (slot == SolarOptionalMetricSlots::Hidden) {
+    lv_obj_add_flag(caption, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(value, LV_OBJ_FLAG_HIDDEN);
+    return;
+  }
+
+  // Total forecast owns slot zero. Optional values close up behind it rather
+  // than retaining fixed positions that would leave holes for unknown fields.
+  const bool right = (slot & 1) != 0;
+  const bool second_row = slot >= 2;
+  const lv_coord_t x = right ? COLUMN_X : -COLUMN_X;
+  const lv_coord_t caption_y = second_row ? ROW_TWO_LABEL_Y : ROW_ONE_LABEL_Y;
+  const lv_coord_t value_y = second_row ? ROW_TWO_VALUE_Y : ROW_ONE_VALUE_Y;
+  lv_obj_align(caption, LV_ALIGN_CENTER, x, caption_y);
+  lv_obj_align(value, LV_ALIGN_CENTER, x, value_y);
+  lv_obj_clear_flag(caption, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_clear_flag(value, LV_OBJ_FLAG_HIDDEN);
 }
 
 }  // namespace
@@ -158,19 +183,19 @@ lv_obj_t* screen_solar_create(lv_obj_t* parent) {
   lv_label_set_text(s_rate, "--");
   lv_obj_center(s_rate);
 
-  make_caption(s_root, "FORECAST", -COLUMN_X, ROW_ONE_LABEL_Y);
+  s_forecast_caption = make_caption(s_root, "FORECAST", -COLUMN_X, ROW_ONE_LABEL_Y);
   s_forecast = make_label(s_root, PUCK_FONT_BODY, PUCK_COLOUR_TEXT, -COLUMN_X, ROW_ONE_VALUE_Y);
   lv_label_set_text(s_forecast, "--");
 
-  make_caption(s_root, "REMAINING", COLUMN_X, ROW_ONE_LABEL_Y);
+  s_remaining_caption = make_caption(s_root, "REMAINING", COLUMN_X, ROW_ONE_LABEL_Y);
   s_remaining = make_label(s_root, PUCK_FONT_BODY, PUCK_COLOUR_TEXT, COLUMN_X, ROW_ONE_VALUE_Y);
   lv_label_set_text(s_remaining, "--");
 
-  make_caption(s_root, "VS FORECAST", -COLUMN_X, ROW_TWO_LABEL_Y);
+  s_versus_caption = make_caption(s_root, "VS FORECAST", -COLUMN_X, ROW_TWO_LABEL_Y);
   s_versus = make_label(s_root, PUCK_FONT_BODY, PUCK_COLOUR_TEXT, -COLUMN_X, ROW_TWO_VALUE_Y);
   lv_label_set_text(s_versus, "--");
 
-  make_caption(s_root, "PEAK", COLUMN_X, ROW_TWO_LABEL_Y);
+  s_peak_caption = make_caption(s_root, "PEAK", COLUMN_X, ROW_TWO_LABEL_Y);
   s_peak = make_label(s_root, PUCK_FONT_BODY, PUCK_COLOUR_TEXT, COLUMN_X, ROW_TWO_VALUE_Y);
   lv_label_set_text(s_peak, "--");
 
@@ -248,9 +273,19 @@ void screen_solar_update(const Snapshot& snapshot) {
   lv_obj_set_style_bg_opa(s_pill, generating ? LV_OPA_20 : LV_OPA_10, LV_PART_MAIN);
 
   set_forecast_figure(s_forecast, snapshot, snapshot.solar.forecast_kwh, 1, " kWh");
-  set_forecast_figure(s_remaining, snapshot, snapshot.solar.remaining_kwh, 1, " kWh");
-  set_forecast_figure(s_versus, snapshot, snapshot.solar.vs_forecast_pct, 0, "%");
-  set_forecast_figure(s_peak, snapshot, snapshot.solar.peak_kw, 1, " kW");
+  const SolarOptionalMetricSlots slots = solar_optional_metric_slots(snapshot);
+  position_optional_figure(s_remaining_caption, s_remaining, slots.remaining);
+  position_optional_figure(s_versus_caption, s_versus, slots.vs_forecast);
+  position_optional_figure(s_peak_caption, s_peak, slots.peak);
+  if (slots.remaining != SolarOptionalMetricSlots::Hidden) {
+    set_forecast_figure(s_remaining, snapshot, snapshot.solar.remaining_kwh, 1, " kWh");
+  }
+  if (slots.vs_forecast != SolarOptionalMetricSlots::Hidden) {
+    set_forecast_figure(s_versus, snapshot, snapshot.solar.vs_forecast_pct, 0, "%");
+  }
+  if (slots.peak != SolarOptionalMetricSlots::Hidden) {
+    set_forecast_figure(s_peak, snapshot, snapshot.solar.peak_kw, 1, " kW");
+  }
 }
 
 void screen_solar_set_live(bool live) {
