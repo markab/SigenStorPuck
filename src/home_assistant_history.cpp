@@ -72,6 +72,38 @@ bool relevant_entity(HaEntity entity) {
 
 }  // namespace
 
+const char* ha_history_parse_error_name(HaHistoryParseError error) {
+  switch (error) {
+    case HaHistoryParseError::None:
+      return "none";
+    case HaHistoryParseError::InvalidConfiguration:
+      return "invalid parser configuration";
+    case HaHistoryParseError::NoMemory:
+      return "history workspace allocation failed";
+    case HaHistoryParseError::UnexpectedTopLevelToken:
+      return "unexpected top-level token";
+    case HaHistoryParseError::UnexpectedSeriesToken:
+      return "unexpected inner-array token";
+    case HaHistoryParseError::UnexpectedDelimiter:
+      return "unexpected array delimiter";
+    case HaHistoryParseError::ObjectTooLarge:
+      return "state object exceeds size limit";
+    case HaHistoryParseError::MalformedStateObject:
+      return "malformed state object";
+    case HaHistoryParseError::MissingEntityId:
+      return "missing entity_id on first object";
+    case HaHistoryParseError::InvalidEntityId:
+      return "invalid entity_id";
+    case HaHistoryParseError::InvalidTimestamp:
+      return "invalid timestamp";
+    case HaHistoryParseError::IncompletePayload:
+      return "incomplete payload";
+    case HaHistoryParseError::TrailingData:
+      return "trailing data after top-level array";
+  }
+  return "unknown parser error";
+}
+
 size_t ha_history_fields_build(const char* const entity_ids[HA_ENTITY_COUNT],
                                const HaUnit units[HA_ENTITY_COUNT],
                                HaHistoryField out[HA_HISTORY_MAX_FIELDS]) {
@@ -172,14 +204,14 @@ HaHistoryParser::HaHistoryParser(const HaHistoryField* fields, size_t field_coun
   if (fields == nullptr || field_count == 0 || field_count > HA_HISTORY_MAX_FIELDS ||
       local_midnight_ts == 0 || cutoff_ts <= local_midnight_ts ||
       next_local_midnight_ts <= local_midnight_ts || cutoff_ts > next_local_midnight_ts) {
-    failed_ = true;
+    fail(HaHistoryParseError::InvalidConfiguration);
     return;
   }
   field_count_ = field_count;
   for (size_t i = 0; i < field_count_; ++i) {
     if (fields[i].entity_id == nullptr || !ha_entity_id_valid(fields[i].entity_id) ||
         !relevant_entity(fields[i].entity)) {
-      failed_ = true;
+      fail(HaHistoryParseError::InvalidConfiguration);
       return;
     }
     fields_[i] = fields[i];
@@ -196,8 +228,8 @@ HaHistoryParser::HaHistoryParser(const HaHistoryField* fields, size_t field_coun
   const size_t sample_count = field_count_ * HISTORY_CAPACITY_MINUTES;
   samples_.reset(new (std::nothrow) int16_t[sample_count]);
   if (!samples_) {
-    failed_ = true;
     no_memory_ = true;
+    fail(HaHistoryParseError::NoMemory);
     return;
   }
   for (size_t i = 0; i < sample_count; ++i) {
@@ -209,13 +241,29 @@ bool HaHistoryParser::ready() const {
   return !failed_ && samples_ != nullptr;
 }
 
+HaHistoryParseError HaHistoryParser::error() const {
+  return error_;
+}
+
+size_t HaHistoryParser::error_series() const {
+  return error_series_;
+}
+
+bool HaHistoryParser::fail(HaHistoryParseError error) {
+  if (error_ == HaHistoryParseError::None) {
+    error_ = error;
+    error_series_ = series_index_;
+  }
+  failed_ = true;
+  return false;
+}
+
 bool HaHistoryParser::feed(const uint8_t* data, size_t length) {
   if (!ready() || finished_ || (data == nullptr && length != 0)) {
     return false;
   }
   for (size_t i = 0; i < length; ++i) {
     if (!consume(static_cast<char>(data[i]))) {
-      failed_ = true;
       return false;
     }
   }
@@ -225,7 +273,7 @@ bool HaHistoryParser::feed(const uint8_t* data, size_t length) {
 bool HaHistoryParser::consume(char c) {
   if (brace_depth_ != 0) {
     if (object_length_ + 1 >= sizeof(object_)) {
-      return false;
+      return fail(HaHistoryParseError::ObjectTooLarge);
     }
     object_[object_length_++] = c;
     if (escaped_) {
@@ -263,9 +311,11 @@ bool HaHistoryParser::consume(char c) {
         structure_ = StructureState::RootValueOrEnd;
         return true;
       }
-      break;
+      return fail(HaHistoryParseError::UnexpectedTopLevelToken);
     case StructureState::RootValueOrEnd:
       if (c == '[') {
+        ++series_index_;
+        series_object_count_ = 0;
         structure_ = StructureState::SeriesValueOrEnd;
         return true;
       }
@@ -273,7 +323,7 @@ bool HaHistoryParser::consume(char c) {
         structure_ = StructureState::End;
         return true;
       }
-      break;
+      return fail(HaHistoryParseError::UnexpectedTopLevelToken);
     case StructureState::RootCommaOrEnd:
       if (c == ',') {
         structure_ = StructureState::RootValue;
@@ -283,13 +333,15 @@ bool HaHistoryParser::consume(char c) {
         structure_ = StructureState::End;
         return true;
       }
-      break;
+      return fail(HaHistoryParseError::UnexpectedDelimiter);
     case StructureState::RootValue:
       if (c == '[') {
+        ++series_index_;
+        series_object_count_ = 0;
         structure_ = StructureState::SeriesValueOrEnd;
         return true;
       }
-      break;
+      return fail(HaHistoryParseError::UnexpectedTopLevelToken);
     case StructureState::SeriesValueOrEnd:
       if (c == '{') {
         object_length_ = 0;
@@ -304,7 +356,7 @@ bool HaHistoryParser::consume(char c) {
         structure_ = StructureState::RootCommaOrEnd;
         return true;
       }
-      break;
+      return fail(HaHistoryParseError::UnexpectedSeriesToken);
     case StructureState::SeriesCommaOrEnd:
       if (c == ',') {
         structure_ = StructureState::SeriesValue;
@@ -315,7 +367,7 @@ bool HaHistoryParser::consume(char c) {
         structure_ = StructureState::RootCommaOrEnd;
         return true;
       }
-      break;
+      return fail(HaHistoryParseError::UnexpectedDelimiter);
     case StructureState::SeriesValue:
       if (c == '{') {
         object_length_ = 0;
@@ -325,31 +377,35 @@ bool HaHistoryParser::consume(char c) {
         escaped_ = false;
         return true;
       }
-      break;
+      return fail(HaHistoryParseError::UnexpectedSeriesToken);
     case StructureState::End:
-      break;
+      return fail(HaHistoryParseError::TrailingData);
   }
-  return false;
+  return fail(HaHistoryParseError::UnexpectedDelimiter);
 }
 
 bool HaHistoryParser::finish_object() {
   object_doc_.clear();
   if (deserializeJson(object_doc_, object_, object_length_) != DeserializationError::Ok ||
       !object_doc_.is<JsonObjectConst>()) {
-    return false;
+    return fail(HaHistoryParseError::MalformedStateObject);
   }
   ++stats_.objects;
   JsonObjectConst root = object_doc_.as<JsonObjectConst>();
+  const bool first_in_series = series_object_count_++ == 0;
   if (root["entity_id"].is<const char*>()) {
     const char* entity = root["entity_id"].as<const char*>();
     if (!ha_entity_id_valid(entity)) {
-      return false;
+      return fail(HaHistoryParseError::InvalidEntityId);
     }
     strncpy(series_entity_, entity, sizeof(series_entity_) - 1);
     series_entity_[sizeof(series_entity_) - 1] = '\0';
   }
-  if (series_entity_[0] == '\0') {
-    return true;
+  if (first_in_series && series_entity_[0] == '\0') {
+    // Under minimal_response, HA emits a full first object and compact later
+    // objects containing only state and last_changed. The compact objects
+    // inherit the identity established here; they must not establish a series.
+    return fail(HaHistoryParseError::MissingEntityId);
   }
 
   const char* state = root["state"] | static_cast<const char*>(nullptr);
@@ -358,8 +414,13 @@ bool HaHistoryParser::finish_object() {
     changed = root["last_updated"] | static_cast<const char*>(nullptr);
   }
   uint32_t timestamp = 0;
-  if (state == nullptr || !ha_history_timestamp_parse(changed, &timestamp) ||
-      timestamp / 60 >= cutoff_minute_) {
+  if (state == nullptr) {
+    return fail(HaHistoryParseError::MalformedStateObject);
+  }
+  if (!ha_history_timestamp_parse(changed, &timestamp)) {
+    return fail(HaHistoryParseError::InvalidTimestamp);
+  }
+  if (timestamp / 60 >= cutoff_minute_) {
     return true;
   }
 
@@ -395,6 +456,9 @@ HaHistoryParseResult HaHistoryParser::finish(HaHistoryStats* stats) {
   finished_ = true;
   if (failed_ || structure_ != StructureState::End || brace_depth_ != 0 ||
       in_string_) {
+    if (!failed_) {
+      fail(HaHistoryParseError::IncompletePayload);
+    }
     return no_memory_ ? HaHistoryParseResult::NoMemory : HaHistoryParseResult::BadPayload;
   }
 

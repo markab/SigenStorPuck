@@ -43,6 +43,24 @@ enum class HaHistoryParseResult : uint8_t {
   NoMemory,
 };
 
+enum class HaHistoryParseError : uint8_t {
+  None = 0,
+  InvalidConfiguration,
+  NoMemory,
+  UnexpectedTopLevelToken,
+  UnexpectedSeriesToken,
+  UnexpectedDelimiter,
+  ObjectTooLarge,
+  MalformedStateObject,
+  MissingEntityId,
+  InvalidEntityId,
+  InvalidTimestamp,
+  IncompletePayload,
+  TrailingData,
+};
+
+const char* ha_history_parse_error_name(HaHistoryParseError error);
+
 // Incrementally consumes Home Assistant's /api/history response. Only one small
 // JSON object is buffered at a time; the fixed per-minute workspace is at most
 // 4 * 1500 * int16_t (11.72 KiB) and is released after this one boot backfill.
@@ -57,10 +75,13 @@ class HaHistoryParser {
   bool ready() const;
   bool feed(const uint8_t* data, size_t length);
   HaHistoryParseResult finish(HaHistoryStats* stats = nullptr);
+  HaHistoryParseError error() const;
+  size_t error_series() const;
 
  private:
   bool consume(char c);
- bool finish_object();
+  bool finish_object();
+  bool fail(HaHistoryParseError error);
 
   enum class StructureState : uint8_t {
     Start = 0,
@@ -86,8 +107,12 @@ class HaHistoryParser {
   size_t object_length_ = 0;
   JsonDocument object_doc_;
   char series_entity_[HA_ENTITY_ID_MAX + 1] = {};
+  size_t series_index_ = 0;
+  size_t series_object_count_ = 0;
   uint8_t brace_depth_ = 0;
   StructureState structure_ = StructureState::Start;
+  HaHistoryParseError error_ = HaHistoryParseError::None;
+  size_t error_series_ = 0;
   bool in_string_ = false;
   bool escaped_ = false;
   bool failed_ = false;

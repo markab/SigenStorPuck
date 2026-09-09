@@ -795,6 +795,52 @@ void test_home_assistant_history() {
   check(stats.usable_states == 5 && stats.points_written == 26,
         "backfill statistics count states and downsampled chart points");
 
+  // Representative REST minimal_response shape: the first object establishes
+  // an inner array's identity, compact intermediate objects inherit it, and a
+  // full final object may repeat it. Series order is independent of the request
+  // order, and an empty series remains structurally valid.
+  const char* minimal_response =
+      "[[{\"entity_id\":\"sensor.grid\",\"state\":\"-1000\","
+      "\"last_changed\":\"2026-08-16T01:00:00.123456+01:00\","
+      "\"last_updated\":\"2026-08-16T01:00:00.123456+01:00\","
+      "\"attributes\":null,\"context\":null},"
+      "{\"state\":\"-2000\","
+      "\"last_changed\":\"2026-08-16T01:02:00.5+01:00\"},"
+      "{\"entity_id\":\"sensor.grid\",\"state\":\"-500\","
+      "\"last_changed\":null,"
+      "\"last_updated\":\"2026-08-16T00:04:00+00:00\"}],[],"
+      "[{\"entity_id\":\"sensor.pv\",\"state\":\"1000\","
+      "\"last_changed\":\"2026-08-16T00:00:00.000001Z\"},"
+      "{\"state\":\"unknown\","
+      "\"last_changed\":\"2026-08-16T00:01:00+00:00\"},"
+      "{\"state\":\"unavailable\","
+      "\"last_changed\":\"2026-08-16T00:02:00+00:00\"},"
+      "{\"entity_id\":\"sensor.pv\",\"state\":\"2000\","
+      "\"last_changed\":\"2026-08-16T00:03:00+00:00\","
+      "\"last_updated\":\"2026-08-16T00:03:00+00:00\"}],"
+      "[{\"entity_id\":\"sensor.soc\",\"state\":\"55\","
+      "\"last_changed\":\"2026-08-16T00:00:00+00:00\"}],"
+      "[{\"entity_id\":\"sensor.battery\",\"state\":\"-500\","
+      "\"last_changed\":\"2026-08-16T00:00:00+00:00\"}]]";
+  history_reset(HistoryBank::Live);
+  HaHistoryParser minimal_parser(fields, field_count, MIDNIGHT, NEXT_MIDNIGHT,
+                                 CUTOFF);
+  check(parse_history_in_chunks(&minimal_parser, minimal_response, 11) ==
+            HaHistoryParseResult::Applied,
+        "documented HA minimal response shape parses incrementally");
+  check(history_value(HistoryBank::Live, HistorySeries::Pv,
+                      MIDNIGHT / 60).known &&
+            !history_value(HistoryBank::Live, HistorySeries::Pv,
+                           MIDNIGHT / 60 + 1).known &&
+            history_value(HistoryBank::Live, HistorySeries::Pv,
+                          MIDNIGHT / 60 + 3).known,
+        "minimal unknown and unavailable states remain gaps within inherited series");
+  check_near(history_value(HistoryBank::Live, HistorySeries::Pv,
+                           MIDNIGHT / 60 + 3).value,
+             2.0f, "full last object may repeat the current series entity");
+  check(minimal_parser.error() == HaHistoryParseError::None,
+        "valid minimal response has no parser diagnostic");
+
   history_reset(HistoryBank::Live);
   HaHistoryField home_ev_fields[] = {
       {HaEntity::HomePower, "sensor.home", HaUnit::Kilowatts},
@@ -831,8 +877,14 @@ void test_home_assistant_history() {
 
   history_reset(HistoryBank::Live);
   HaHistoryParser empty_parser(direct_fields, 1, MIDNIGHT, NEXT_MIDNIGHT, CUTOFF);
-  check(parse_history_in_chunks(&empty_parser, "[]", 1) == HaHistoryParseResult::NoData,
-        "empty Recorder history is a permanent no-data result");
+  check(parse_history_in_chunks(&empty_parser, "[]", 1) ==
+            HaHistoryParseResult::NoData,
+        "empty outer Recorder history is a permanent no-data result");
+  HaHistoryParser empty_series_parser(direct_fields, 1, MIDNIGHT,
+                                      NEXT_MIDNIGHT, CUTOFF);
+  check(parse_history_in_chunks(&empty_series_parser, "[[],[]]", 1) ==
+            HaHistoryParseResult::NoData,
+        "empty Recorder entity arrays are structurally valid no-data results");
   const char* missing =
       "[[{\"entity_id\":\"sensor.not_recorded\",\"state\":\"1\","
       "\"last_changed\":\"2026-08-16T00:00:00Z\"}]]";
@@ -849,6 +901,32 @@ void test_home_assistant_history() {
   check(parse_history_in_chunks(&structural_parser, "[[],]", 2) ==
             HaHistoryParseResult::BadPayload,
         "malformed Recorder array structure is rejected");
+  HaHistoryParser missing_id_parser(direct_fields, 1, MIDNIGHT, NEXT_MIDNIGHT,
+                                    CUTOFF);
+  const char* missing_first_id =
+      "[[{\"state\":\"1\","
+      "\"last_changed\":\"2026-08-16T00:00:00+00:00\"}]]";
+  check(parse_history_in_chunks(&missing_id_parser, missing_first_id, 8) ==
+            HaHistoryParseResult::BadPayload &&
+            missing_id_parser.error() == HaHistoryParseError::MissingEntityId &&
+            missing_id_parser.error_series() == 1,
+        "minimal series must establish entity identity on its first object");
+  HaHistoryParser timestamp_parser(direct_fields, 1, MIDNIGHT, NEXT_MIDNIGHT,
+                                   CUTOFF);
+  const char* invalid_timestamp =
+      "[[{\"entity_id\":\"sensor.home\",\"state\":\"1\","
+      "\"last_changed\":\"not-a-timestamp\"}]]";
+  check(parse_history_in_chunks(&timestamp_parser, invalid_timestamp, 9) ==
+            HaHistoryParseResult::BadPayload &&
+            timestamp_parser.error() == HaHistoryParseError::InvalidTimestamp,
+        "invalid state timestamp has a specific parser diagnostic");
+  HaHistoryParser top_level_parser(direct_fields, 1, MIDNIGHT, NEXT_MIDNIGHT,
+                                   CUTOFF);
+  check(parse_history_in_chunks(&top_level_parser, "{}", 1) ==
+            HaHistoryParseResult::BadPayload &&
+            top_level_parser.error() ==
+                HaHistoryParseError::UnexpectedTopLevelToken,
+        "non-array response has a specific parser diagnostic");
   check_near(history_value(HistoryBank::Live, HistorySeries::Pv, CUTOFF / 60).value,
              9.0f, "malformed history preserves existing live samples");
 

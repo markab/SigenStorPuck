@@ -21,13 +21,66 @@ constexpr const char* USER_AGENT = "SigenStorPuck/" PUCK_FW_VERSION " (ESP32-S3)
 constexpr uint16_t CONNECT_TIMEOUT_MS = 4000;
 constexpr uint16_t TOTAL_TIMEOUT_MS = 8000;
 constexpr uint16_t HISTORY_IDLE_TIMEOUT_MS = 12000;
-constexpr size_t HISTORY_CHUNK_BYTES = 512;
 // The parser itself has fixed memory. This cap also prevents a broken or hostile
 // endpoint from holding the polling task while sending an endless response.
 constexpr size_t HISTORY_RESPONSE_MAX_BYTES = 1024 * 1024;
 
 HaParseInfo s_live_info;
 bool s_live_info_valid = false;
+
+class HistoryParseStream : public Stream {
+ public:
+  explicit HistoryParseStream(HaHistoryParser* parser) : parser_(parser) {}
+
+  size_t write(uint8_t value) override {
+    return write(&value, 1);
+  }
+
+  size_t write(const uint8_t* data, size_t length) override {
+    if (failed_) {
+      return 0;
+    }
+    if (data == nullptr) {
+      failed_ = true;
+      return 0;
+    }
+    if (length > HISTORY_RESPONSE_MAX_BYTES - received_) {
+      failed_ = true;
+      too_large_ = true;
+      return 0;
+    }
+    if (!parser_->feed(data, length)) {
+      failed_ = true;
+      return 0;
+    }
+    received_ += length;
+    return length;
+  }
+
+  int available() override { return 0; }
+  int read() override { return -1; }
+  int peek() override { return -1; }
+
+  bool failed() const { return failed_; }
+  bool too_large() const { return too_large_; }
+
+ private:
+  HaHistoryParser* parser_ = nullptr;
+  size_t received_ = 0;
+  bool failed_ = false;
+  bool too_large_ = false;
+};
+
+void log_history_parse_error(const HaHistoryParser& parser) {
+  if (parser.error_series() != 0) {
+    Serial.printf("[ha-history] parse failed: %s in series %u\n",
+                  ha_history_parse_error_name(parser.error()),
+                  static_cast<unsigned>(parser.error_series()));
+  } else {
+    Serial.printf("[ha-history] parse failed: %s\n",
+                  ha_history_parse_error_name(parser.error()));
+  }
+}
 
 extern "C" const uint8_t rootca_crt_bundle_start[] asm("_binary_x509_crt_bundle_start");
 extern "C" const uint8_t rootca_crt_bundle_end[] asm("_binary_x509_crt_bundle_end");
@@ -258,8 +311,9 @@ FetchResult home_assistant_api_fetch_history(uint32_t cutoff_ts, int* status_cod
   http.setTimeout(HISTORY_IDLE_TIMEOUT_MS);
   http.setUserAgent(USER_AGENT);
   // Reading directly from the network stream avoids a second full JSON buffer.
-  // HTTP/1.0 asks HA to delimit the body by length/connection rather than chunk
-  // framing, leaving the incremental parser to see JSON bytes only.
+  // HTTPClient::writeToStream removes any HTTP chunk framing before passing the
+  // bounded body to our incremental parser. Some HA proxies return chunked
+  // HTTP/1.1 even when the request asks for HTTP/1.0.
   http.useHTTP10(true);
   http.setReuse(false);
   http.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
@@ -286,6 +340,8 @@ FetchResult home_assistant_api_fetch_history(uint32_t cutoff_ts, int* status_cod
 
   const int content_length = http.getSize();
   if (content_length > static_cast<int>(HISTORY_RESPONSE_MAX_BYTES)) {
+    Serial.printf("[ha-history] parse failed: response exceeds %u-byte limit\n",
+                  static_cast<unsigned>(HISTORY_RESPONSE_MAX_BYTES));
     http.end();
     return FetchResult::BadPayload;
   }
@@ -295,51 +351,23 @@ FetchResult home_assistant_api_fetch_history(uint32_t cutoff_ts, int* status_cod
   HaHistoryParser parser(fields, field_count, s_live_info.local_midnight_ts,
                          s_live_info.next_local_midnight_ts, cutoff_ts);
   if (!parser.ready()) {
+    log_history_parse_error(parser);
     http.end();
     return FetchResult::BadPayload;
   }
-  NetworkClient* stream = http.getStreamPtr();
-  uint8_t chunk[HISTORY_CHUNK_BYTES];
-  size_t received = 0;
-  int remaining = content_length;
-  uint32_t last_progress = millis();
-  bool stream_ok = true;
-  bool parse_ok = true;
-  while (http.connected() && remaining != 0) {
-    const size_t available = stream->available();
-    if (available == 0) {
-      if (millis() - last_progress >= HISTORY_IDLE_TIMEOUT_MS) {
-        stream_ok = false;
-        break;
-      }
-      delay(1);
-      continue;
-    }
-    size_t wanted = available < sizeof(chunk) ? available : sizeof(chunk);
-    if (remaining > 0 && wanted > static_cast<size_t>(remaining)) {
-      wanted = static_cast<size_t>(remaining);
-    }
-    const int got = stream->read(chunk, wanted);
-    if (got <= 0) {
-      stream_ok = false;
-      break;
-    }
-    received += static_cast<size_t>(got);
-    if (received > HISTORY_RESPONSE_MAX_BYTES ||
-        !parser.feed(chunk, static_cast<size_t>(got))) {
-      parse_ok = false;
-      break;
-    }
-    if (remaining > 0) {
-      remaining -= got;
-    }
-    last_progress = millis();
-  }
+  HistoryParseStream sink(&parser);
+  const int transferred = http.writeToStream(&sink);
   http.end();
-  if (!parse_ok) {
+  if (sink.too_large()) {
+    Serial.printf("[ha-history] parse failed: response exceeds %u-byte limit\n",
+                  static_cast<unsigned>(HISTORY_RESPONSE_MAX_BYTES));
     return FetchResult::BadPayload;
   }
-  if (!stream_ok || remaining > 0) {
+  if (sink.failed()) {
+    log_history_parse_error(parser);
+    return FetchResult::BadPayload;
+  }
+  if (transferred < 0) {
     return FetchResult::ReadTimeout;
   }
 
@@ -354,7 +382,10 @@ FetchResult home_assistant_api_fetch_history(uint32_t cutoff_ts, int* status_cod
     case HaHistoryParseResult::NoData:
       return FetchResult::EntityUnavailable;
     case HaHistoryParseResult::BadPayload:
+      log_history_parse_error(parser);
+      return FetchResult::BadPayload;
     case HaHistoryParseResult::NoMemory:
+      log_history_parse_error(parser);
       return FetchResult::BadPayload;
   }
   return FetchResult::BadPayload;
