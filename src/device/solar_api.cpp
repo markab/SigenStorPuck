@@ -231,6 +231,17 @@ FetchResult solar_api_service() {
   // recently it was fetched. Without this, a device left running would show
   // yesterday's curve well into the morning.
   const bool rolled = s_have_weather && now_s >= s_day_start + 86400;
+  if (rolled) {
+    // Drop it before trying to replace it, rather than after succeeding. The
+    // fetch below can fail, and midnight is precisely when nobody is watching to
+    // notice — so keeping yesterday's figures until a retry happens to work puts
+    // yesterday's forecast under today's date, with "remaining" reading zero
+    // because every slot is in the past, and vs-forecast measuring this morning's
+    // generation against the whole of yesterday. Four dashes is the honest answer
+    // to "what is today's forecast" before today's has arrived.
+    s_have_weather = false;
+    s_have_forecast = false;
+  }
   const bool moved = s_have_forecast && !same_place(site, s_computed_for);
   const bool stale = s_last_attempt_ms == 0 || now_ms - s_last_attempt_ms >= REFRESH_MS;
   // A fetch that failed waits its full retry regardless of what prompted the next
@@ -263,7 +274,13 @@ void solar_api_apply(Snapshot* snapshot) {
   if (snapshot == nullptr || !snapshot->valid) {
     return;
   }
-  if (!s_have_forecast) {
+  // The day check is repeated here rather than left to solar_api_service(),
+  // because this runs first in the poll loop: on the first cycle after midnight
+  // the service call has not yet had its chance to notice, and one poll of
+  // yesterday's forecast is still a wrong figure on the glass.
+  const uint32_t now = static_cast<uint32_t>(time(nullptr));
+  const bool expired = s_day_start != 0 && now >= s_day_start + 86400;
+  if (!s_have_forecast || expired) {
     // Configured but nothing fetched yet reports `configured` with nulls, the
     // same shape the server sends when Open-Meteo is unreachable: the screen then
     // says "no forecast yet" rather than "no PV system".
@@ -276,8 +293,7 @@ void solar_api_apply(Snapshot* snapshot) {
   snapshot->tz_offset_min.known = true;
   snapshot->tz_offset_min.value = s_utc_offset_min;
 
-  const SolarSummary summary =
-      solar_summarise(s_slot_kwh, s_day_start, static_cast<uint32_t>(time(nullptr)));
+  const SolarSummary summary = solar_summarise(s_slot_kwh, s_day_start, now);
 
   snapshot->solar.configured = true;
   snapshot->solar.forecast_kwh = {true, summary.forecast_kwh};

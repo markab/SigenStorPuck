@@ -56,6 +56,13 @@ bool s_day_complained = false;
 // the button runs on the UI loop, and a TLS request there would stall drawing
 // for the whole of a handshake.
 int s_loaded_offset = 0;
+// The date the loaded day actually is, not just how many days back it was when
+// it was asked for. An offset is relative to now, and "now" moves: parked on
+// yesterday at 23:59, the same offset means a different day one minute later.
+// Without this the screens keep the day they loaded while the chip above them
+// silently renames it, so the figures and the date disagree until the 15-minute
+// refresh happens to notice.
+String s_loaded_date;
 uint32_t s_last_dated_ms = 0;
 Snapshot s_day_snapshot;
 bool s_day_valid = false;
@@ -202,18 +209,32 @@ void poll_task(void* /*argument*/) {
       // the button handler because that runs on the UI loop, where a TLS
       // handshake would stall drawing for its whole duration.
       const int wanted = ui_day_offset();
-      const bool changed = wanted != s_loaded_offset;
+      const String date = wanted == 0 ? String() : date_for_offset(wanted);
+      // Compared by date, not by offset. The day rolling over past midnight
+      // changes which date an unchanged offset names, and that has to count as a
+      // change or the screens keep yesterday's figures under today's chip.
+      const bool changed = wanted != s_loaded_offset || date != s_loaded_date;
       const bool stale = s_last_dated_ms == 0 || now - s_last_dated_ms >= DATED_REFRESH_MS;
       if (wanted == 0) {
         // Back to live. Nothing to fetch, and the day bank is left as it is —
         // stepping back to the same day again should not have to reload it.
         if (s_loaded_offset != 0 && xSemaphoreTake(s_lock, portMAX_DELAY) == pdTRUE) {
           s_loaded_offset = 0;
+          s_loaded_date = String();
           s_day_valid = false;
           xSemaphoreGive(s_lock);
         }
-      } else if (status.ever_succeeded && (changed || stale)) {
-        const String date = date_for_offset(wanted);
+      } else if (changed && s_day_valid) {
+        // Drop what is on screen before fetching its replacement, so the gap
+        // reads as LOADING rather than as the previous day wearing the new day's
+        // date. This is what a button press already gets; midnight deserves the
+        // same treatment.
+        if (xSemaphoreTake(s_lock, portMAX_DELAY) == pdTRUE) {
+          s_day_valid = false;
+          xSemaphoreGive(s_lock);
+        }
+      }
+      if (wanted != 0 && status.ever_succeeded && (changed || stale)) {
         if (!date.isEmpty()) {
           // The curve first: on a change the chart is the slowest thing to
           // arrive, and loading it before the figures avoids a frame showing the
@@ -231,6 +252,7 @@ void poll_task(void* /*argument*/) {
               s_day_snapshot = dated;
               s_day_valid = true;
               s_loaded_offset = wanted;
+              s_loaded_date = date;
               xSemaphoreGive(s_lock);
             }
             s_last_dated_ms = now;
