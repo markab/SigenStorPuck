@@ -75,6 +75,13 @@ uint32_t history_head_minute(HistoryBank which);
 // timestamp, and what a clock correction could do on a device.
 uint32_t history_generation(HistoryBank which);
 
+// Changes when data is inserted independently of the normal live refresh, or
+// when the day window/reset changes. In particular, a late Recorder sample whose
+// minute is older than history_head_minute() is observable across CPU cores.
+// Repeated live writes inside the current minute remain governed by the chart
+// cache's intentional once-per-minute behavior.
+uint32_t history_revision(HistoryBank which);
+
 // How many minutes of the window actually hold a sample. Screens use this to
 // tell "nothing recorded yet" from "recorded, and it was zero" — a chart that
 // draws a flat line along the bottom before any data arrives is a lie.

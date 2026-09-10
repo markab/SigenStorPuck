@@ -1,5 +1,6 @@
 #include "history.h"
 
+#include <atomic>
 #include <string.h>
 
 namespace {
@@ -39,6 +40,11 @@ struct Bank {
   bool day_window_known = false;
 
   uint32_t generation = 0;
+  // Published after data/window writes, including a late Recorder sample behind
+  // `head`. Recorder and the UI run on different cores, so release/acquire is
+  // required here rather than relying on an aligned uint32_t happening to be
+  // observed coherently.
+  std::atomic<uint32_t> revision{0};
   bool initialised = false;
 };
 
@@ -52,6 +58,10 @@ HistoryBank s_view = HistoryBank::Live;
 Bank& bank_of(HistoryBank which) {
   const size_t index = static_cast<size_t>(which);
   return s_bank[index < static_cast<size_t>(HistoryBank::Count) ? index : 0];
+}
+
+void publish_revision(Bank& bank) {
+  bank.revision.fetch_add(1, std::memory_order_release);
 }
 
 void ensure_initialised(HistoryBank which) {
@@ -141,6 +151,7 @@ void history_reset(HistoryBank which) {
   bank.day_window_known = false;
   bank.initialised = true;
   ++bank.generation;
+  publish_revision(bank);
   // The timezone deliberately survives. A reset means the clock jumped or we are
   // starting up; neither says anything about which timezone we are in, and
   // dropping it would put the charts back on the rolling window for no reason.
@@ -153,7 +164,9 @@ void history_put(HistoryBank which, HistorySeries series, uint32_t minute, float
     return;
   }
   advance_to(which, minute);
-  bank_of(which).ring[index].sample[minute % HISTORY_CAPACITY_MINUTES] = encode(value);
+  Bank& bank = bank_of(which);
+  bank.ring[index].sample[minute % HISTORY_CAPACITY_MINUTES] = encode(value);
+  publish_revision(bank);
 }
 
 void history_record(const Snapshot& snapshot) {
@@ -209,6 +222,10 @@ uint32_t history_generation(HistoryBank which) {
   return bank_of(which).generation;
 }
 
+uint32_t history_revision(HistoryBank which) {
+  return bank_of(which).revision.load(std::memory_order_acquire);
+}
+
 size_t history_sample_count(HistoryBank which, HistorySeries series) {
   ensure_initialised(which);
   const size_t index = static_cast<size_t>(series);
@@ -241,6 +258,7 @@ void history_set_day_window(HistoryBank which, uint32_t from_minute,
   bank.day_from = from_minute;
   bank.day_to = to_minute;
   bank.day_window_known = true;
+  publish_revision(bank);
 }
 
 void history_set_view(HistoryBank which) {

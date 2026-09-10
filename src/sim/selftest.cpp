@@ -671,6 +671,39 @@ void test_history() {
   check(history_head_minute(HistoryBank::Live) == midnight + 600, "head follows the newest sample");
   check(history_sample_count(HistoryBank::Live, HistorySeries::Pv) == 601, "every minute recorded");
 
+  const uint32_t revision = history_revision(HistoryBank::Live);
+  history_put(HistoryBank::Live, HistorySeries::Soc, midnight + 100, 55.0f);
+  check(history_head_minute(HistoryBank::Live) == midnight + 600 &&
+            history_revision(HistoryBank::Live) != revision,
+        "a late backfill sample changes revision without moving the live head");
+
+  // Model a chart having consumed that revision, followed by interaction and a
+  // later Recorder window writing behind the same live head. The second write
+  // must publish a new cache key and both samples must survive reduction.
+  HistoryColumn backfill_columns[144];
+  const uint32_t handled_revision = history_revision(HistoryBank::Live);
+  history_reduce(HistoryBank::Live, HistorySeries::Soc, midnight,
+                 midnight + 1440, backfill_columns, 144);
+  check(backfill_columns[10].known, "first late sample reaches reduced chart data");
+  history_put(HistoryBank::Live, HistorySeries::Soc, midnight + 200, 65.0f);
+  check(history_head_minute(HistoryBank::Live) == midnight + 600 &&
+            history_revision(HistoryBank::Live) != handled_revision,
+        "a later Recorder window publishes another cache revision");
+  history_reduce(HistoryBank::Live, HistorySeries::Soc, midnight,
+                 midnight + 1440, backfill_columns, 144);
+  check(backfill_columns[10].known && backfill_columns[20].known,
+        "refresh after interaction includes both late Recorder windows");
+
+  Snapshot same_minute_live;
+  same_minute_live.valid = true;
+  same_minute_live.ts = (midnight + 600) * 60;
+  same_minute_live.power.pv.known = true;
+  same_minute_live.power.pv.value = 7.0f;
+  const uint32_t before_live_refresh = history_revision(HistoryBank::Live);
+  history_record(same_minute_live);
+  check(history_revision(HistoryBank::Live) == before_live_refresh,
+        "same-minute live refresh does not invalidate the reduced chart cache");
+
   check(history_window(HistoryBank::Live, &from, &to), "window available once recorded");
   check(from == midnight, "window anchors to local midnight");
   check(to == midnight + 1440, "window covers the whole day");
