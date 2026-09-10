@@ -15,6 +15,7 @@
 #include "screen_settings.h"
 #include "screen_solar.h"
 #include "theme.h"
+#include "ui_perf.h"
 
 namespace {
 
@@ -64,6 +65,15 @@ bool s_rotate_enabled = true;
 int s_day_offset = 0;
 uint32_t s_last_ts = 0;
 bool s_day_stepping = true;
+
+bool screen_has_chart(int index) {
+  if (index < 0 || index >= s_screen_count) {
+    return false;
+  }
+  const PuckScreen screen = s_screen_at[index];
+  return screen == PUCK_SCREEN_BATTERY || screen == PUCK_SCREEN_SOLAR ||
+         screen == PUCK_SCREEN_LOAD;
+}
 
 // The live reading and the viewed day, held apart because different screens want
 // different ones. Screen 1 is always live; the rest follow the day when there is
@@ -146,8 +156,16 @@ void housekeeping_tick(lv_timer_t* /*timer*/) {
       for (int step = 1; step <= s_screen_count; ++step) {
         const int candidate = (ui_current_screen() + step) % s_screen_count;
         if (s_rotate_mask & (1u << s_screen_at[candidate])) {
-          lv_obj_set_tile(s_tileview, s_tiles[candidate], LV_ANIM_ON);
-          highlight_active_dot();
+          const int current = ui_current_screen();
+          ui_perf_transition_begin(UiPerfTransitionKind::AutoCycle, current,
+                                   candidate, false, screen_has_chart(current),
+                                   screen_has_chart(candidate));
+          // Auto-cycling is decorative rather than a gesture. An animated slide
+          // held the UI core in repeated full-height redraws long after the
+          // destination was known; a direct change responds immediately while
+          // finger-driven swipes retain their native motion.
+          lv_obj_set_tile(s_tileview, s_tiles[candidate], LV_ANIM_OFF);
+          ui_perf_transition_ready(candidate, screen_has_chart(candidate));
           break;
         }
       }
@@ -247,6 +265,25 @@ void on_tile_changed(lv_event_t* /*event*/) {
   // neither, so swiping on and off it has to re-decide.
   refresh_day_chip();
   refresh_top_slot();
+}
+
+void on_tile_scroll_begin(lv_event_t* /*event*/) {
+  const int current = ui_current_screen();
+  ui_perf_swipe_begin(current, screen_has_chart(current));
+}
+
+void on_tile_scroll_end(lv_event_t* /*event*/) {
+  // A released swipe can emit SCROLL_END once when its snap animation starts
+  // and again when that animation actually finishes. Only the latter is
+  // visually complete. The active tile already names the snap destination, so
+  // comparing it with the current scroll position avoids reporting the first
+  // event as the end of the transition.
+  lv_obj_t* active = lv_tileview_get_tile_act(s_tileview);
+  if (active == nullptr || lv_obj_get_scroll_x(s_tileview) != lv_obj_get_x(active)) {
+    return;
+  }
+  const int current = ui_current_screen();
+  ui_perf_transition_ready(current, screen_has_chart(current));
 }
 
 }  // namespace
@@ -416,6 +453,8 @@ lv_obj_t* ui_create(lv_obj_t* parent, const UiConfig& config) {
   lv_timer_create(housekeeping_tick, 1000, nullptr);
 
   lv_obj_add_event_cb(s_tileview, on_tile_changed, LV_EVENT_VALUE_CHANGED, nullptr);
+  lv_obj_add_event_cb(s_tileview, on_tile_scroll_begin, LV_EVENT_SCROLL_BEGIN, nullptr);
+  lv_obj_add_event_cb(s_tileview, on_tile_scroll_end, LV_EVENT_SCROLL_END, nullptr);
   highlight_active_dot();
 
   return s_tileview;
@@ -715,10 +754,15 @@ void ui_show_screen(int index) {
   if (s_tileview == nullptr || index < 0 || index >= s_screen_count) {
     return;
   }
-  // No animation: used to jump straight to a screen for a screenshot, where a
-  // half-finished slide would be captured instead of the screen.
+  const int current = ui_current_screen();
+  if (current == index) {
+    return;
+  }
+  ui_perf_transition_begin(UiPerfTransitionKind::Programmatic, current, index,
+                           false, screen_has_chart(current),
+                           screen_has_chart(index));
+  // No animation: used both for immediate button response and to jump straight
+  // to a simulator screenshot, where a half-finished slide would be captured.
   lv_obj_set_tile(s_tileview, s_tiles[index], LV_ANIM_OFF);
-  highlight_active_dot();
-  refresh_day_chip();
-  refresh_top_slot();
+  ui_perf_transition_ready(index, screen_has_chart(index));
 }
