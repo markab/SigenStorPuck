@@ -104,6 +104,23 @@ const char* ha_history_parse_error_name(HaHistoryParseError error) {
   return "unknown parser error";
 }
 
+bool HaHistoryResponseLimiter::accept(size_t bytes) {
+  if (exceeded_ || bytes > HA_HISTORY_RESPONSE_MAX_BYTES - received_) {
+    exceeded_ = true;
+    return false;
+  }
+  received_ += bytes;
+  return true;
+}
+
+size_t HaHistoryResponseLimiter::received() const {
+  return received_;
+}
+
+bool HaHistoryResponseLimiter::exceeded() const {
+  return exceeded_;
+}
+
 size_t ha_history_fields_build(const char* const entity_ids[HA_ENTITY_COUNT],
                                const HaUnit units[HA_ENTITY_COUNT],
                                HaHistoryField out[HA_HISTORY_MAX_FIELDS]) {
@@ -200,10 +217,19 @@ bool ha_history_timestamp_parse(const char* text, uint32_t* timestamp) {
 HaHistoryParser::HaHistoryParser(const HaHistoryField* fields, size_t field_count,
                                  uint32_t local_midnight_ts,
                                  uint32_t next_local_midnight_ts,
-                                 uint32_t cutoff_ts) {
+                                 uint32_t cutoff_ts)
+    : HaHistoryParser(fields, field_count, local_midnight_ts,
+                      next_local_midnight_ts, local_midnight_ts, cutoff_ts) {}
+
+HaHistoryParser::HaHistoryParser(const HaHistoryField* fields, size_t field_count,
+                                 uint32_t local_midnight_ts,
+                                 uint32_t next_local_midnight_ts,
+                                 uint32_t range_start_ts,
+                                 uint32_t range_end_ts) {
   if (fields == nullptr || field_count == 0 || field_count > HA_HISTORY_MAX_FIELDS ||
-      local_midnight_ts == 0 || cutoff_ts <= local_midnight_ts ||
-      next_local_midnight_ts <= local_midnight_ts || cutoff_ts > next_local_midnight_ts) {
+      local_midnight_ts == 0 || next_local_midnight_ts <= local_midnight_ts ||
+      range_start_ts < local_midnight_ts || range_end_ts <= range_start_ts ||
+      range_end_ts > next_local_midnight_ts) {
     fail(HaHistoryParseError::InvalidConfiguration);
     return;
   }
@@ -220,12 +246,15 @@ HaHistoryParser::HaHistoryParser(const HaHistoryField* fields, size_t field_coun
 
   day_from_minute_ = local_midnight_ts / 60;
   day_to_minute_ = (next_local_midnight_ts + 59) / 60;
-  cutoff_minute_ = cutoff_ts / 60;
-  first_minute_ = day_from_minute_;
-  if (cutoff_minute_ - first_minute_ >= HISTORY_CAPACITY_MINUTES) {
-    first_minute_ = cutoff_minute_ - (HISTORY_CAPACITY_MINUTES - 1);
+  first_minute_ = range_start_ts / 60;
+  cutoff_minute_ = range_end_ts / 60;
+  if (cutoff_minute_ <= first_minute_ ||
+      cutoff_minute_ - first_minute_ >= HISTORY_CAPACITY_MINUTES) {
+    fail(HaHistoryParseError::InvalidConfiguration);
+    return;
   }
-  const size_t sample_count = field_count_ * HISTORY_CAPACITY_MINUTES;
+  sample_span_ = cutoff_minute_ - first_minute_;
+  const size_t sample_count = field_count_ * sample_span_;
   samples_.reset(new (std::nothrow) int16_t[sample_count]);
   if (!samples_) {
     no_memory_ = true;
@@ -443,7 +472,7 @@ bool HaHistoryParser::finish_object() {
     if (minute < first_minute_) {
       initial_[i] = event;
     } else if (minute < cutoff_minute_) {
-      samples_[i * HISTORY_CAPACITY_MINUTES + minute - first_minute_] = event;
+      samples_[i * sample_span_ + minute - first_minute_] = event;
     }
   }
   return true;
@@ -493,7 +522,7 @@ HaHistoryParseResult HaHistoryParser::finish(HaHistoryStats* stats) {
   }
   for (uint32_t offset = 0; offset < span; ++offset) {
     for (size_t i = 0; i < field_count_; ++i) {
-      const int16_t event = samples_[i * HISTORY_CAPACITY_MINUTES + offset];
+      const int16_t event = samples_[i * sample_span_ + offset];
       if (event != NO_EVENT) {
         current[i] = event;
       }

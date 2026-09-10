@@ -930,6 +930,16 @@ void test_home_assistant_history() {
   check_near(history_value(HistoryBank::Live, HistorySeries::Pv, CUTOFF / 60).value,
              9.0f, "malformed history preserves existing live samples");
 
+  HaHistoryResponseLimiter below_limit;
+  check(below_limit.accept(HA_HISTORY_RESPONSE_MAX_BYTES / 2) &&
+            below_limit.accept(HA_HISTORY_RESPONSE_MAX_BYTES / 2) &&
+            below_limit.received() == HA_HISTORY_RESPONSE_MAX_BYTES &&
+            !below_limit.exceeded(),
+        "an individual window may stream up to the fixed response ceiling");
+  check(!below_limit.accept(1) && below_limit.exceeded() &&
+            below_limit.received() == HA_HISTORY_RESPONSE_MAX_BYTES,
+        "an oversized individual window fails without accepting a truncated byte");
+
   HaHistoryField unsupported[] = {
       {HaEntity::PvPower, "sensor.pv", HaUnit::Unknown},
   };
@@ -956,6 +966,62 @@ void test_home_assistant_history() {
         "history up to the first live minute is applied");
   check_near(history_value(HistoryBank::Live, HistorySeries::Pv, CUTOFF / 60).value,
              9.0f, "Recorder overlap cannot replace the first live sample");
+
+  constexpr uint32_t WINDOW_BOUNDARY = MIDNIGHT + 2 * 60 * 60u;
+  constexpr uint32_t WINDOW_CUTOFF = MIDNIGHT + 4 * 60 * 60u;
+  const char* first_window =
+      "[[{\"entity_id\":\"sensor.pv\",\"state\":\"1000\","
+      "\"last_changed\":\"2026-08-16T00:00:00Z\"},"
+      "{\"state\":\"2000\","
+      "\"last_changed\":\"2026-08-16T01:59:00Z\"},"
+      "{\"state\":\"99000\","
+      "\"last_changed\":\"2026-08-16T02:00:00Z\"}]]";
+  const char* second_window =
+      "[[{\"entity_id\":\"sensor.pv\",\"state\":\"3000\","
+      "\"last_changed\":\"2026-08-16T02:00:00Z\"},"
+      "{\"state\":\"4000\","
+      "\"last_changed\":\"2026-08-16T03:59:00Z\"},"
+      "{\"state\":\"99000\","
+      "\"last_changed\":\"2026-08-16T04:00:00Z\"}]]";
+  history_reset(HistoryBank::Live);
+  history_put(HistoryBank::Live, HistorySeries::Pv, WINDOW_CUTOFF / 60, 9.0f);
+  HaHistoryParser first_window_parser(pv_field, 1, MIDNIGHT, NEXT_MIDNIGHT,
+                                      MIDNIGHT, WINDOW_BOUNDARY);
+  HaHistoryParser second_window_parser(pv_field, 1, MIDNIGHT, NEXT_MIDNIGHT,
+                                       WINDOW_BOUNDARY, WINDOW_CUTOFF);
+  check(parse_history_in_chunks(&first_window_parser, first_window, 13) ==
+            HaHistoryParseResult::Applied &&
+            parse_history_in_chunks(&second_window_parser, second_window, 17) ==
+                HaHistoryParseResult::Applied,
+        "adjacent bounded history windows apply chronologically");
+  check_near(history_value(HistoryBank::Live, HistorySeries::Pv,
+                           WINDOW_BOUNDARY / 60 - 1).value,
+             2.0f, "first history window owns the minute before its boundary");
+  check_near(history_value(HistoryBank::Live, HistorySeries::Pv,
+                           WINDOW_BOUNDARY / 60).value,
+             3.0f, "adjacent window owns the boundary minute without duplication");
+  check_near(history_value(HistoryBank::Live, HistorySeries::Pv,
+                           WINDOW_CUTOFF / 60).value,
+             9.0f, "final window cannot overwrite the exact live cutoff minute");
+
+  history_reset(HistoryBank::Live);
+  history_put(HistoryBank::Live, HistorySeries::Pv, WINDOW_CUTOFF / 60, 9.0f);
+  HaHistoryParser retained_window_parser(pv_field, 1, MIDNIGHT,
+                                         NEXT_MIDNIGHT, MIDNIGHT,
+                                         WINDOW_BOUNDARY);
+  check(parse_history_in_chunks(&retained_window_parser, first_window, 19) ==
+            HaHistoryParseResult::Applied,
+        "completed earlier window restores chart data");
+  HaHistoryParser failed_later_parser(pv_field, 1, MIDNIGHT, NEXT_MIDNIGHT,
+                                      WINDOW_BOUNDARY, WINDOW_CUTOFF);
+  check(parse_history_in_chunks(&failed_later_parser, "[[{bad}]]", 3) ==
+            HaHistoryParseResult::BadPayload &&
+            history_value(HistoryBank::Live, HistorySeries::Pv,
+                          MIDNIGHT / 60).known,
+        "later malformed window leaves an earlier restored window intact");
+  check_near(history_value(HistoryBank::Live, HistorySeries::Pv,
+                           WINDOW_CUTOFF / 60).value,
+             9.0f, "later history failure leaves the good live sample valid");
 
   uint32_t spring_midnight = 0;
   uint32_t spring_next = 0;
@@ -1032,30 +1098,84 @@ void test_history_backfill_retry() {
             history_backfill_outcome(FetchResult::EntityUnavailable) ==
                 HistoryBackfillOutcome::NoData,
         "malformed, missing-endpoint and no-data results are not retried");
+  constexpr uint32_t DAY_START = 1786838400u;
+  constexpr uint32_t DAY_END = DAY_START + 24 * 60 * 60u;
+
+  HistoryBackfillRetry full_day;
+  check(!full_day.due(0), "Recorder waits for the first successful live poll");
+  full_day.activate(DAY_START, DAY_END, DAY_END);
+  uint32_t previous_end = DAY_START;
+  while (full_day.active()) {
+    check(full_day.window_start_ts() == previous_end,
+          "backfill windows are consecutive and chronological");
+    const uint32_t end = full_day.window_end_ts();
+    check(end > previous_end &&
+              end - previous_end <= HISTORY_BACKFILL_WINDOW_SECONDS,
+          "each history request is bounded to two hours");
+    previous_end = end;
+    full_day.record(HistoryBackfillOutcome::Success, 0, 1);
+  }
+  check(full_day.finished() && full_day.succeeded() &&
+            full_day.windows_completed() == 12 &&
+            full_day.points_written() == 12 && previous_end == DAY_END,
+        "a full 24-hour day is split into twelve bounded windows");
+
+  HistoryBackfillRetry partial_day;
+  const uint32_t partial_cutoff = DAY_START + 5 * 60 * 60u + 37 * 60u + 19u;
+  partial_day.activate(DAY_START, DAY_END, partial_cutoff);
+  check(partial_day.window_start_ts() == DAY_START &&
+            partial_day.window_end_ts() ==
+                DAY_START + HISTORY_BACKFILL_WINDOW_SECONDS,
+        "partial current day begins with the normal fixed window");
+  partial_day.record(HistoryBackfillOutcome::Success, 0);
+  partial_day.record(HistoryBackfillOutcome::Success, 0);
+  check(partial_day.window_start_ts() == DAY_START + 4 * 60 * 60u &&
+            partial_day.window_end_ts() == partial_cutoff,
+        "final partial window ends exactly at the latched live cutoff");
+  partial_day.record(HistoryBackfillOutcome::NoData, 0);
+  check(partial_day.succeeded() && partial_day.windows_completed() == 3,
+        "an empty final window completes without retrying forever");
+
+  HistoryBackfillRetry spring_day;
+  const uint32_t spring_end = DAY_START + 23 * 60 * 60u;
+  spring_day.activate(DAY_START, spring_end, spring_end);
+  while (spring_day.active()) {
+    spring_day.record(HistoryBackfillOutcome::Success, 0);
+  }
+  HistoryBackfillRetry autumn_day;
+  const uint32_t autumn_end = DAY_START + 25 * 60 * 60u;
+  autumn_day.activate(DAY_START, autumn_end, autumn_end);
+  while (autumn_day.active()) {
+    autumn_day.record(HistoryBackfillOutcome::Success, 0);
+  }
+  check(spring_day.windows_completed() == 12 &&
+            autumn_day.windows_completed() == 13,
+        "DST-aware 23- and 25-hour day bounds produce complete window sets");
+
   HistoryBackfillRetry retry;
-  check(!retry.due(0), "Recorder waits for the first successful live poll");
-  retry.activate(12345);
-  check(retry.due(100) && retry.cutoff_ts() == 12345,
-        "first live success activates an immediate backfill");
+  retry.activate(DAY_START, DAY_END, DAY_START + 6 * 60 * 60u);
+  retry.record(HistoryBackfillOutcome::Success, 0, 10);
+  const uint32_t middle_start = retry.window_start_ts();
   retry.record(HistoryBackfillOutcome::TransientFailure, 100);
-  check(!retry.due(30099) && retry.due(30100) && retry.attempts() == 1,
-        "transient failure waits thirty seconds before retrying");
+  check(middle_start == DAY_START + 2 * 60 * 60u &&
+            retry.window_start_ts() == middle_start && !retry.due(30099) &&
+            retry.due(30100) && retry.attempts() == 1 &&
+            retry.points_written() == 10,
+        "transient middle-window failure retains completed work and retries in place");
   retry.record(HistoryBackfillOutcome::TransientFailure, 30100);
   check(retry.due(60100), "a second transient failure permits the final retry");
   retry.record(HistoryBackfillOutcome::TransientFailure, 60100);
-  check(retry.finished() && !retry.active() && retry.attempts() == 3,
-        "transient failures stop after three attempts");
+  check(retry.finished() && !retry.active() && !retry.succeeded() &&
+            retry.attempts() == 3 && retry.windows_completed() == 1,
+        "transient failures stop after three attempts without restarting the day");
 
-  HistoryBackfillRetry no_data;
-  no_data.activate(1);
-  no_data.record(HistoryBackfillOutcome::NoData, 0);
-  check(no_data.finished() && no_data.attempts() == 1,
-        "empty or non-recorded history is not retried");
   HistoryBackfillRetry malformed;
-  malformed.activate(1);
+  malformed.activate(DAY_START, DAY_END, DAY_START + 4 * 60 * 60u);
+  malformed.record(HistoryBackfillOutcome::Success, 0, 7);
   malformed.record(HistoryBackfillOutcome::PermanentFailure, 0);
-  check(malformed.finished() && malformed.attempts() == 1,
-        "malformed or unauthorised history is not retried");
+  check(malformed.finished() && malformed.windows_completed() == 1 &&
+            malformed.points_written() == 7,
+        "malformed later window stops safely while retaining earlier totals");
 }
 
 // A day payload straight from /api/day/series, at the shape the device asks for.

@@ -12,8 +12,14 @@
 FetchResult home_assistant_api_fetch(Snapshot* out, int* status_code,
                                      HaParseInfo* parse_info = nullptr);
 
-// One optional boot-time Recorder request, filtered to only the mapped entities
-// used by the existing chart curves. Requires a preceding successful live fetch
-// so historical states can reuse its units and HA-local midnight boundaries.
-FetchResult home_assistant_api_fetch_history(uint32_t cutoff_ts, int* status_code,
+// Returns the DST-aware local-day bounds latched by the successful live fetch.
+bool home_assistant_api_history_bounds(uint32_t* local_midnight_ts,
+                                       uint32_t* next_local_midnight_ts);
+
+// One optional Recorder window, filtered to only the mapped entities used by
+// the chart curves. Requires a preceding successful live fetch so historical
+// states can reuse its units and HA-local day boundaries.
+FetchResult home_assistant_api_fetch_history(uint32_t window_start_ts,
+                                             uint32_t window_end_ts,
+                                             int* status_code,
                                              size_t* points_written = nullptr);

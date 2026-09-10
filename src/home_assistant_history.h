@@ -10,6 +10,7 @@
 #include "home_assistant.h"
 
 static constexpr size_t HA_HISTORY_MAX_FIELDS = 4;
+static constexpr size_t HA_HISTORY_RESPONSE_MAX_BYTES = 1024 * 1024;
 // A no-attributes first/last state can still carry HA's small context object and
 // three timestamps. This remains fixed while leaving room for a maximum entity
 // ID and that standard envelope.
@@ -26,6 +27,19 @@ struct HaHistoryStats {
   size_t matching_states = 0;
   size_t usable_states = 0;
   size_t points_written = 0;
+};
+
+// Bounds each decoded HTTP response without buffering it. Once exceeded, the
+// current window is rejected rather than accepting truncated JSON.
+class HaHistoryResponseLimiter {
+ public:
+  bool accept(size_t bytes);
+  size_t received() const;
+  bool exceeded() const;
+
+ private:
+  size_t received_ = 0;
+  bool exceeded_ = false;
 };
 
 // Selects only entities needed by the three existing chart curves. With a
@@ -62,8 +76,10 @@ enum class HaHistoryParseError : uint8_t {
 const char* ha_history_parse_error_name(HaHistoryParseError error);
 
 // Incrementally consumes Home Assistant's /api/history response. Only one small
-// JSON object is buffered at a time; the fixed per-minute workspace is at most
-// 4 * 1500 * int16_t (11.72 KiB) and is released after this one boot backfill.
+// JSON object is buffered at a time. The per-minute workspace is range-sized
+// (960 bytes for four fields over the normal two-hour request) and is released
+// after each window; the legacy full-range constructor remains bounded by the
+// 25-hour HistoryBank capacity.
 // Nothing is written to HistoryBank::Live until finish() validates the complete
 // response, so malformed payloads cannot partially corrupt a good live chart.
 class HaHistoryParser {
@@ -71,6 +87,9 @@ class HaHistoryParser {
   HaHistoryParser(const HaHistoryField* fields, size_t field_count,
                   uint32_t local_midnight_ts, uint32_t next_local_midnight_ts,
                   uint32_t cutoff_ts);
+  HaHistoryParser(const HaHistoryField* fields, size_t field_count,
+                  uint32_t local_midnight_ts, uint32_t next_local_midnight_ts,
+                  uint32_t range_start_ts, uint32_t range_end_ts);
 
   bool ready() const;
   bool feed(const uint8_t* data, size_t length);
@@ -102,6 +121,7 @@ class HaHistoryParser {
   uint32_t day_to_minute_ = 0;
   uint32_t first_minute_ = 0;
   uint32_t cutoff_minute_ = 0;
+  uint32_t sample_span_ = 0;
 
   char object_[HA_HISTORY_OBJECT_MAX] = {};
   size_t object_length_ = 0;

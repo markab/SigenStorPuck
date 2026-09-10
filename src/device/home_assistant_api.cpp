@@ -21,9 +21,6 @@ constexpr const char* USER_AGENT = "SigenStorPuck/" PUCK_FW_VERSION " (ESP32-S3)
 constexpr uint16_t CONNECT_TIMEOUT_MS = 4000;
 constexpr uint16_t TOTAL_TIMEOUT_MS = 8000;
 constexpr uint16_t HISTORY_IDLE_TIMEOUT_MS = 12000;
-// The parser itself has fixed memory. This cap also prevents a broken or hostile
-// endpoint from holding the polling task while sending an endless response.
-constexpr size_t HISTORY_RESPONSE_MAX_BYTES = 1024 * 1024;
 
 HaParseInfo s_live_info;
 bool s_live_info_valid = false;
@@ -44,16 +41,14 @@ class HistoryParseStream : public Stream {
       failed_ = true;
       return 0;
     }
-    if (length > HISTORY_RESPONSE_MAX_BYTES - received_) {
+    if (!limiter_.accept(length)) {
       failed_ = true;
-      too_large_ = true;
       return 0;
     }
     if (!parser_->feed(data, length)) {
       failed_ = true;
       return 0;
     }
-    received_ += length;
     return length;
   }
 
@@ -62,13 +57,12 @@ class HistoryParseStream : public Stream {
   int peek() override { return -1; }
 
   bool failed() const { return failed_; }
-  bool too_large() const { return too_large_; }
+  bool too_large() const { return limiter_.exceeded(); }
 
  private:
   HaHistoryParser* parser_ = nullptr;
-  size_t received_ = 0;
+  HaHistoryResponseLimiter limiter_;
   bool failed_ = false;
-  bool too_large_ = false;
 };
 
 void log_history_parse_error(const HaHistoryParser& parser) {
@@ -224,7 +218,20 @@ FetchResult home_assistant_api_fetch(Snapshot* out, int* status_code,
   return FetchResult::Ok;
 }
 
-FetchResult home_assistant_api_fetch_history(uint32_t cutoff_ts, int* status_code,
+bool home_assistant_api_history_bounds(uint32_t* local_midnight_ts,
+                                       uint32_t* next_local_midnight_ts) {
+  if (!s_live_info_valid || local_midnight_ts == nullptr ||
+      next_local_midnight_ts == nullptr) {
+    return false;
+  }
+  *local_midnight_ts = s_live_info.local_midnight_ts;
+  *next_local_midnight_ts = s_live_info.next_local_midnight_ts;
+  return true;
+}
+
+FetchResult home_assistant_api_fetch_history(uint32_t window_start_ts,
+                                             uint32_t window_end_ts,
+                                             int* status_code,
                                              size_t* points_written) {
   if (status_code != nullptr) {
     *status_code = 0;
@@ -232,7 +239,10 @@ FetchResult home_assistant_api_fetch_history(uint32_t cutoff_ts, int* status_cod
   if (points_written != nullptr) {
     *points_written = 0;
   }
-  if (!settings_home_assistant_is_configured() || !s_live_info_valid || cutoff_ts == 0) {
+  if (!settings_home_assistant_is_configured() || !s_live_info_valid ||
+      window_start_ts < s_live_info.local_midnight_ts ||
+      window_end_ts <= window_start_ts ||
+      window_end_ts > s_live_info.next_local_midnight_ts) {
     return FetchResult::NotConfigured;
   }
   if (WiFi.status() != WL_CONNECTED) {
@@ -256,17 +266,17 @@ FetchResult home_assistant_api_fetch_history(uint32_t cutoff_ts, int* status_cod
     return FetchResult::EntityUnavailable;
   }
 
-  time_t midnight = static_cast<time_t>(s_live_info.local_midnight_ts);
+  time_t window_start = static_cast<time_t>(window_start_ts);
   struct tm utc = {};
-  if (gmtime_r(&midnight, &utc) == nullptr) {
+  if (gmtime_r(&window_start, &utc) == nullptr) {
     return FetchResult::BadPayload;
   }
   char timestamp[24];
   if (strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%SZ", &utc) == 0) {
     return FetchResult::BadPayload;
   }
-  time_t cutoff = static_cast<time_t>(cutoff_ts);
-  if (gmtime_r(&cutoff, &utc) == nullptr) {
+  time_t window_end = static_cast<time_t>(window_end_ts);
+  if (gmtime_r(&window_end, &utc) == nullptr) {
     return FetchResult::BadPayload;
   }
   char cutoff_timestamp[24];
@@ -291,7 +301,11 @@ FetchResult home_assistant_api_fetch_history(uint32_t cutoff_ts, int* status_cod
   }
   const String url = settings.ha_base_url + "/api/history/period/" + timestamp +
                      "?end_time=" + cutoff_timestamp + "&filter_entity_id=" + filter +
-                     "&minimal_response&no_attributes";
+                     "&minimal_response&no_attributes&significant_changes_only=0";
+
+  // Ask Recorder for every state change and retain Puck-side minute
+  // downsampling. Depending on HA's domain/integration significance rules would
+  // make otherwise equivalent power mappings produce different chart fidelity.
 
   WiFiClient plain;
   WiFiClientSecure tls;
@@ -339,17 +353,18 @@ FetchResult home_assistant_api_fetch_history(uint32_t cutoff_ts, int* status_cod
   }
 
   const int content_length = http.getSize();
-  if (content_length > static_cast<int>(HISTORY_RESPONSE_MAX_BYTES)) {
+  if (content_length > static_cast<int>(HA_HISTORY_RESPONSE_MAX_BYTES)) {
     Serial.printf("[ha-history] parse failed: response exceeds %u-byte limit\n",
-                  static_cast<unsigned>(HISTORY_RESPONSE_MAX_BYTES));
+                  static_cast<unsigned>(HA_HISTORY_RESPONSE_MAX_BYTES));
     http.end();
     return FetchResult::BadPayload;
   }
-  // Allocate the 11.72 KiB minute workspace only after the TLS handshake and
-  // response headers have succeeded. A failed connection should not surrender
-  // heap to optional history before mbedTLS gets what it needs.
+  // Allocate only this window's minute workspace after the TLS handshake and
+  // response headers succeed. For four fields and a two-hour window this is
+  // 960 bytes, released before the next live poll/window.
   HaHistoryParser parser(fields, field_count, s_live_info.local_midnight_ts,
-                         s_live_info.next_local_midnight_ts, cutoff_ts);
+                         s_live_info.next_local_midnight_ts, window_start_ts,
+                         window_end_ts);
   if (!parser.ready()) {
     log_history_parse_error(parser);
     http.end();
@@ -360,7 +375,7 @@ FetchResult home_assistant_api_fetch_history(uint32_t cutoff_ts, int* status_cod
   http.end();
   if (sink.too_large()) {
     Serial.printf("[ha-history] parse failed: response exceeds %u-byte limit\n",
-                  static_cast<unsigned>(HISTORY_RESPONSE_MAX_BYTES));
+                  static_cast<unsigned>(HA_HISTORY_RESPONSE_MAX_BYTES));
     return FetchResult::BadPayload;
   }
   if (sink.failed()) {

@@ -71,10 +71,11 @@ Which screens appear at all is up to you — see **Screens** under Settings.
 
 Behind the solar, load and battery screens is that day's own curve, drawn faintly so it
 does not compete with the figures. In Home Assistant mode the Puck starts one optional,
-entity-filtered Recorder backfill after its first successful live poll and restores today's
-available PV, battery and load curves. If Recorder is disabled, unavailable, excludes an
-entity or has no history, the live readings continue normally and the affected curves
-simply fill from boot. Modbus curves always fill from boot. With a
+entity-filtered Recorder backfill after its first successful live poll. It restores today's
+available PV, battery and load curves in bounded two-hour windows, with a normal live poll
+between windows. If Recorder is disabled, unavailable, excludes an entity or has no
+history, the live readings continue normally and the affected curves simply fill from
+boot. Modbus curves always fill from boot. With a
 **SigenStorDisplay Server** the whole day is fetched, so the curve is complete straight
 away.
 
@@ -165,12 +166,13 @@ configured entities and their units into a compact response; the Puck does not f
 entities one at a time or download all HA states. In this mode the Puck never opens a
 Modbus connection.
 
-After the first successful live poll following a boot, the Puck also makes one filtered
-Home Assistant Recorder history request for the mapped entities needed by today's Solar,
-Battery and Load curves. Recorder is optional: an empty, excluded or unavailable entity
-leaves a gap, and a failed history request never invalidates live data. Transient failures
-are retried twice; no-data and malformed responses are not retried. No previous day is
-downloaded or made browseable.
+After the first successful live poll following a boot, the Puck also reads filtered Home
+Assistant Recorder history for the mapped entities needed by today's Solar, Battery and
+Load curves. Consecutive two-hour requests keep each response bounded, and only one window
+runs between live polls. Recorder is optional: an empty, excluded or unavailable entity
+leaves a gap, and a failed window never invalidates live data or discards completed
+windows. Transient failures are retried twice for the current window; malformed responses
+stop the backfill. No previous day is downloaded or made browseable.
 
 #### Direct Modbus
 
@@ -408,7 +410,8 @@ history ring, button gestures, solar forecast model and screen-off window.
 
 Home Assistant provides live power, battery values, configured today's totals and an
 optional solar forecast from HA entities or the Puck's native model. A single optional
-Recorder request can restore today's chart after restart; without usable Recorder history,
-the same charts fill from live polls beginning at boot. Previous-day browsing, past-day
-chart retrieval, detailed source-to-sink flows, tariffs and costs/savings remain
-deliberately unimplemented. The day controls therefore remain `LIVE ONLY` in HA mode.
+Recorder backfill can restore today's chart after restart using bounded two-hour requests;
+without usable Recorder history, the same charts fill from live polls beginning at boot.
+Previous-day browsing, past-day chart retrieval, detailed source-to-sink flows, tariffs and
+costs/savings remain deliberately unimplemented. The day controls therefore remain
+`LIVE ONLY` in HA mode.

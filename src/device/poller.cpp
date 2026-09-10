@@ -100,6 +100,17 @@ uint32_t backoff_for(uint32_t failures) {
   return delay_ms > BACKOFF_CEILING_MS ? BACKOFF_CEILING_MS : delay_ms;
 }
 
+void format_utc_minute(uint32_t timestamp, char* out, size_t out_size) {
+  const time_t when = static_cast<time_t>(timestamp);
+  struct tm parts = {};
+  if (out == nullptr || out_size == 0 || gmtime_r(&when, &parts) == nullptr ||
+      strftime(out, out_size, "%Y-%m-%dT%H:%MZ", &parts) == 0) {
+    if (out != nullptr && out_size != 0) {
+      out[0] = '\0';
+    }
+  }
+}
+
 FetchResult fetch_source(DataSource source, Snapshot* out, int* detail) {
   switch (source) {
     case DataSource::Server:
@@ -172,7 +183,13 @@ void poll_task(void* /*argument*/) {
         // The cutoff is latched from the first successful HA reading. Recorder
         // owns only earlier minutes; this and later live samples therefore win
         // cleanly if the delayed request overlaps normal polling.
-        history_backfill.activate(fetched.ts);
+        uint32_t local_midnight = 0;
+        uint32_t next_local_midnight = 0;
+        if (home_assistant_api_history_bounds(&local_midnight,
+                                              &next_local_midnight)) {
+          history_backfill.activate(local_midnight, next_local_midnight,
+                                    fetched.ts);
+        }
       }
     } else {
       // Not configured is not a failure to back off from — there is simply
@@ -204,24 +221,35 @@ void poll_task(void* /*argument*/) {
       }
     }
 
-    // Recorder is optional enrichment. Its result never changes PollStatus or
-    // the last good live Snapshot, and empty/excluded/malformed history is not
-    // retried forever. Only transient transport/server failures receive two
-    // delayed retries.
+    // Recorder is optional enrichment. One bounded window runs after each live
+    // poll, so a long day cannot monopolise this task. Completed windows remain
+    // in HistoryBank; a retry resumes the failed window rather than starting at
+    // midnight. None of these outcomes changes PollStatus or the live Snapshot.
     if (capabilities.today_history_backfill && history_backfill.due(millis())) {
+      const uint32_t window_start = history_backfill.window_start_ts();
+      const uint32_t window_end = history_backfill.window_end_ts();
+      char start_text[24];
+      char end_text[24];
+      format_utc_minute(window_start, start_text, sizeof(start_text));
+      format_utc_minute(window_end, end_text, sizeof(end_text));
+      Serial.printf("[ha-history] backfill window %u: %s–%s\n",
+                    static_cast<unsigned>(history_backfill.windows_completed() + 1),
+                    start_text, end_text);
       int history_status = 0;
       size_t points = 0;
       const FetchResult history = home_assistant_api_fetch_history(
-          history_backfill.cutoff_ts(), &history_status, &points);
+          window_start, window_end, &history_status, &points);
       const HistoryBackfillOutcome outcome =
           history_backfill_outcome(history, history_status);
-      history_backfill.record(outcome, millis());
-      if (history == FetchResult::Ok) {
-        Serial.printf("[poll] Home Assistant Recorder restored %u chart points\n",
-                      static_cast<unsigned>(points));
+      history_backfill.record(outcome, millis(), points);
+      if (history_backfill.finished() && history_backfill.succeeded()) {
+        Serial.printf("[ha-history] restored %u chart points from %u windows\n",
+                      static_cast<unsigned>(history_backfill.points_written()),
+                      static_cast<unsigned>(history_backfill.windows_completed()));
       } else if (history_backfill.finished()) {
-        Serial.printf("[poll] Home Assistant Recorder unavailable: %s (http %d) — "
-                      "charts will fill from live polls only\n",
+        Serial.printf("[poll] Home Assistant Recorder stopped after %u windows: "
+                      "%s (http %d) — live charts continue\n",
+                      static_cast<unsigned>(history_backfill.windows_completed()),
                       fetch_result_name(history), history_status);
       }
     }
