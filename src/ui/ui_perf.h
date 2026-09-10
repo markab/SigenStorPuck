@@ -32,6 +32,7 @@ void ui_perf_transition_begin(UiPerfTransitionKind kind, int from_screen,
                               int to_screen, bool animated, bool from_chart,
                               bool to_chart);
 void ui_perf_swipe_begin(int from_screen, bool from_chart);
+void ui_perf_swipe_settle(uint32_t target_ms);
 void ui_perf_transition_ready(int to_screen, bool to_chart);
 void ui_perf_flush(uint8_t rotation, uint32_t pixels, uint32_t rotation_us,
                    uint32_t panel_us, bool frame_end);
@@ -53,6 +54,7 @@ uint32_t ui_perf_now_us();
 inline void ui_perf_transition_begin(UiPerfTransitionKind, int, int, bool, bool,
                                      bool) {}
 inline void ui_perf_swipe_begin(int, bool) {}
+inline void ui_perf_swipe_settle(uint32_t) {}
 inline void ui_perf_transition_ready(int, bool) {}
 inline void ui_perf_flush(uint8_t, uint32_t, uint32_t, uint32_t, bool) {}
 

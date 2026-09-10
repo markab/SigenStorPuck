@@ -16,6 +16,8 @@ struct TransitionStats {
   bool from_chart = false;
   bool to_chart = false;
   uint32_t started_us = 0;
+  uint32_t settle_started_us = 0;
+  uint32_t settle_target_ms = 0;
   uint8_t rotation = 0;
   uint32_t flushes = 0;
   uint32_t frames = 0;
@@ -113,6 +115,14 @@ void ui_perf_swipe_begin(int from_screen, bool from_chart) {
   }
 }
 
+void ui_perf_swipe_settle(uint32_t target_ms) {
+  if (!s_stats.active || s_stats.kind != UiPerfTransitionKind::Swipe) {
+    return;
+  }
+  s_stats.settle_started_us = micros();
+  s_stats.settle_target_ms = target_ms;
+}
+
 void ui_perf_transition_ready(int to_screen, bool to_chart) {
   if (!s_stats.active) {
     return;
@@ -141,18 +151,25 @@ void ui_perf_flush(uint8_t rotation, uint32_t pixels, uint32_t rotation_us,
   }
 
   const uint32_t total_us = micros() - s_stats.started_us;
+  const uint32_t settle_us =
+      s_stats.settle_started_us == 0 ? 0 : micros() - s_stats.settle_started_us;
+  const uint32_t gesture_us =
+      s_stats.settle_started_us == 0
+          ? total_us
+          : s_stats.settle_started_us - s_stats.started_us;
   const uint32_t frame_interval_us =
       s_stats.frames > 1 ? total_us / (s_stats.frames - 1) : 0;
   Serial.printf(
       "[ui-perf] rotation=%u %s %s %d->%d %s->%s total=%uus frames=%u "
-      "interval~=%uus "
+      "interval~=%uus gesture=%uus settle=%uus target=%ums "
       "flushes=%u pixels=%u rotate=%uus panel=%uus chart-refresh=%uus/%u "
       "history-reduce=%uus smooth-columns=%uus chart-draw=%uus/%u\n",
       static_cast<unsigned>(s_stats.rotation), kind_name(s_stats.kind),
       s_stats.animated ? "animated" : "instant", s_stats.from_screen,
       s_stats.to_screen, screen_type(s_stats.from_chart),
       screen_type(s_stats.to_chart), total_us, s_stats.frames, frame_interval_us,
-      s_stats.flushes, s_stats.pixels, s_stats.rotation_us, s_stats.panel_us,
+      gesture_us, settle_us, s_stats.settle_target_ms, s_stats.flushes,
+      s_stats.pixels, s_stats.rotation_us, s_stats.panel_us,
       s_stats.chart_refresh_us, s_stats.chart_refreshes,
       s_stats.history_reduce_us, s_stats.smooth_columns_us,
       s_stats.chart_draw_us, s_stats.chart_draws);

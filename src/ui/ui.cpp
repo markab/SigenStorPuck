@@ -66,6 +66,12 @@ int s_day_offset = 0;
 uint32_t s_last_ts = 0;
 bool s_day_stepping = true;
 
+// LVGL clamps snap animations to 200-400 ms. On the rotated physical display a
+// frame takes roughly 100-190 ms, so that default creates a long trail of costly
+// intermediate frames after the finger is already up. The drag itself remains
+// direct; this only makes the final snap settle in about one rendered frame.
+constexpr uint32_t SWIPE_SETTLE_MS = 80;
+
 bool screen_has_chart(int index) {
   if (index < 0 || index >= s_screen_count) {
     return false;
@@ -267,7 +273,12 @@ void on_tile_changed(lv_event_t* /*event*/) {
   refresh_top_slot();
 }
 
-void on_tile_scroll_begin(lv_event_t* /*event*/) {
+void on_tile_scroll_begin(lv_event_t* event) {
+  if (lv_anim_t* animation = lv_event_get_scroll_anim(event)) {
+    lv_anim_set_time(animation, SWIPE_SETTLE_MS);
+    ui_perf_swipe_settle(SWIPE_SETTLE_MS);
+    return;
+  }
   const int current = ui_current_screen();
   ui_perf_swipe_begin(current, screen_has_chart(current));
 }
