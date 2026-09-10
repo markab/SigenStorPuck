@@ -4,6 +4,7 @@
 
 #include "board_config.h"
 #include "theme.h"
+#include "ui_perf.h"
 
 namespace {
 
@@ -89,6 +90,7 @@ void draw_band(lv_event_t* event) {
   if (band == nullptr || !band->has_data || band->columns == 0) {
     return;
   }
+  UiPerfTimer perf(UiPerfSection::ChartDraw);
 
   lv_draw_ctx_t* ctx = lv_event_get_draw_ctx(event);
   lv_area_t coords;
@@ -397,6 +399,7 @@ void chart_band_refresh(lv_obj_t* obj) {
   if (band == nullptr) {
     return;
   }
+  UiPerfTimer perf(UiPerfSection::ChartRefresh);
 
   // Whichever day is on screen. A band does not choose: stepping back a day
   // moves every chart at once, so the choice belongs to the view, not to the
@@ -436,9 +439,15 @@ void chart_band_refresh(lv_obj_t* obj) {
   }
   band->last_minute = head;
 
-  history_reduce(bank, band->series, from, to, band->column, columns);
+  {
+    UiPerfTimer reduce_perf(UiPerfSection::HistoryReduce);
+    history_reduce(bank, band->series, from, to, band->column, columns);
+  }
   band->columns = columns;
-  smooth_columns(band);
+  {
+    UiPerfTimer smooth_perf(UiPerfSection::SmoothColumns);
+    smooth_columns(band);
+  }
 
   float lowest = 0.0f;
   float highest = 0.0f;
