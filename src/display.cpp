@@ -121,9 +121,8 @@ bool display_begin(uint8_t rotation) {
   // without a download-mode recovery. LVGL 8's sw_rotate appears to want a second
   // buffer to rotate into when full_refresh is set, which this did not provide.
   //
-  // So rotated output is mildly garbled again rather than dead. That is the better
-  // failure of the two, and the real fix belongs with rotating in the flush
-  // callback, which keeps partial buffers and needs no full_refresh at all.
+  // Rotation therefore stays in flush_cb(), which keeps partial buffers and
+  // needs no full_refresh at all.
   const size_t pixel_count = static_cast<size_t>(PUCK_LCD_WIDTH) * PUCK_LVGL_BUFFER_LINES;
   const size_t bytes = pixel_count * sizeof(lv_color_t);
 
