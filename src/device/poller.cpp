@@ -44,6 +44,8 @@ SemaphoreHandle_t s_lock = nullptr;
 Snapshot s_snapshot;
 PollStatus s_status;
 int32_t s_tz_offset_min = 0;
+uint32_t s_snapshot_generation = 0;
+uint32_t s_day_generation = 0;
 volatile bool s_wake = false;
 
 // Task-local in practice — only poll_task touches these — but kept here with the
@@ -101,6 +103,7 @@ void publish(const Snapshot& snapshot, const PollStatus& status) {
   if (xSemaphoreTake(s_lock, portMAX_DELAY) == pdTRUE) {
     s_snapshot = snapshot;
     s_status = status;
+    ++s_snapshot_generation;
     // Latched rather than left in the snapshot for readers to dig out: it is the
     // one field that is a property of the *site* rather than of this reading, and
     // the screen schedule needs it even while polls are failing. Keeping the last
@@ -222,6 +225,7 @@ void poll_task(void* /*argument*/) {
           s_loaded_offset = 0;
           s_loaded_date = String();
           s_day_valid = false;
+          ++s_day_generation;
           xSemaphoreGive(s_lock);
         }
       } else if (changed && s_day_valid) {
@@ -231,6 +235,7 @@ void poll_task(void* /*argument*/) {
         // same treatment.
         if (xSemaphoreTake(s_lock, portMAX_DELAY) == pdTRUE) {
           s_day_valid = false;
+          ++s_day_generation;
           xSemaphoreGive(s_lock);
         }
       }
@@ -253,6 +258,7 @@ void poll_task(void* /*argument*/) {
               s_day_valid = true;
               s_loaded_offset = wanted;
               s_loaded_date = date;
+              ++s_day_generation;
               xSemaphoreGive(s_lock);
             }
             s_last_dated_ms = now;
@@ -328,12 +334,15 @@ void poller_begin() {
 // Waiting is safe: the lock is only ever held for a struct copy, by code that
 // does no I/O and cannot block, and publish() already takes it with
 // portMAX_DELAY. There is no path that can hold it long enough to matter.
-bool poller_snapshot(Snapshot* out) {
+bool poller_snapshot(Snapshot* out, uint32_t* generation) {
   if (s_lock == nullptr || out == nullptr) {
     return false;
   }
   bool have = false;
   if (xSemaphoreTake(s_lock, portMAX_DELAY) == pdTRUE) {
+    if (generation != nullptr) {
+      *generation = s_snapshot_generation;
+    }
     if (s_snapshot.valid) {
       *out = s_snapshot;
       have = true;
@@ -352,12 +361,15 @@ PollStatus poller_status() {
   return copy;
 }
 
-bool poller_day_snapshot(Snapshot* out) {
+bool poller_day_snapshot(Snapshot* out, uint32_t* generation) {
   if (out == nullptr) {
     return false;
   }
   bool valid = false;
   if (xSemaphoreTake(s_lock, portMAX_DELAY) == pdTRUE) {
+    if (generation != nullptr) {
+      *generation = s_day_generation;
+    }
     // Only when the loaded day is the one being asked for: between a button press
     // and its fetch landing, the previous day is still in there and showing it
     // under the new day's date would be worse than showing live.

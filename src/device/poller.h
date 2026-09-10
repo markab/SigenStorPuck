@@ -26,13 +26,16 @@ struct PollStatus {
 void poller_begin();
 
 // Copies the last good snapshot out under the lock. Returns false if there has
-// never been a successful fetch, in which case `out` is untouched.
-bool poller_snapshot(Snapshot* out);
+// never been a successful fetch, in which case `out` is untouched. When supplied,
+// `generation` changes on each successful publish so the UI can skip an unchanged
+// application-data update without coupling LVGL to the network task.
+bool poller_snapshot(Snapshot* out, uint32_t* generation = nullptr);
 
 // The past day the buttons have stepped back to, if one is loaded. False at an
 // offset of zero, and while the fetch for a newly-chosen day is still in flight
-// — the caller keeps showing live rather than a day it has not got yet.
-bool poller_day_snapshot(Snapshot* out);
+// — the caller keeps showing live rather than a day it has not got yet. Its
+// optional generation changes when a dated snapshot is published or cleared.
+bool poller_day_snapshot(Snapshot* out, uint32_t* generation = nullptr);
 
 PollStatus poller_status();
 
