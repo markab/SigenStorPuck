@@ -15,6 +15,7 @@
 
 #include "button_gesture.h"
 #include "day_series.h"
+#include "display_rotation.h"
 #include "history.h"
 #include "modbus_regs.h"
 #include "screen_window.h"
@@ -51,6 +52,37 @@ void check_within(float actual, float expected, float fraction, const char* what
     ++s_failures;
     printf("  FAIL  %s (got %.5f, wanted %.5f)\n", what, actual, expected);
   }
+}
+
+void test_display_rotation() {
+  printf("display rotation\n");
+
+  // Deliberately non-square: the panel itself is square, but LVGL flushes
+  // rectangular partial-buffer slices and that is where swapped dimensions or
+  // a wrong destination stride become visible as shearing.
+  const uint16_t source[] = {1, 2, 3, 4, 5, 6};  // two rows, three columns
+  uint16_t rotated[6] = {};
+
+  display_rotate_rgb565(1, source, 3, 2, rotated);
+  const uint16_t clockwise[] = {4, 1, 5, 2, 6, 3};
+  check(memcmp(rotated, clockwise, sizeof(rotated)) == 0,
+        "90-degree block rotation preserves row/column order");
+
+  display_rotate_rgb565(2, source, 3, 2, rotated);
+  const uint16_t upside_down[] = {6, 5, 4, 3, 2, 1};
+  check(memcmp(rotated, upside_down, sizeof(rotated)) == 0,
+        "180-degree block rotation reverses the block");
+
+  display_rotate_rgb565(3, source, 3, 2, rotated);
+  const uint16_t anticlockwise[] = {3, 6, 2, 5, 1, 4};
+  check(memcmp(rotated, anticlockwise, sizeof(rotated)) == 0,
+        "270-degree block rotation preserves row/column order");
+
+  const uint16_t untouched[] = {9, 9, 9, 9, 9, 9};
+  memcpy(rotated, untouched, sizeof(rotated));
+  display_rotate_rgb565(0, source, 3, 2, rotated);
+  check(memcmp(rotated, untouched, sizeof(rotated)) == 0,
+        "rotation zero leaves the direct-transfer workspace alone");
 }
 
 float decode_one(uint8_t key, const uint16_t* words, size_t count) {
@@ -686,6 +718,7 @@ void test_screen_window() {
 int run_selftest() {
   s_failures = 0;
   s_checks = 0;
+  test_display_rotation();
   test_decode();
   test_plan();
   test_snapshot();

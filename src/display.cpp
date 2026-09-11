@@ -5,6 +5,8 @@
 #include <esp_heap_caps.h>
 
 #include "board_config.h"
+#include "display_rotation.h"
+#include "ui/ui_perf.h"
 
 namespace {
 
@@ -46,10 +48,15 @@ void rounder_cb(lv_disp_drv_t* /*drv*/, lv_area_t* area) {
 void flush_cb(lv_disp_drv_t* drv, const lv_area_t* area, lv_color_t* pixels) {
   const int32_t w = area->x2 - area->x1 + 1;
   const int32_t h = area->y2 - area->y1 + 1;
+  const uint32_t pixel_count = static_cast<uint32_t>(w * h);
+  const bool frame_end = lv_disp_flush_is_last(drv);
 
   // Unrotated is the untouched fast path: straight out of the DMA-capable buffer.
   if (s_rotation == 0 || s_rotated == nullptr) {
+    const uint32_t panel_started = ui_perf_now_us();
     s_panel->draw16bitRGBBitmap(area->x1, area->y1, reinterpret_cast<uint16_t*>(pixels), w, h);
+    const uint32_t panel_us = ui_perf_now_us() - panel_started;
+    ui_perf_flush(s_rotation, pixel_count, 0, panel_us, frame_end);
     lv_disp_flush_ready(drv);
     return;
   }
@@ -57,29 +64,10 @@ void flush_cb(lv_disp_drv_t* drv, const lv_area_t* area, lv_color_t* pixels) {
   // A quarter turn swaps the block's dimensions; a half turn does not.
   const bool quarter = s_rotation == 1 || s_rotation == 3;
   const int32_t dst_w = quarter ? h : w;
-
-  for (int32_t sy = 0; sy < h; ++sy) {
-    const lv_color_t* src_row = pixels + sy * w;
-    for (int32_t sx = 0; sx < w; ++sx) {
-      int32_t dx = 0;
-      int32_t dy = 0;
-      switch (s_rotation) {
-        case 1:  // 90 clockwise
-          dx = h - 1 - sy;
-          dy = sx;
-          break;
-        case 2:  // 180
-          dx = w - 1 - sx;
-          dy = h - 1 - sy;
-          break;
-        default:  // 3, 270 clockwise
-          dx = sy;
-          dy = w - 1 - sx;
-          break;
-      }
-      s_rotated[dy * dst_w + dx] = src_row[sx];
-    }
-  }
+  const uint32_t rotation_started = ui_perf_now_us();
+  display_rotate_rgb565(s_rotation, reinterpret_cast<uint16_t*>(pixels), w, h,
+                        reinterpret_cast<uint16_t*>(s_rotated));
+  const uint32_t rotation_us = ui_perf_now_us() - rotation_started;
 
   // Where that block lands on the physical panel. Even/odd alignment survives the
   // transform, so the 2-pixel rounding the CO5300 needs still holds.
@@ -100,8 +88,11 @@ void flush_cb(lv_disp_drv_t* drv, const lv_area_t* area, lv_color_t* pixels) {
       break;
   }
 
+  const uint32_t panel_started = ui_perf_now_us();
   s_panel->draw16bitRGBBitmap(px, py, reinterpret_cast<uint16_t*>(s_rotated), dst_w,
-                              quarter ? w : h);
+                             quarter ? w : h);
+  const uint32_t panel_us = ui_perf_now_us() - panel_started;
+  ui_perf_flush(s_rotation, pixel_count, rotation_us, panel_us, frame_end);
   lv_disp_flush_ready(drv);
 }
 
@@ -130,9 +121,8 @@ bool display_begin(uint8_t rotation) {
   // without a download-mode recovery. LVGL 8's sw_rotate appears to want a second
   // buffer to rotate into when full_refresh is set, which this did not provide.
   //
-  // So rotated output is mildly garbled again rather than dead. That is the better
-  // failure of the two, and the real fix belongs with rotating in the flush
-  // callback, which keeps partial buffers and needs no full_refresh at all.
+  // Rotation therefore stays in flush_cb(), which keeps partial buffers and
+  // needs no full_refresh at all.
   const size_t pixel_count = static_cast<size_t>(PUCK_LCD_WIDTH) * PUCK_LVGL_BUFFER_LINES;
   const size_t bytes = pixel_count * sizeof(lv_color_t);
 

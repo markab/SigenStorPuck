@@ -26,8 +26,9 @@
 
 namespace {
 
-// The UI is refreshed on a timer rather than whenever a poll lands, so the render
-// rate is decoupled from the network entirely.
+// Poller/network state is observed at a humanly prompt cadence. Snapshot and day
+// generations below keep this from becoming a 4 Hz rewrite of unchanged LVGL
+// objects; lv_timer_handler() still runs every loop for touch and animation.
 constexpr uint32_t UI_REFRESH_MS = 250;
 
 // The PMIC is read over I2C, so at a human rate rather than per frame.
@@ -225,26 +226,45 @@ void apply_screen_schedule() {
 }
 
 void refresh_ui() {
+  static bool first = true;
+  static uint32_t seen_snapshot_generation = 0;
+  static uint32_t seen_day_generation = 0;
+  static int seen_day_offset = 0;
+
   Snapshot snapshot;
-  const bool have = poller_snapshot(&snapshot);
+  uint32_t snapshot_generation = 0;
+  const bool have = poller_snapshot(&snapshot, &snapshot_generation);
   const PollStatus status = poller_status();
+  const bool snapshot_changed =
+      have && (first || snapshot_generation != seen_snapshot_generation);
 
   // The viewed day before the live reading, so one pass never draws the new day's
   // chart against the old day's figures.
   Snapshot day;
-  if (poller_day_snapshot(&day)) {
-    ui_update_day(day);
-  } else if (ui_day_offset() != 0) {
-    // Asked for but not here yet. Dashes and LOADING, not the live reading:
-    // falling back to live flashed today's figures under a past date on every
-    // step between days.
-    ui_set_day_loading();
-  } else {
-    ui_clear_day();
+  uint32_t day_generation = 0;
+  const bool have_day = poller_day_snapshot(&day, &day_generation);
+  const int day_offset = ui_day_offset();
+  if (first || day_generation != seen_day_generation ||
+      day_offset != seen_day_offset) {
+    if (have_day) {
+      ui_update_day(day);
+    } else if (day_offset != 0) {
+      // Asked for but not here yet. Dashes and LOADING, not the live reading:
+      // falling back to live flashed today's figures under a past date on every
+      // step between days.
+      ui_set_day_loading();
+    } else {
+      ui_clear_day();
+    }
   }
-  if (have) {
+  if (snapshot_changed) {
     ui_update(snapshot);
   }
+
+  seen_snapshot_generation = snapshot_generation;
+  seen_day_generation = day_generation;
+  seen_day_offset = day_offset;
+  first = false;
   refresh_overlay(have, status);
 }
 
