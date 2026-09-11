@@ -7,6 +7,8 @@
 // may repopulate this same RAM bank after boot; otherwise it fills from live
 // readings as before.
 //
+// Safe to call from either core: every function takes one lock (see history.cpp).
+//
 // Lives outside src/device/ on purpose: the simulator compiles this file, which
 // is the only way chart work can happen on the desktop as CLAUDE.md requires.
 

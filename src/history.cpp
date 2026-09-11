@@ -1,6 +1,7 @@
 #include "history.h"
 
 #include <atomic>
+#include <mutex>
 #include <string.h>
 
 namespace {
@@ -49,6 +50,19 @@ struct Bank {
 };
 
 Bank s_bank[static_cast<size_t>(HistoryBank::Count)];
+
+// Every public function below takes this lock, because two cores write here. The
+// poll task (core 0) feeds the live bank from the server's day series and from
+// Home Assistant's Recorder, while the UI (core 1) records each reading into the
+// same bank and reads it back for the charts. The revision counter tells a chart
+// that something changed; it does not stop two writers moving `head` at once, and
+// at boot the first Recorder window can land in the same instant as the first
+// live reading, on an empty bank.
+//
+// Recursive because ensure_initialised() and advance_to() call history_reset(),
+// which is public and locks too. Held for one put or one reduction at a time, so
+// the other core waits microseconds, not frames.
+std::recursive_mutex s_history_lock;
 
 // Which bank the charts read. Writing goes wherever the caller says; reading is
 // a property of what is on screen, so it is held here rather than threaded
@@ -140,6 +154,7 @@ void advance_to(HistoryBank which, uint32_t minute) {
 }  // namespace
 
 void history_reset(HistoryBank which) {
+  const std::lock_guard<std::recursive_mutex> guard(s_history_lock);
   Bank& bank = bank_of(which);
   for (size_t s = 0; s < SERIES_COUNT; ++s) {
     for (uint32_t i = 0; i < HISTORY_CAPACITY_MINUTES; ++i) {
@@ -158,6 +173,7 @@ void history_reset(HistoryBank which) {
 }
 
 void history_put(HistoryBank which, HistorySeries series, uint32_t minute, float value) {
+  const std::lock_guard<std::recursive_mutex> guard(s_history_lock);
   ensure_initialised(which);
   const size_t index = static_cast<size_t>(series);
   if (index >= SERIES_COUNT || minute == 0) {
@@ -170,6 +186,7 @@ void history_put(HistoryBank which, HistorySeries series, uint32_t minute, float
 }
 
 void history_record(const Snapshot& snapshot) {
+  const std::lock_guard<std::recursive_mutex> guard(s_history_lock);
   // Always the live bank: this is the reading that just arrived, and the day bank
   // holds a day that has already finished.
   ensure_initialised(HistoryBank::Live);
@@ -214,11 +231,13 @@ void history_record(const Snapshot& snapshot) {
 }
 
 uint32_t history_head_minute(HistoryBank which) {
+  const std::lock_guard<std::recursive_mutex> guard(s_history_lock);
   const Bank& bank = bank_of(which);
   return bank.any ? bank.head : 0;
 }
 
 uint32_t history_generation(HistoryBank which) {
+  const std::lock_guard<std::recursive_mutex> guard(s_history_lock);
   return bank_of(which).generation;
 }
 
@@ -227,6 +246,7 @@ uint32_t history_revision(HistoryBank which) {
 }
 
 size_t history_sample_count(HistoryBank which, HistorySeries series) {
+  const std::lock_guard<std::recursive_mutex> guard(s_history_lock);
   ensure_initialised(which);
   const size_t index = static_cast<size_t>(series);
   if (index >= SERIES_COUNT) {
@@ -243,6 +263,7 @@ size_t history_sample_count(HistoryBank which, HistorySeries series) {
 }
 
 void history_set_timezone(HistoryBank which, int32_t minutes_east) {
+  const std::lock_guard<std::recursive_mutex> guard(s_history_lock);
   Bank& bank = bank_of(which);
   bank.tz_minutes = minutes_east;
   bank.tz_known = true;
@@ -250,6 +271,7 @@ void history_set_timezone(HistoryBank which, int32_t minutes_east) {
 
 void history_set_day_window(HistoryBank which, uint32_t from_minute,
                             uint32_t to_minute) {
+  const std::lock_guard<std::recursive_mutex> guard(s_history_lock);
   Bank& bank = bank_of(which);
   if (from_minute == 0 || to_minute <= from_minute) {
     bank.day_window_known = false;
@@ -262,14 +284,17 @@ void history_set_day_window(HistoryBank which, uint32_t from_minute,
 }
 
 void history_set_view(HistoryBank which) {
+  const std::lock_guard<std::recursive_mutex> guard(s_history_lock);
   s_view = which;
 }
 
 HistoryBank history_view() {
+  const std::lock_guard<std::recursive_mutex> guard(s_history_lock);
   return s_view;
 }
 
 bool history_window(HistoryBank which, uint32_t* from_minute, uint32_t* to_minute) {
+  const std::lock_guard<std::recursive_mutex> guard(s_history_lock);
   const Bank& bank = bank_of(which);
   if (!bank.any || from_minute == nullptr || to_minute == nullptr) {
     return false;
@@ -296,6 +321,7 @@ bool history_window(HistoryBank which, uint32_t* from_minute, uint32_t* to_minut
 }
 
 MaybeFloat history_value(HistoryBank which, HistorySeries series, uint32_t minute) {
+  const std::lock_guard<std::recursive_mutex> guard(s_history_lock);
   ensure_initialised(which);
   MaybeFloat value;
   const Bank& bank = bank_of(which);
@@ -314,6 +340,7 @@ MaybeFloat history_value(HistoryBank which, HistorySeries series, uint32_t minut
 
 void history_reduce(HistoryBank which, HistorySeries series, uint32_t from_minute,
                     uint32_t to_minute, HistoryColumn* out, size_t columns) {
+  const std::lock_guard<std::recursive_mutex> guard(s_history_lock);
   ensure_initialised(which);
   const Bank& bank = bank_of(which);
   if (out == nullptr || columns == 0) {
