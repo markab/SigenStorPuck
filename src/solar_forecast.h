@@ -2,9 +2,8 @@
 //
 // A second implementation of a model the server already has, which is normally
 // exactly what CLAUDE.md forbids — so the reason is worth stating. On the Modbus
-// source there is no server to ask, and the forecast is the only thing screen 3
-// cannot fill from the plant. The choice was to reimplement ~60 lines of trig or
-// leave a screen permanently showing four dashes.
+// source there is no server to ask, and HA may also choose this local model. The
+// forecast is the only thing screen 3 cannot otherwise fill from those sources.
 //
 // It is deliberately a *port* of app/solar.py rather than a fresh derivation:
 // same solar-position formulae, same plane-of-array transposition, same slot
@@ -27,6 +26,8 @@
 
 #include <stddef.h>
 #include <stdint.h>
+
+#include "snapshot.h"
 
 // Four is enough for any domestic roof with room to spare, and keeps the settings
 // page a fixed shape rather than a list that grows.
@@ -55,6 +56,10 @@ struct SolarSite {
   PvArray array[SOLAR_MAX_ARRAYS];
   size_t array_count = 0;
 };
+
+// The native forecast is configured only with both a location and at least one
+// positive-size array. Shared so HA and Modbus use and test the same rule.
+bool solar_site_configured(bool location_set, const PvArray* arrays, size_t count);
 
 // One hour of irradiance, as Open-Meteo reports it.
 struct SolarHour {
@@ -88,3 +93,9 @@ struct SolarSummary {
   float peak_kw = 0.0f;
 };
 SolarSummary solar_summarise(const float* slot_kwh, uint32_t day_start_epoch, uint32_t now_epoch);
+
+// Adds a ready native summary to an otherwise source-owned Snapshot. In
+// particular, this leaves HA live/daily values intact and derives percentage
+// from HA's configured daily PV entity when available.
+void solar_summary_apply(const SolarSummary& summary, int32_t utc_offset_min,
+                         Snapshot* snapshot);

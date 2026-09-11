@@ -36,7 +36,7 @@ void step_day(int delta) {
     return;
   }
   if (!ui_day_stepping()) {
-    // The Modbus source has daily counters and no dated API behind them, so
+    // Sources without historical-day capability have no dated API, so
     // there is no past to step into. Better to say so than to look broken.
     ui_toast("LIVE ONLY");
     return;

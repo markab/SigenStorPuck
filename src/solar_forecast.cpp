@@ -17,6 +17,18 @@ float degrees_of(float radians_value) {
 
 }  // namespace
 
+bool solar_site_configured(bool location_set, const PvArray* arrays, size_t count) {
+  if (!location_set || arrays == nullptr) {
+    return false;
+  }
+  for (size_t i = 0; i < count; ++i) {
+    if (arrays[i].kwp > 0.0f) {
+      return true;
+    }
+  }
+  return false;
+}
+
 void solar_position(uint32_t epoch_utc, float latitude, float longitude, float* elevation_deg,
                     float* azimuth_deg) {
   const time_t when = static_cast<time_t>(epoch_utc);
@@ -156,4 +168,26 @@ SolarSummary solar_summarise(const float* slot_kwh, uint32_t day_start_epoch, ui
     }
   }
   return summary;
+}
+
+void solar_summary_apply(const SolarSummary& summary, int32_t utc_offset_min,
+                         Snapshot* snapshot) {
+  if (snapshot == nullptr || !snapshot->valid) {
+    return;
+  }
+  snapshot->tz_offset_min = {true, utc_offset_min};
+  snapshot->solar.configured = true;
+  snapshot->solar.forecast_kwh = {true, summary.forecast_kwh};
+  snapshot->solar.remaining_kwh = {true, summary.remaining_kwh};
+  snapshot->solar.peak_kw = {true, summary.peak_kw};
+
+  // Before dawn the forecast-so-far is a rounding error and the ratio swings
+  // between nothing and thousands of per cent. Keep the server's 0.05 kWh floor.
+  const float so_far = summary.forecast_kwh - summary.remaining_kwh;
+  if (snapshot->today.present && snapshot->today.solar.known && so_far > 0.05f) {
+    snapshot->solar.vs_forecast_pct =
+        {true, snapshot->today.solar.value / so_far * 100.0f};
+  } else {
+    snapshot->solar.vs_forecast_pct = {};
+  }
 }

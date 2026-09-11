@@ -1,4 +1,4 @@
-// Checks for the parts of the Modbus path that do not need a plant (PLAN.md §D).
+// Checks for acquisition and shared logic that do not need a plant or HA instance.
 //
 // Run with `.pio/build/sim/program --selftest`. Desktop-only, like the rest of
 // src/sim/, but everything it exercises is shared with the firmware — which is
@@ -17,9 +17,15 @@
 #include "day_series.h"
 #include "display_rotation.h"
 #include "history.h"
+#include "history_backfill_retry.h"
+#include "home_assistant.h"
+#include "home_assistant_history.h"
+#include "data_source.h"
 #include "modbus_regs.h"
 #include "screen_window.h"
 #include "solar_forecast.h"
+#include "solar_metric_layout.h"
+#include "solar_source.h"
 
 namespace {
 
@@ -83,6 +89,401 @@ void test_display_rotation() {
   display_rotate_rgb565(0, source, 3, 2, rotated);
   check(memcmp(rotated, untouched, sizeof(rotated)) == 0,
         "rotation zero leaves the direct-transfer workspace alone");
+}
+
+void test_data_sources() {
+  printf("data sources\n");
+  check(static_cast<uint8_t>(DataSource::Server) == 0, "server persisted value remains 0");
+  check(static_cast<uint8_t>(DataSource::Modbus) == 1, "modbus persisted value remains 1");
+  check(static_cast<uint8_t>(DataSource::HomeAssistant) == 2, "HA is appended as value 2");
+  check(data_source_from_stored(0) == DataSource::Server, "stored server decodes");
+  check(data_source_from_stored(1) == DataSource::Modbus, "stored modbus decodes");
+  check(data_source_from_stored(2) == DataSource::HomeAssistant, "stored HA decodes");
+  check(data_source_from_stored(99) == DataSource::Server,
+        "unknown stored source preserves legacy server fallback");
+  check(data_source_restore(false, 0, false) == DataSource::Modbus,
+        "older empty NVS retains fresh-install Modbus default");
+  check(data_source_restore(false, 0, true) == DataSource::Server,
+        "older NVS with server credentials remains on Server");
+  check(data_source_restore(true, 1, true) == DataSource::Modbus,
+        "explicit stored source wins over legacy credential inference");
+
+  const SourceCapabilities server = data_source_capabilities(DataSource::Server);
+  const SourceCapabilities modbus = data_source_capabilities(DataSource::Modbus);
+  const SourceCapabilities ha = data_source_capabilities(DataSource::HomeAssistant);
+  check(server.historical_days && server.full_day_series && server.detailed_flows &&
+            server.tariff_cost,
+        "server capabilities include history and detailed features");
+  check(modbus.live && modbus.daily_totals && modbus.local_history && modbus.forecast &&
+            !modbus.historical_days && !modbus.detailed_flows,
+        "modbus capabilities are local/live");
+  check(ha.live && ha.daily_totals && ha.local_history && ha.today_history_backfill &&
+            ha.forecast &&
+            !ha.historical_days && !ha.full_day_series && !ha.detailed_flows &&
+            !ha.tariff_cost,
+        "HA capabilities include optional today backfill but not past days or detail");
+
+  check(static_cast<uint8_t>(SolarForecastSource::Disabled) == 0,
+        "disabled forecast source persists as 0");
+  check(static_cast<uint8_t>(SolarForecastSource::Puck) == 1,
+        "Puck forecast source persists as 1");
+  check(static_cast<uint8_t>(SolarForecastSource::HomeAssistant) == 2,
+        "HA forecast source persists as 2");
+  check(solar_forecast_source_from_stored(0) == SolarForecastSource::Disabled,
+        "stored disabled forecast source decodes");
+  check(solar_forecast_source_from_stored(1) == SolarForecastSource::Puck,
+        "stored Puck forecast source decodes");
+  check(solar_forecast_source_from_stored(2) == SolarForecastSource::HomeAssistant,
+        "stored HA forecast source decodes");
+  check(solar_forecast_source_from_stored(99) == SolarForecastSource::Disabled,
+        "missing or unknown forecast setting preserves disabled behaviour");
+  check(solar_forecast_uses_puck(DataSource::Modbus, SolarForecastSource::Disabled),
+        "Modbus keeps its native forecast regardless of the HA preference");
+  check(!solar_forecast_uses_puck(DataSource::Server, SolarForecastSource::Puck),
+        "Server forecast is never replaced by the Puck cache");
+  check(solar_forecast_uses_puck(DataSource::HomeAssistant, SolarForecastSource::Puck),
+        "HA can select the native forecast cache");
+  check(!solar_forecast_uses_puck(DataSource::HomeAssistant,
+                                  SolarForecastSource::HomeAssistant),
+        "HA entity forecast does not invoke the native forecast");
+  check(solar_forecast_uses_home_assistant(DataSource::HomeAssistant,
+                                           SolarForecastSource::HomeAssistant),
+        "HA entity forecast is selected only for HA acquisition");
+  check(!solar_forecast_uses_home_assistant(DataSource::Modbus,
+                                            SolarForecastSource::HomeAssistant),
+        "HA forecast preference cannot change Modbus acquisition");
+}
+
+void test_home_assistant_template() {
+  printf("home assistant template\n");
+  check(ha_entity_id_valid("sensor.pv_power"), "normal entity id accepted");
+  check(ha_entity_id_valid("binary_sensor.off_grid_2"), "binary entity id accepted");
+  check(!ha_entity_id_valid("sensor.PV Power"), "unsafe entity id rejected");
+  check(!ha_entity_id_valid("sensor"), "entity id needs a domain separator");
+  check(!ha_entity_id_valid("sensor.bad' }}"), "template injection rejected");
+
+  const char* entities[HA_ENTITY_COUNT] = {};
+  entities[static_cast<size_t>(HaEntity::PvPower)] = "sensor.pv_power";
+  entities[static_cast<size_t>(HaEntity::BatterySoc)] = "sensor.battery_soc";
+  char output[HA_TEMPLATE_MAX];
+  check(ha_template_build(entities, output, sizeof(output)), "template builds");
+  check(strstr(output, "states('sensor.pv_power')") != nullptr,
+        "template references configured PV only");
+  check(strstr(output, "states('sensor.battery_soc')") != nullptr,
+        "template references configured SOC");
+  check(strstr(output, "as_timestamp(today_at())") != nullptr &&
+            strstr(output, "timedelta(days=1)") != nullptr,
+        "template asks HA for DST-aware local day boundaries");
+  check(strstr(output, "\"gp\"") == nullptr, "unconfigured grid omitted");
+  check(strstr(output, "Authorization") == nullptr, "template contains no credentials");
+
+  entities[static_cast<size_t>(HaEntity::ForecastToday)] =
+      "sensor.solar_forecast_today";
+  check(ha_template_build(entities, output, sizeof(output)),
+        "live and forecast mappings share one template");
+  check(strstr(output, "states('sensor.solar_forecast_today')") != nullptr,
+        "template includes configured forecast entity");
+
+  char longest_id[HA_ENTITY_ID_MAX + 1];
+  memcpy(longest_id, "sensor.", 7);
+  memset(longest_id + 7, 'a', HA_ENTITY_ID_MAX - 7);
+  longest_id[HA_ENTITY_ID_MAX] = '\0';
+  for (size_t i = 0; i < HA_ENTITY_COUNT; ++i) {
+    entities[i] = longest_id;
+  }
+  check(ha_template_build(entities, output, sizeof(output)),
+        "template buffer holds every maximum-length mapping");
+
+  char too_small[32];
+  check(!ha_template_build(entities, too_small, sizeof(too_small)),
+        "short template buffer is rejected");
+}
+
+void test_home_assistant_settings_metadata() {
+  printf("home assistant settings metadata\n");
+  const char* expected_form_order[HA_ENTITY_COUNT] = {
+      "ha_pp",  "ha_gp",  "ha_bp",  "ha_hp",  "ha_ep",  "ha_xp",
+      "ha_og",  "ha_soc", "ha_soh", "ha_cap", "ha_tmp", "ha_dpv",
+      "ha_dld", "ha_dim", "ha_dex", "ha_dch", "ha_dds", "ha_sft",
+      "ha_sfr", "ha_sfp", "ha_sfk",
+  };
+  const char* expected_placeholders[HA_ENTITY_COUNT] = {
+      "sensor.sigen_plant_pv_power",
+      "sensor.sigen_plant_grid_active_power",
+      "sensor.sigen_plant_battery_power",
+      "sensor.sigen_plant_consumed_power",
+      "sensor.sigen_inverter_dc_charger_output_power",
+      "sensor.sigen_plant_plant_active_power",
+      "sensor.sigen_plant_grid_connection_status",
+      "sensor.sigen_plant_battery_state_of_charge",
+      "sensor.sigen_plant_battery_state_of_health",
+      "sensor.sigen_plant_rated_energy_capacity",
+      "sensor.sigen_inverter_battery_average_cell_temperature",
+      "sensor.sigen_plant_pv_daily_generation",
+      "sensor.sigen_plant_daily_load_consumption",
+      "sensor.sigen_plant_daily_grid_import_energy",
+      "sensor.sigen_plant_daily_grid_export_energy",
+      "sensor.sigen_plant_daily_battery_charge_energy",
+      "sensor.sigen_plant_daily_battery_discharge_energy",
+      "sensor.example_solar_forecast_today",
+      "sensor.example_solar_forecast_remaining",
+      "sensor.example_solar_forecast_percentage",
+      "sensor.example_solar_forecast_peak",
+  };
+
+  for (size_t i = 0; i < HA_ENTITY_COUNT; ++i) {
+    check(strcmp(HA_ENTITIES[i].form_name, expected_form_order[i]) == 0,
+          "HA settings fields retain semantic tab order");
+    check(strcmp(HA_ENTITIES[i].placeholder, expected_placeholders[i]) == 0,
+          "HA settings field has its example placeholder");
+  }
+
+  // Placeholders are presentation metadata, not entity defaults. The API
+  // template is built only from the values supplied by persisted settings.
+  const char* empty[HA_ENTITY_COUNT] = {};
+  char output[HA_TEMPLATE_MAX];
+  check(ha_template_build(empty, output, sizeof(output)),
+        "empty mappings still produce a valid base template");
+  for (size_t i = 0; i < HA_ENTITY_COUNT; ++i) {
+    check(strstr(output, HA_ENTITIES[i].placeholder) == nullptr,
+          "placeholder is not treated as a configured mapping");
+  }
+
+  const char* configured[HA_ENTITY_COUNT] = {};
+  configured[static_cast<size_t>(HaEntity::PvPower)] = "sensor.persisted_pv_power";
+  check(ha_template_build(configured, output, sizeof(output)),
+        "persisted mapping builds a template");
+  check(strstr(output, "states('sensor.persisted_pv_power')") != nullptr,
+        "persisted mapping remains the actual entity value");
+  check(strstr(output, HA_ENTITIES[static_cast<size_t>(HaEntity::PvPower)].placeholder) == nullptr,
+        "persisted mapping is not replaced by its placeholder");
+}
+
+void test_home_assistant_forecast() {
+  printf("home assistant forecast\n");
+  Snapshot snapshot;
+  HaParseInfo info;
+  const char* converted =
+      "{\"v\":1,\"ts\":1788970000,"
+      "\"pp\":{\"s\":\"1.5\",\"u\":\"kW\"},"
+      "\"sft\":{\"s\":\"12.5\",\"u\":\"kWh\"},"
+      "\"sfr\":{\"s\":\"3200\",\"u\":\"Wh\"},"
+      "\"sfp\":{\"s\":\"108\",\"u\":\"%\"},"
+      "\"sfk\":{\"s\":\"6500\",\"u\":\"W\"}}";
+  check(ha_payload_parse(converted, strlen(converted), &snapshot, &info),
+        "HA forecast payload parses");
+  check(snapshot.solar.configured, "known total makes HA forecast configured");
+  check_near(snapshot.solar.forecast_kwh.value, 12.5f, "forecast accepts kWh");
+  check_near(snapshot.solar.remaining_kwh.value, 3.2f, "forecast converts Wh to kWh");
+  check_near(snapshot.solar.vs_forecast_pct.value, 108.0f, "forecast accepts percentage");
+  check_near(snapshot.solar.peak_kw.value, 6.5f, "forecast converts W to kW");
+
+  const char* direct_peak =
+      "{\"v\":1,\"ts\":1788970000,"
+      "\"sft\":{\"s\":\"0\",\"u\":\"Wh\"},"
+      "\"sfp\":{\"s\":\"0\",\"u\":\"%\"},"
+      "\"sfk\":{\"s\":\"4.2\",\"u\":\"kW\"}}";
+  check(ha_payload_parse(direct_peak, strlen(direct_peak), &snapshot, &info),
+        "zero and direct-kW forecast payload parses");
+  check(snapshot.solar.configured && snapshot.solar.forecast_kwh.known &&
+            snapshot.solar.forecast_kwh.value == 0.0f,
+        "genuine zero forecast remains known and configured");
+  check_near(snapshot.solar.peak_kw.value, 4.2f, "forecast accepts kW");
+  check(snapshot.solar.vs_forecast_pct.known && snapshot.solar.vs_forecast_pct.value == 0.0f,
+        "genuine zero forecast percentage remains known");
+  check(!snapshot.solar.remaining_kwh.known,
+        "unmapped optional forecast value remains unknown");
+
+  const char* partial =
+      "{\"v\":1,\"ts\":1788970000,"
+      "\"sft\":{\"s\":\"9.1\",\"u\":\"kWh\"}}";
+  check(ha_payload_parse(partial, strlen(partial), &snapshot, &info),
+        "partial HA forecast parses");
+  check(snapshot.solar.configured && snapshot.solar.forecast_kwh.known,
+        "today total alone is a useful configured forecast");
+
+  const char* missing_total =
+      "{\"v\":1,\"ts\":1788970000,"
+      "\"sfr\":{\"s\":\"2.0\",\"u\":\"kWh\"}}";
+  check(ha_payload_parse(missing_total, strlen(missing_total), &snapshot, &info),
+        "forecast without total still parses");
+  check(!snapshot.solar.configured && snapshot.solar.remaining_kwh.known,
+        "supporting value alone does not claim a configured forecast");
+
+  const char* bad =
+      "{\"v\":1,\"ts\":1788970000,"
+      "\"sft\":{\"s\":\"unknown\",\"u\":\"kWh\"},"
+      "\"sfr\":{\"s\":\"unavailable\",\"u\":\"kWh\"},"
+      "\"sfp\":{\"s\":\"not-a-number\",\"u\":\"%\"},"
+      "\"sfk\":{\"s\":\"5\",\"u\":\"MW\"}}";
+  check(ha_payload_parse(bad, strlen(bad), &snapshot, &info),
+        "bad individual forecast values do not spoil the snapshot");
+  check(!snapshot.solar.configured && !snapshot.solar.forecast_kwh.known &&
+            !snapshot.solar.remaining_kwh.known && !snapshot.solar.vs_forecast_pct.known &&
+            !snapshot.solar.peak_kw.known,
+        "unknown unavailable malformed and unsupported forecast values stay unknown");
+  check(info.unavailable == 2 && info.invalid_number == 1 && info.unsupported_unit == 1,
+        "bad forecast states are classified accurately");
+
+  const char* unsupported_total =
+      "{\"v\":1,\"ts\":1788970000,"
+      "\"sft\":{\"s\":\"12\",\"u\":\"MJ\"}}";
+  check(ha_payload_parse(unsupported_total, strlen(unsupported_total), &snapshot, &info),
+        "unsupported total unit leaves a valid snapshot");
+  check(!snapshot.solar.configured && !snapshot.solar.forecast_kwh.known,
+        "unsupported total unit cannot configure the forecast");
+}
+
+void test_server_forecast() {
+  printf("server forecast\n");
+  const char* payload =
+      "{\"v\":1,\"ts\":1788970000,\"ok\":true,"
+      "\"solar\":{\"configured\":true,\"forecast\":14.2,\"remaining\":5.1,"
+      "\"vs_forecast\":103,\"peak_kw\":4.8}}";
+  Snapshot snapshot;
+  check(snapshot_parse(payload, strlen(payload), &snapshot),
+        "server snapshot with forecast parses");
+  check(snapshot.solar.configured, "server keeps its own configured forecast");
+  check_near(snapshot.solar.forecast_kwh.value, 14.2f, "server forecast total unchanged");
+  check_near(snapshot.solar.remaining_kwh.value, 5.1f, "server forecast remaining unchanged");
+  check_near(snapshot.solar.vs_forecast_pct.value, 103.0f,
+             "server forecast percentage unchanged");
+  check_near(snapshot.solar.peak_kw.value, 4.8f, "server forecast peak unchanged");
+}
+
+void test_solar_metric_layout() {
+  printf("solar metric layout\n");
+  Snapshot snapshot;
+  SolarOptionalMetricSlots slots = solar_optional_metric_slots(snapshot);
+  check(slots.remaining == SolarOptionalMetricSlots::Hidden &&
+            slots.vs_forecast == SolarOptionalMetricSlots::Hidden &&
+            slots.peak == SolarOptionalMetricSlots::Hidden,
+        "unconfigured forecast hides every optional metric");
+
+  snapshot.valid = true;
+  snapshot.solar.configured = true;
+  snapshot.solar.forecast_kwh = {true, 8.0f};
+  slots = solar_optional_metric_slots(snapshot);
+  check(slots.remaining == SolarOptionalMetricSlots::Hidden &&
+            slots.vs_forecast == SolarOptionalMetricSlots::Hidden &&
+            slots.peak == SolarOptionalMetricSlots::Hidden,
+        "total-only forecast reserves no optional rows");
+
+  snapshot.solar.remaining_kwh = {true, 0.0f};
+  snapshot.solar.peak_kw = {true, 4.5f};
+  slots = solar_optional_metric_slots(snapshot);
+  check(slots.remaining == 1 && slots.vs_forecast == SolarOptionalMetricSlots::Hidden &&
+            slots.peak == 2,
+        "known optional metrics pack without a gap and preserve genuine zero");
+
+  snapshot.solar.vs_forecast_pct = {true, 93.0f};
+  slots = solar_optional_metric_slots(snapshot);
+  check(slots.remaining == 1 && slots.vs_forecast == 2 && slots.peak == 3,
+        "all optional metrics use the three available slots in semantic order");
+}
+
+void test_home_assistant_payload() {
+  printf("home assistant payload\n");
+  const char* valid =
+      "{\"v\":1,\"ts\":1788970000,\"tz\":60,"
+      "\"mid\":1788908400,\"next\":1788994800,"
+      "\"pp\":{\"s\":\"3420\",\"u\":\"W\"},"
+      "\"gp\":{\"s\":\"-1.1\",\"u\":\"kW\"},"
+      "\"bp\":{\"s\":\"-500\",\"u\":\"W\"},"
+      "\"hp\":{\"s\":\"2.75\",\"u\":\"kW\"},"
+      "\"ep\":{\"s\":\"0\",\"u\":\"W\"},"
+      "\"og\":{\"s\":\"off\",\"u\":null},"
+      "\"soc\":{\"s\":\"64.5\",\"u\":\"%\"},"
+      "\"tmp\":{\"s\":\"24.2\",\"u\":\"°C\"},"
+      "\"dpv\":{\"s\":\"8450\",\"u\":\"Wh\"},"
+      "\"dim\":{\"s\":\"3.2\",\"u\":\"kWh\"}}";
+  Snapshot snapshot;
+  HaParseInfo info;
+  check(ha_payload_parse(valid, strlen(valid), &snapshot, &info), "valid HA payload parses");
+  check_near(snapshot.power.pv.value, 3.42f, "W converts to kW");
+  check_near(snapshot.power.grid.value, -1.1f, "negative grid power retained");
+  check_near(snapshot.power.batt.value, -0.5f, "negative battery W retained and converted");
+  check_near(snapshot.power.home.value, 2.75f, "direct home mapping is preferred");
+  check(snapshot.power.ev.known && snapshot.power.ev.value == 0.0f,
+        "genuine mapped EV zero remains known");
+  check(snapshot.power.off_grid_known && !snapshot.power.off_grid,
+        "on-grid boolean remains known false");
+  check_near(snapshot.today.solar.value, 8.45f, "Wh converts to kWh");
+  check_near(snapshot.today.imported.value, 3.2f, "kWh remains kWh");
+  check(snapshot.today.present, "configured daily entity makes today present");
+  check(info.local_midnight_ts == 1788908400u &&
+            info.next_local_midnight_ts == 1788994800u,
+        "HA payload retains authoritative local midnight boundaries");
+  check(info.units[static_cast<size_t>(HaEntity::PvPower)] == HaUnit::Watts &&
+            info.units[static_cast<size_t>(HaEntity::GridPower)] == HaUnit::Kilowatts,
+        "live parse retains units for Recorder history");
+  check(!snapshot.today.exported.known, "missing daily entity remains unknown");
+  check(!snapshot.solar.configured, "HA forecast disabled payload behaves as before");
+
+  const char* fallback =
+      "{\"v\":1,\"ts\":1788970000,"
+      "\"pp\":{\"s\":\"4\",\"u\":\"kW\"},"
+      "\"gp\":{\"s\":\"-1\",\"u\":\"kW\"},"
+      "\"bp\":{\"s\":\"1.5\",\"u\":\"kW\"}}";
+  check(ha_payload_parse(fallback, strlen(fallback), &snapshot, &info),
+        "payload without optional EV parses");
+  check(snapshot.power.ev.known && snapshot.power.ev.value == 0.0f,
+        "unconfigured optional EV explicitly means no EV leg");
+  check_near(snapshot.power.home.value, 1.5f, "home fallback uses Puck sign equation");
+
+  const char* bad_states =
+      "{\"v\":1,\"ts\":1788970000,"
+      "\"pp\":{\"s\":\"unknown\",\"u\":\"W\"},"
+      "\"gp\":{\"s\":\"unavailable\",\"u\":\"W\"},"
+      "\"bp\":{\"s\":\"not-a-number\",\"u\":\"kW\"},"
+      "\"ep\":{\"s\":\"unavailable\",\"u\":\"kW\"},"
+      "\"soc\":{\"s\":\"50\",\"u\":\"widgets\"},"
+      "\"hp\":{\"s\":\"0\",\"u\":\"kW\"}}";
+  check(ha_payload_parse(bad_states, strlen(bad_states), &snapshot, &info),
+        "individual bad HA states do not corrupt the payload");
+  check(!snapshot.power.pv.known && !snapshot.power.grid.known &&
+            !snapshot.power.batt.known,
+        "unknown unavailable and non-numeric remain unknown");
+  check(snapshot.power.home.known && snapshot.power.home.value == 0.0f,
+        "genuine direct home zero remains known");
+  check(!snapshot.power.ev.known, "configured unavailable EV remains unknown");
+  check(!snapshot.battery.soc_pct.known && info.unsupported_unit == 1,
+        "unsupported unit remains unknown and is reported");
+  check(info.unavailable == 3 && info.invalid_number == 1,
+        "unavailable and malformed states are diagnosed");
+
+  const char* ev_unavailable =
+      "{\"v\":1,\"ts\":1788970000,"
+      "\"pp\":{\"s\":\"4\",\"u\":\"kW\"},"
+      "\"gp\":{\"s\":\"0\",\"u\":\"kW\"},"
+      "\"bp\":{\"s\":\"1\",\"u\":\"kW\"},"
+      "\"ep\":{\"s\":\"unavailable\",\"u\":\"kW\"}}";
+  check(ha_payload_parse(ev_unavailable, strlen(ev_unavailable), &snapshot, &info),
+        "unavailable configured EV payload parses");
+  check(!snapshot.power.home.known,
+        "home is not derived when configured EV is unavailable");
+
+  const char* home_unavailable =
+      "{\"v\":1,\"ts\":1788970000,"
+      "\"pp\":{\"s\":\"4\",\"u\":\"kW\"},"
+      "\"gp\":{\"s\":\"0\",\"u\":\"kW\"},"
+      "\"bp\":{\"s\":\"1\",\"u\":\"kW\"},"
+      "\"hp\":{\"s\":\"unavailable\",\"u\":\"kW\"}}";
+  check(ha_payload_parse(home_unavailable, strlen(home_unavailable), &snapshot, &info),
+        "unavailable direct home payload parses");
+  check(!snapshot.power.home.known,
+        "configured direct home is not replaced by a derived value while unavailable");
+
+  snapshot.ts = 1234;
+  check(!ha_payload_parse("{bad", 4, &snapshot, &info), "malformed returned payload rejected");
+  check(snapshot.ts == 1234, "malformed payload preserves last good Snapshot");
+  check(!ha_payload_parse("{\"v\":1}", 7, &snapshot, &info),
+        "payload without timestamp rejected");
+
+  check(ha_http_status(200) == HaHttpStatus::Ok, "HTTP 200 accepted");
+  check(ha_http_status(401) == HaHttpStatus::Unauthorised, "HTTP 401 is unauthorised");
+  check(ha_http_status(403) == HaHttpStatus::Unauthorised, "HTTP 403 is unauthorised");
+  check(ha_http_status(500) == HaHttpStatus::HttpError, "other HTTP errors stay distinct");
 }
 
 float decode_one(uint8_t key, const uint16_t* words, size_t count) {
@@ -302,6 +703,39 @@ void test_history() {
   check(history_head_minute(HistoryBank::Live) == midnight + 600, "head follows the newest sample");
   check(history_sample_count(HistoryBank::Live, HistorySeries::Pv) == 601, "every minute recorded");
 
+  const uint32_t revision = history_revision(HistoryBank::Live);
+  history_put(HistoryBank::Live, HistorySeries::Soc, midnight + 100, 55.0f);
+  check(history_head_minute(HistoryBank::Live) == midnight + 600 &&
+            history_revision(HistoryBank::Live) != revision,
+        "a late backfill sample changes revision without moving the live head");
+
+  // Model a chart having consumed that revision, followed by interaction and a
+  // later Recorder window writing behind the same live head. The second write
+  // must publish a new cache key and both samples must survive reduction.
+  HistoryColumn backfill_columns[144];
+  const uint32_t handled_revision = history_revision(HistoryBank::Live);
+  history_reduce(HistoryBank::Live, HistorySeries::Soc, midnight,
+                 midnight + 1440, backfill_columns, 144);
+  check(backfill_columns[10].known, "first late sample reaches reduced chart data");
+  history_put(HistoryBank::Live, HistorySeries::Soc, midnight + 200, 65.0f);
+  check(history_head_minute(HistoryBank::Live) == midnight + 600 &&
+            history_revision(HistoryBank::Live) != handled_revision,
+        "a later Recorder window publishes another cache revision");
+  history_reduce(HistoryBank::Live, HistorySeries::Soc, midnight,
+                 midnight + 1440, backfill_columns, 144);
+  check(backfill_columns[10].known && backfill_columns[20].known,
+        "refresh after interaction includes both late Recorder windows");
+
+  Snapshot same_minute_live;
+  same_minute_live.valid = true;
+  same_minute_live.ts = (midnight + 600) * 60;
+  same_minute_live.power.pv.known = true;
+  same_minute_live.power.pv.value = 7.0f;
+  const uint32_t before_live_refresh = history_revision(HistoryBank::Live);
+  history_record(same_minute_live);
+  check(history_revision(HistoryBank::Live) == before_live_refresh,
+        "same-minute live refresh does not invalidate the reduced chart cache");
+
   check(history_window(HistoryBank::Live, &from, &to), "window available once recorded");
   check(from == midnight, "window anchors to local midnight");
   check(to == midnight + 1440, "window covers the whole day");
@@ -332,6 +766,481 @@ void test_history() {
   check(history_generation(HistoryBank::Live) != before, "a backwards clock jump resets the ring");
 
   history_reset(HistoryBank::Live);
+}
+
+HaHistoryParseResult parse_history_in_chunks(HaHistoryParser* parser, const char* json,
+                                             size_t chunk_size,
+                                             HaHistoryStats* stats = nullptr) {
+  const size_t length = strlen(json);
+  for (size_t offset = 0; offset < length; offset += chunk_size) {
+    const size_t remaining = length - offset;
+    const size_t count = remaining < chunk_size ? remaining : chunk_size;
+    if (!parser->feed(reinterpret_cast<const uint8_t*>(json + offset), count)) {
+      break;
+    }
+  }
+  return parser->finish(stats);
+}
+
+void test_home_assistant_history() {
+  printf("home assistant history\n");
+  constexpr uint32_t MIDNIGHT = 1786838400u;  // 2026-08-16 00:00:00Z
+  constexpr uint32_t NEXT_MIDNIGHT = MIDNIGHT + 86400u;
+  constexpr uint32_t CUTOFF = MIDNIGHT + 10 * 60u;
+
+  const char* entity_ids[HA_ENTITY_COUNT] = {};
+  HaUnit units[HA_ENTITY_COUNT] = {};
+  entity_ids[static_cast<size_t>(HaEntity::PvPower)] = "sensor.pv";
+  units[static_cast<size_t>(HaEntity::PvPower)] = HaUnit::Watts;
+  entity_ids[static_cast<size_t>(HaEntity::GridPower)] = "sensor.grid";
+  units[static_cast<size_t>(HaEntity::GridPower)] = HaUnit::Watts;
+  entity_ids[static_cast<size_t>(HaEntity::BatteryPower)] = "sensor.battery";
+  units[static_cast<size_t>(HaEntity::BatteryPower)] = HaUnit::Watts;
+  entity_ids[static_cast<size_t>(HaEntity::BatterySoc)] = "sensor.soc";
+  units[static_cast<size_t>(HaEntity::BatterySoc)] = HaUnit::Percent;
+
+  HaHistoryField fields[HA_HISTORY_MAX_FIELDS];
+  const size_t field_count = ha_history_fields_build(entity_ids, units, fields);
+  check(field_count == 4, "history requests only PV, SOC and fallback load inputs");
+  check(fields[0].entity == HaEntity::PvPower &&
+            fields[1].entity == HaEntity::BatterySoc &&
+            fields[2].entity == HaEntity::GridPower &&
+            fields[3].entity == HaEntity::BatteryPower,
+        "fallback history field order is deterministic");
+
+  entity_ids[static_cast<size_t>(HaEntity::HomePower)] = "sensor.home";
+  units[static_cast<size_t>(HaEntity::HomePower)] = HaUnit::Kilowatts;
+  entity_ids[static_cast<size_t>(HaEntity::EvPower)] = "sensor.ev";
+  units[static_cast<size_t>(HaEntity::EvPower)] = HaUnit::Kilowatts;
+  const size_t direct_count = ha_history_fields_build(entity_ids, units, fields);
+  check(direct_count == 4 && fields[2].entity == HaEntity::HomePower &&
+            fields[3].entity == HaEntity::EvPower,
+        "direct home history fetches home and optional EV, not derivation inputs");
+  entity_ids[static_cast<size_t>(HaEntity::HomePower)] = nullptr;
+  entity_ids[static_cast<size_t>(HaEntity::EvPower)] = nullptr;
+  entity_ids[static_cast<size_t>(HaEntity::BatteryPower)] = nullptr;
+  check(ha_history_fields_build(entity_ids, units, fields) == 3,
+        "partially configured chart mappings remain independently usable");
+  entity_ids[static_cast<size_t>(HaEntity::BatteryPower)] = "sensor.battery";
+  ha_history_fields_build(entity_ids, units, fields);
+
+  const char* valid =
+      "[[{\"entity_id\":\"sensor.pv\",\"state\":\"1000\","
+      "\"last_changed\":\"2026-08-16T00:00:00Z\"},"
+      "{\"state\":\"unknown\",\"last_changed\":\"2026-08-16T00:03:00Z\"},"
+      "{\"state\":\"unavailable\",\"last_changed\":\"2026-08-16T00:04:00Z\"},"
+      "{\"state\":\"not-a-number\",\"last_changed\":\"2026-08-16T00:04:30Z\"},"
+      "{\"state\":\"2000\",\"last_changed\":\"2026-08-16T00:05:00Z\"}],"
+      "[{\"entity_id\":\"sensor.soc\",\"state\":\"55\","
+      "\"last_changed\":\"2026-08-16T00:00:00Z\"}],"
+      "[{\"entity_id\":\"sensor.grid\",\"state\":\"-1000\","
+      "\"last_changed\":\"2026-08-16T00:00:00Z\"}],"
+      "[{\"entity_id\":\"sensor.battery\",\"state\":\"-500\","
+      "\"last_changed\":\"2026-08-16T00:00:00Z\"}]]";
+  history_reset(HistoryBank::Live);
+  HaHistoryParser parser(fields, field_count, MIDNIGHT, NEXT_MIDNIGHT, CUTOFF);
+  check(parser.ready(), "bounded history workspace allocates");
+  HaHistoryStats stats;
+  check(parse_history_in_chunks(&parser, valid, 7, &stats) ==
+            HaHistoryParseResult::Applied,
+        "valid Recorder payload parses incrementally");
+  check(history_sample_count(HistoryBank::Live, HistorySeries::Pv) == 8,
+        "unknown and unavailable PV intervals remain gaps");
+  check(history_sample_count(HistoryBank::Live, HistorySeries::Soc) == 10,
+        "stable SOC is carried forward at one-minute cadence");
+  check(history_sample_count(HistoryBank::Live, HistorySeries::Load) == 8,
+        "derived load follows availability of every required input");
+  check_near(history_value(HistoryBank::Live, HistorySeries::Pv, MIDNIGHT / 60).value,
+             1.0f, "historical W converts to kW");
+  check_near(history_value(HistoryBank::Live, HistorySeries::Load, MIDNIGHT / 60).value,
+             0.5f, "signed grid and battery values use the live load equation");
+  check_near(history_value(HistoryBank::Live, HistorySeries::Load,
+                           MIDNIGHT / 60 + 5).value,
+             1.5f, "derived load resumes after a usable PV state");
+  check(stats.usable_states == 5 && stats.points_written == 26,
+        "backfill statistics count states and downsampled chart points");
+
+  // Representative REST minimal_response shape: the first object establishes
+  // an inner array's identity, compact intermediate objects inherit it, and a
+  // full final object may repeat it. Series order is independent of the request
+  // order, and an empty series remains structurally valid.
+  const char* minimal_response =
+      "[[{\"entity_id\":\"sensor.grid\",\"state\":\"-1000\","
+      "\"last_changed\":\"2026-08-16T01:00:00.123456+01:00\","
+      "\"last_updated\":\"2026-08-16T01:00:00.123456+01:00\","
+      "\"attributes\":null,\"context\":null},"
+      "{\"state\":\"-2000\","
+      "\"last_changed\":\"2026-08-16T01:02:00.5+01:00\"},"
+      "{\"entity_id\":\"sensor.grid\",\"state\":\"-500\","
+      "\"last_changed\":null,"
+      "\"last_updated\":\"2026-08-16T00:04:00+00:00\"}],[],"
+      "[{\"entity_id\":\"sensor.pv\",\"state\":\"1000\","
+      "\"last_changed\":\"2026-08-16T00:00:00.000001Z\"},"
+      "{\"state\":\"unknown\","
+      "\"last_changed\":\"2026-08-16T00:01:00+00:00\"},"
+      "{\"state\":\"unavailable\","
+      "\"last_changed\":\"2026-08-16T00:02:00+00:00\"},"
+      "{\"entity_id\":\"sensor.pv\",\"state\":\"2000\","
+      "\"last_changed\":\"2026-08-16T00:03:00+00:00\","
+      "\"last_updated\":\"2026-08-16T00:03:00+00:00\"}],"
+      "[{\"entity_id\":\"sensor.soc\",\"state\":\"55\","
+      "\"last_changed\":\"2026-08-16T00:00:00+00:00\"}],"
+      "[{\"entity_id\":\"sensor.battery\",\"state\":\"-500\","
+      "\"last_changed\":\"2026-08-16T00:00:00+00:00\"}]]";
+  history_reset(HistoryBank::Live);
+  HaHistoryParser minimal_parser(fields, field_count, MIDNIGHT, NEXT_MIDNIGHT,
+                                 CUTOFF);
+  check(parse_history_in_chunks(&minimal_parser, minimal_response, 11) ==
+            HaHistoryParseResult::Applied,
+        "documented HA minimal response shape parses incrementally");
+  check(history_value(HistoryBank::Live, HistorySeries::Pv,
+                      MIDNIGHT / 60).known &&
+            !history_value(HistoryBank::Live, HistorySeries::Pv,
+                           MIDNIGHT / 60 + 1).known &&
+            history_value(HistoryBank::Live, HistorySeries::Pv,
+                          MIDNIGHT / 60 + 3).known,
+        "minimal unknown and unavailable states remain gaps within inherited series");
+  check_near(history_value(HistoryBank::Live, HistorySeries::Pv,
+                           MIDNIGHT / 60 + 3).value,
+             2.0f, "full last object may repeat the current series entity");
+  check(minimal_parser.error() == HaHistoryParseError::None,
+        "valid minimal response has no parser diagnostic");
+
+  history_reset(HistoryBank::Live);
+  HaHistoryField home_ev_fields[] = {
+      {HaEntity::HomePower, "sensor.home", HaUnit::Kilowatts},
+      {HaEntity::EvPower, "sensor.ev", HaUnit::Watts},
+  };
+  const char* direct_load =
+      "[[{\"entity_id\":\"sensor.home\",\"state\":\"1.25\","
+      "\"last_changed\":\"2026-08-16T00:00:00Z\"}],"
+      "[{\"entity_id\":\"sensor.ev\",\"state\":\"500\","
+      "\"last_updated\":\"2026-08-16T00:00:00Z\"}]]";
+  HaHistoryParser direct_parser(home_ev_fields, 2, MIDNIGHT, NEXT_MIDNIGHT, CUTOFF);
+  check(parse_history_in_chunks(&direct_parser, direct_load, 17) ==
+            HaHistoryParseResult::Applied,
+        "direct home and EV history parse with their live units");
+  check_near(history_value(HistoryBank::Live, HistorySeries::Load,
+                           MIDNIGHT / 60 + 9).value,
+             1.75f, "direct mapped home is preferred and EV is added to chart load");
+
+  history_reset(HistoryBank::Live);
+  HaHistoryField direct_fields[] = {
+      {HaEntity::HomePower, "sensor.home", HaUnit::Watts},
+  };
+  const char* zero =
+      "[[{\"entity_id\":\"sensor.home\",\"state\":\"0\","
+      "\"last_changed\":\"2026-08-16T00:00:00Z\"}]]";
+  HaHistoryParser zero_parser(direct_fields, 1, MIDNIGHT, NEXT_MIDNIGHT, CUTOFF);
+  check(parse_history_in_chunks(&zero_parser, zero, strlen(zero)) ==
+            HaHistoryParseResult::Applied,
+        "genuine historical zero is applied");
+  const MaybeFloat zero_value =
+      history_value(HistoryBank::Live, HistorySeries::Load, MIDNIGHT / 60 + 9);
+  check(zero_value.known && zero_value.value == 0.0f,
+        "genuine historical zero remains a known zero");
+
+  history_reset(HistoryBank::Live);
+  HaHistoryParser empty_parser(direct_fields, 1, MIDNIGHT, NEXT_MIDNIGHT, CUTOFF);
+  check(parse_history_in_chunks(&empty_parser, "[]", 1) ==
+            HaHistoryParseResult::NoData,
+        "empty outer Recorder history is a permanent no-data result");
+  HaHistoryParser empty_series_parser(direct_fields, 1, MIDNIGHT,
+                                      NEXT_MIDNIGHT, CUTOFF);
+  check(parse_history_in_chunks(&empty_series_parser, "[[],[]]", 1) ==
+            HaHistoryParseResult::NoData,
+        "empty Recorder entity arrays are structurally valid no-data results");
+  const char* missing =
+      "[[{\"entity_id\":\"sensor.not_recorded\",\"state\":\"1\","
+      "\"last_changed\":\"2026-08-16T00:00:00Z\"}]]";
+  HaHistoryParser missing_parser(direct_fields, 1, MIDNIGHT, NEXT_MIDNIGHT, CUTOFF);
+  check(parse_history_in_chunks(&missing_parser, missing, 13) == HaHistoryParseResult::NoData,
+        "missing or entity-excluded history stays optional");
+
+  history_put(HistoryBank::Live, HistorySeries::Pv, CUTOFF / 60, 9.0f);
+  HaHistoryParser malformed_parser(direct_fields, 1, MIDNIGHT, NEXT_MIDNIGHT, CUTOFF);
+  check(parse_history_in_chunks(&malformed_parser, "[[{bad}]]", 3) ==
+            HaHistoryParseResult::BadPayload,
+        "malformed Recorder JSON is rejected");
+  HaHistoryParser structural_parser(direct_fields, 1, MIDNIGHT, NEXT_MIDNIGHT, CUTOFF);
+  check(parse_history_in_chunks(&structural_parser, "[[],]", 2) ==
+            HaHistoryParseResult::BadPayload,
+        "malformed Recorder array structure is rejected");
+  HaHistoryParser missing_id_parser(direct_fields, 1, MIDNIGHT, NEXT_MIDNIGHT,
+                                    CUTOFF);
+  const char* missing_first_id =
+      "[[{\"state\":\"1\","
+      "\"last_changed\":\"2026-08-16T00:00:00+00:00\"}]]";
+  check(parse_history_in_chunks(&missing_id_parser, missing_first_id, 8) ==
+            HaHistoryParseResult::BadPayload &&
+            missing_id_parser.error() == HaHistoryParseError::MissingEntityId &&
+            missing_id_parser.error_series() == 1,
+        "minimal series must establish entity identity on its first object");
+  HaHistoryParser timestamp_parser(direct_fields, 1, MIDNIGHT, NEXT_MIDNIGHT,
+                                   CUTOFF);
+  const char* invalid_timestamp =
+      "[[{\"entity_id\":\"sensor.home\",\"state\":\"1\","
+      "\"last_changed\":\"not-a-timestamp\"}]]";
+  check(parse_history_in_chunks(&timestamp_parser, invalid_timestamp, 9) ==
+            HaHistoryParseResult::BadPayload &&
+            timestamp_parser.error() == HaHistoryParseError::InvalidTimestamp,
+        "invalid state timestamp has a specific parser diagnostic");
+  HaHistoryParser top_level_parser(direct_fields, 1, MIDNIGHT, NEXT_MIDNIGHT,
+                                   CUTOFF);
+  check(parse_history_in_chunks(&top_level_parser, "{}", 1) ==
+            HaHistoryParseResult::BadPayload &&
+            top_level_parser.error() ==
+                HaHistoryParseError::UnexpectedTopLevelToken,
+        "non-array response has a specific parser diagnostic");
+  check_near(history_value(HistoryBank::Live, HistorySeries::Pv, CUTOFF / 60).value,
+             9.0f, "malformed history preserves existing live samples");
+
+  HaHistoryResponseLimiter below_limit;
+  check(below_limit.accept(HA_HISTORY_RESPONSE_MAX_BYTES / 2) &&
+            below_limit.accept(HA_HISTORY_RESPONSE_MAX_BYTES / 2) &&
+            below_limit.received() == HA_HISTORY_RESPONSE_MAX_BYTES &&
+            !below_limit.exceeded(),
+        "an individual window may stream up to the fixed response ceiling");
+  check(!below_limit.accept(1) && below_limit.exceeded() &&
+            below_limit.received() == HA_HISTORY_RESPONSE_MAX_BYTES,
+        "an oversized individual window fails without accepting a truncated byte");
+
+  HaHistoryField unsupported[] = {
+      {HaEntity::PvPower, "sensor.pv", HaUnit::Unknown},
+  };
+  HaHistoryParser unsupported_parser(unsupported, 1, MIDNIGHT, NEXT_MIDNIGHT, CUTOFF);
+  const char* one_pv =
+      "[[{\"entity_id\":\"sensor.pv\",\"state\":\"42\","
+      "\"last_changed\":\"2026-08-16T00:00:00Z\"}]]";
+  check(parse_history_in_chunks(&unsupported_parser, one_pv, 9) ==
+            HaHistoryParseResult::NoData,
+        "unsupported live unit cannot turn Recorder states into chart values");
+
+  history_reset(HistoryBank::Live);
+  history_put(HistoryBank::Live, HistorySeries::Pv, CUTOFF / 60, 9.0f);
+  HaHistoryField pv_field[] = {
+      {HaEntity::PvPower, "sensor.pv", HaUnit::Watts},
+  };
+  const char* overlap =
+      "[[{\"entity_id\":\"sensor.pv\",\"state\":\"1000\","
+      "\"last_changed\":\"2026-08-16T00:09:00Z\"},"
+      "{\"state\":\"2000\",\"last_changed\":\"2026-08-16T00:10:00Z\"}]]";
+  HaHistoryParser overlap_parser(pv_field, 1, MIDNIGHT, NEXT_MIDNIGHT, CUTOFF);
+  check(parse_history_in_chunks(&overlap_parser, overlap, 11) ==
+            HaHistoryParseResult::Applied,
+        "history up to the first live minute is applied");
+  check_near(history_value(HistoryBank::Live, HistorySeries::Pv, CUTOFF / 60).value,
+             9.0f, "Recorder overlap cannot replace the first live sample");
+
+  constexpr uint32_t WINDOW_BOUNDARY = MIDNIGHT + 2 * 60 * 60u;
+  constexpr uint32_t WINDOW_CUTOFF = MIDNIGHT + 4 * 60 * 60u;
+  const char* first_window =
+      "[[{\"entity_id\":\"sensor.pv\",\"state\":\"1000\","
+      "\"last_changed\":\"2026-08-16T00:00:00Z\"},"
+      "{\"state\":\"2000\","
+      "\"last_changed\":\"2026-08-16T01:59:00Z\"},"
+      "{\"state\":\"99000\","
+      "\"last_changed\":\"2026-08-16T02:00:00Z\"}]]";
+  const char* second_window =
+      "[[{\"entity_id\":\"sensor.pv\",\"state\":\"3000\","
+      "\"last_changed\":\"2026-08-16T02:00:00Z\"},"
+      "{\"state\":\"4000\","
+      "\"last_changed\":\"2026-08-16T03:59:00Z\"},"
+      "{\"state\":\"99000\","
+      "\"last_changed\":\"2026-08-16T04:00:00Z\"}]]";
+  history_reset(HistoryBank::Live);
+  history_put(HistoryBank::Live, HistorySeries::Pv, WINDOW_CUTOFF / 60, 9.0f);
+  HaHistoryParser first_window_parser(pv_field, 1, MIDNIGHT, NEXT_MIDNIGHT,
+                                      MIDNIGHT, WINDOW_BOUNDARY);
+  HaHistoryParser second_window_parser(pv_field, 1, MIDNIGHT, NEXT_MIDNIGHT,
+                                       WINDOW_BOUNDARY, WINDOW_CUTOFF);
+  check(parse_history_in_chunks(&first_window_parser, first_window, 13) ==
+            HaHistoryParseResult::Applied &&
+            parse_history_in_chunks(&second_window_parser, second_window, 17) ==
+                HaHistoryParseResult::Applied,
+        "adjacent bounded history windows apply chronologically");
+  check_near(history_value(HistoryBank::Live, HistorySeries::Pv,
+                           WINDOW_BOUNDARY / 60 - 1).value,
+             2.0f, "first history window owns the minute before its boundary");
+  check_near(history_value(HistoryBank::Live, HistorySeries::Pv,
+                           WINDOW_BOUNDARY / 60).value,
+             3.0f, "adjacent window owns the boundary minute without duplication");
+  check_near(history_value(HistoryBank::Live, HistorySeries::Pv,
+                           WINDOW_CUTOFF / 60).value,
+             9.0f, "final window cannot overwrite the exact live cutoff minute");
+
+  history_reset(HistoryBank::Live);
+  history_put(HistoryBank::Live, HistorySeries::Pv, WINDOW_CUTOFF / 60, 9.0f);
+  HaHistoryParser retained_window_parser(pv_field, 1, MIDNIGHT,
+                                         NEXT_MIDNIGHT, MIDNIGHT,
+                                         WINDOW_BOUNDARY);
+  check(parse_history_in_chunks(&retained_window_parser, first_window, 19) ==
+            HaHistoryParseResult::Applied,
+        "completed earlier window restores chart data");
+  HaHistoryParser failed_later_parser(pv_field, 1, MIDNIGHT, NEXT_MIDNIGHT,
+                                      WINDOW_BOUNDARY, WINDOW_CUTOFF);
+  check(parse_history_in_chunks(&failed_later_parser, "[[{bad}]]", 3) ==
+            HaHistoryParseResult::BadPayload &&
+            history_value(HistoryBank::Live, HistorySeries::Pv,
+                          MIDNIGHT / 60).known,
+        "later malformed window leaves an earlier restored window intact");
+  check_near(history_value(HistoryBank::Live, HistorySeries::Pv,
+                           WINDOW_CUTOFF / 60).value,
+             9.0f, "later history failure leaves the good live sample valid");
+
+  uint32_t spring_midnight = 0;
+  uint32_t spring_next = 0;
+  uint32_t spring_sample = 0;
+  uint32_t spring_cutoff = 0;
+  check(ha_history_timestamp_parse("2026-03-29T00:00:00+00:00", &spring_midnight) &&
+            ha_history_timestamp_parse("2026-03-30T00:00:00+01:00", &spring_next) &&
+            ha_history_timestamp_parse("2026-03-29T02:15:00+01:00", &spring_sample) &&
+            ha_history_timestamp_parse("2026-03-29T03:00:00+01:00", &spring_cutoff),
+        "ISO timestamps retain their explicit DST offsets");
+  check(spring_next - spring_midnight == 23 * 3600u,
+        "local-midnight boundary may be a 23-hour DST day");
+  uint32_t autumn_midnight = 0;
+  uint32_t autumn_next = 0;
+  check(ha_history_timestamp_parse("2026-10-25T00:00:00+01:00", &autumn_midnight) &&
+            ha_history_timestamp_parse("2026-10-26T00:00:00+00:00", &autumn_next) &&
+            autumn_next - autumn_midnight == 25 * 3600u,
+        "local-midnight boundary may be a 25-hour DST day");
+  const char* autumn_payload =
+      "[[{\"entity_id\":\"sensor.pv\",\"state\":\"1000\","
+      "\"last_changed\":\"2026-10-25T00:00:00+01:00\"}]]";
+  history_reset(HistoryBank::Live);
+  HaHistoryParser autumn_parser(pv_field, 1, autumn_midnight, autumn_next,
+                                 autumn_next - 60);
+  check(parse_history_in_chunks(&autumn_parser, autumn_payload, 19) ==
+            HaHistoryParseResult::Applied &&
+            history_value(HistoryBank::Live, HistorySeries::Pv,
+                          autumn_midnight / 60).known &&
+            history_value(HistoryBank::Live, HistorySeries::Pv,
+                          autumn_next / 60 - 2).known,
+        "25-hour Recorder day retains both its first and final historical hours");
+  char dst_payload[256];
+  snprintf(dst_payload, sizeof(dst_payload),
+           "[[{\"entity_id\":\"sensor.pv\",\"state\":\"1000\","
+           "\"last_changed\":\"2026-03-29T02:15:00+01:00\"}]]");
+  history_reset(HistoryBank::Live);
+  HaHistoryParser dst_parser(pv_field, 1, spring_midnight, spring_next, spring_cutoff);
+  check(parse_history_in_chunks(&dst_parser, dst_payload, 5) ==
+            HaHistoryParseResult::Applied,
+        "DST-day Recorder sample is backfilled");
+  uint32_t from = 0;
+  uint32_t to = 0;
+  check(history_window(HistoryBank::Live, &from, &to) &&
+            from == spring_midnight / 60 && to == spring_next / 60,
+        "chart uses HA's exact local-midnight window across DST");
+  check(history_value(HistoryBank::Live, HistorySeries::Pv, spring_sample / 60).known,
+        "offset timestamp lands in the correct absolute minute");
+
+  // Existing fallback remains: if Recorder never supplies anything, normal
+  // snapshots still build the chart from boot onward.
+  history_reset(HistoryBank::Live);
+  Snapshot live;
+  live.valid = true;
+  live.ts = CUTOFF;
+  live.power.pv = {true, 3.0f};
+  history_record(live);
+  check_near(history_value(HistoryBank::Live, HistorySeries::Pv, CUTOFF / 60).value,
+             3.0f, "live-from-boot recording is independent of Recorder");
+}
+
+void test_history_backfill_retry() {
+  printf("history backfill retry\n");
+  check(history_backfill_outcome(FetchResult::NoNetwork) ==
+            HistoryBackfillOutcome::TransientFailure &&
+            history_backfill_outcome(FetchResult::HttpError, 503) ==
+                HistoryBackfillOutcome::TransientFailure &&
+            history_backfill_outcome(FetchResult::HttpError, 429) ==
+                HistoryBackfillOutcome::TransientFailure,
+        "network, server and rate-limit failures are retryable");
+  check(history_backfill_outcome(FetchResult::BadPayload) ==
+            HistoryBackfillOutcome::PermanentFailure &&
+            history_backfill_outcome(FetchResult::HttpError, 404) ==
+                HistoryBackfillOutcome::PermanentFailure &&
+            history_backfill_outcome(FetchResult::EntityUnavailable) ==
+                HistoryBackfillOutcome::NoData,
+        "malformed, missing-endpoint and no-data results are not retried");
+  constexpr uint32_t DAY_START = 1786838400u;
+  constexpr uint32_t DAY_END = DAY_START + 24 * 60 * 60u;
+
+  HistoryBackfillRetry full_day;
+  check(!full_day.due(0), "Recorder waits for the first successful live poll");
+  full_day.activate(DAY_START, DAY_END, DAY_END);
+  uint32_t previous_end = DAY_START;
+  while (full_day.active()) {
+    check(full_day.window_start_ts() == previous_end,
+          "backfill windows are consecutive and chronological");
+    const uint32_t end = full_day.window_end_ts();
+    check(end > previous_end &&
+              end - previous_end <= HISTORY_BACKFILL_WINDOW_SECONDS,
+          "each history request is bounded to two hours");
+    previous_end = end;
+    full_day.record(HistoryBackfillOutcome::Success, 0, 1);
+  }
+  check(full_day.finished() && full_day.succeeded() &&
+            full_day.windows_completed() == 12 &&
+            full_day.points_written() == 12 && previous_end == DAY_END,
+        "a full 24-hour day is split into twelve bounded windows");
+
+  HistoryBackfillRetry partial_day;
+  const uint32_t partial_cutoff = DAY_START + 5 * 60 * 60u + 37 * 60u + 19u;
+  partial_day.activate(DAY_START, DAY_END, partial_cutoff);
+  check(partial_day.window_start_ts() == DAY_START &&
+            partial_day.window_end_ts() ==
+                DAY_START + HISTORY_BACKFILL_WINDOW_SECONDS,
+        "partial current day begins with the normal fixed window");
+  partial_day.record(HistoryBackfillOutcome::Success, 0);
+  partial_day.record(HistoryBackfillOutcome::Success, 0);
+  check(partial_day.window_start_ts() == DAY_START + 4 * 60 * 60u &&
+            partial_day.window_end_ts() == partial_cutoff,
+        "final partial window ends exactly at the latched live cutoff");
+  partial_day.record(HistoryBackfillOutcome::NoData, 0);
+  check(partial_day.succeeded() && partial_day.windows_completed() == 3,
+        "an empty final window completes without retrying forever");
+
+  HistoryBackfillRetry spring_day;
+  const uint32_t spring_end = DAY_START + 23 * 60 * 60u;
+  spring_day.activate(DAY_START, spring_end, spring_end);
+  while (spring_day.active()) {
+    spring_day.record(HistoryBackfillOutcome::Success, 0);
+  }
+  HistoryBackfillRetry autumn_day;
+  const uint32_t autumn_end = DAY_START + 25 * 60 * 60u;
+  autumn_day.activate(DAY_START, autumn_end, autumn_end);
+  while (autumn_day.active()) {
+    autumn_day.record(HistoryBackfillOutcome::Success, 0);
+  }
+  check(spring_day.windows_completed() == 12 &&
+            autumn_day.windows_completed() == 13,
+        "DST-aware 23- and 25-hour day bounds produce complete window sets");
+
+  HistoryBackfillRetry retry;
+  retry.activate(DAY_START, DAY_END, DAY_START + 6 * 60 * 60u);
+  retry.record(HistoryBackfillOutcome::Success, 0, 10);
+  const uint32_t middle_start = retry.window_start_ts();
+  retry.record(HistoryBackfillOutcome::TransientFailure, 100);
+  check(middle_start == DAY_START + 2 * 60 * 60u &&
+            retry.window_start_ts() == middle_start && !retry.due(30099) &&
+            retry.due(30100) && retry.attempts() == 1 &&
+            retry.points_written() == 10,
+        "transient middle-window failure retains completed work and retries in place");
+  retry.record(HistoryBackfillOutcome::TransientFailure, 30100);
+  check(retry.due(60100), "a second transient failure permits the final retry");
+  retry.record(HistoryBackfillOutcome::TransientFailure, 60100);
+  check(retry.finished() && !retry.active() && !retry.succeeded() &&
+            retry.attempts() == 3 && retry.windows_completed() == 1,
+        "transient failures stop after three attempts without restarting the day");
+
+  HistoryBackfillRetry malformed;
+  malformed.activate(DAY_START, DAY_END, DAY_START + 4 * 60 * 60u);
+  malformed.record(HistoryBackfillOutcome::Success, 0, 7);
+  malformed.record(HistoryBackfillOutcome::PermanentFailure, 0);
+  check(malformed.finished() && malformed.windows_completed() == 1 &&
+            malformed.points_written() == 7,
+        "malformed later window stops safely while retaining earlier totals");
 }
 
 // A day payload straight from /api/day/series, at the shape the device asks for.
@@ -564,6 +1473,15 @@ void test_button_gestures() {
 void test_solar_forecast() {
   printf("solar forecast\n");
 
+  PvArray arrays[SOLAR_MAX_ARRAYS];
+  check(!solar_site_configured(false, arrays, SOLAR_MAX_ARRAYS),
+        "native forecast needs a location");
+  check(!solar_site_configured(true, arrays, SOLAR_MAX_ARRAYS),
+        "native forecast needs a positive-size array");
+  arrays[2].kwp = 4.5f;
+  check(solar_site_configured(true, arrays, SOLAR_MAX_ARRAYS),
+        "native forecast accepts a location and one array");
+
   constexpr float LAT = 51.5072f;   // London, the reference site
   constexpr float LON = -0.1276f;
 
@@ -664,6 +1582,29 @@ void test_solar_forecast() {
   solar_forecast_day(site, DAY, hours, 24, DAY, slots);
   summary = solar_summarise(slots, DAY, DAY);
   check(summary.forecast_kwh == 0.0f, "no arrays forecasts nothing");
+
+  // The same cached native result can augment an HA Snapshot without replacing
+  // any HA-acquired values or involving the Modbus representation.
+  Snapshot ha_snapshot;
+  ha_snapshot.valid = true;
+  ha_snapshot.power.pv = {true, 2.4f};
+  ha_snapshot.today.present = true;
+  ha_snapshot.today.solar = {true, 6.0f};
+  const SolarSummary cached = {12.0f, 4.0f, 5.5f};
+  solar_summary_apply(cached, 60, &ha_snapshot);
+  check(ha_snapshot.power.pv.known && ha_snapshot.power.pv.value == 2.4f,
+        "native forecast leaves HA live PV intact");
+  check(ha_snapshot.solar.configured, "native cache configures an HA Snapshot");
+  check_near(ha_snapshot.solar.forecast_kwh.value, 12.0f,
+             "native cache supplies HA forecast total");
+  check_near(ha_snapshot.solar.remaining_kwh.value, 4.0f,
+             "native cache supplies HA remaining forecast");
+  check_near(ha_snapshot.solar.vs_forecast_pct.value, 75.0f,
+             "native cache uses HA daily PV for forecast percentage");
+  check_near(ha_snapshot.solar.peak_kw.value, 5.5f,
+             "native cache supplies HA forecast peak");
+  check(ha_snapshot.tz_offset_min.known && ha_snapshot.tz_offset_min.value == 60,
+        "native cache supplies the forecast location timezone");
 }
 
 // --- screen-off window -----------------------------------------------------
@@ -719,11 +1660,20 @@ int run_selftest() {
   s_failures = 0;
   s_checks = 0;
   test_display_rotation();
+  test_data_sources();
+  test_home_assistant_template();
+  test_home_assistant_settings_metadata();
+  test_home_assistant_forecast();
+  test_home_assistant_payload();
+  test_server_forecast();
+  test_solar_metric_layout();
   test_decode();
   test_plan();
   test_snapshot();
   test_day_baseline();
   test_history();
+  test_home_assistant_history();
+  test_history_backfill_retry();
   test_day_series();
   test_history_banks();
   test_button_gestures();

@@ -1,18 +1,16 @@
 // Today's PV forecast, fetched straight from Open-Meteo (docs/PLAN.md §D4).
 //
-// Only used on the Modbus source. With a server in the path the forecast arrives
-// already reduced in /api/summary's `solar` block, computed by the model that
-// also feeds the dashboard — one house, one number. This exists because a plant
-// read directly has no such block, and screen 3's ring would otherwise be hidden
-// for the whole of §D.
+// Used by direct Modbus and optionally by Home Assistant. With a server in the
+// path the forecast arrives already reduced in /api/summary's `solar` block,
+// computed by the model that also feeds the dashboard — one house, one number.
 //
 // The fetch is deliberately small: one request an hour, ~2 KB, from the same
 // free endpoint the server uses. Open-Meteo's `timeformat=unixtime` means no
 // ISO-8601 parsing, and `timezone=auto` makes it answer with the offset for the
 // coordinates — which is worth as much as the irradiance is, because the Puck
 // itself runs on UTC (net.cpp sets no timezone) and plant_system_timezone
-// reads 0 on this plant even in summer. That offset is the only thing on the
-// Modbus path that can anchor the day charts to a real local midnight.
+// reads 0 on this plant even in summer. That offset lets the native forecast
+// path anchor the day charts to a real local midnight.
 
 #pragma once
 

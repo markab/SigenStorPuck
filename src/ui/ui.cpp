@@ -316,8 +316,8 @@ lv_obj_t* ui_create(lv_obj_t* parent, const UiConfig& config) {
   // The settings screen is built whatever its bit says: it carries the QR code
   // and the address of this page, and is the only way back to it from the glass.
   uint8_t wanted = config.visible | (1u << PUCK_SCREEN_SETTINGS);
-  if (!config.with_server_screens) {
-    wanted &= static_cast<uint8_t>(~PUCK_SERVER_ONLY_SCREENS);
+  if (!config.with_detailed_screens) {
+    wanted &= static_cast<uint8_t>(~PUCK_DETAILED_SCREENS);
   }
   // Screen 1 is the device's reason to exist and the one every failure mode
   // falls back to. Leaving nothing but the settings screen would look broken.
@@ -366,7 +366,7 @@ lv_obj_t* ui_create(lv_obj_t* parent, const UiConfig& config) {
         screen_solar_create(s_tiles[i]);
         break;
       case PUCK_SCREEN_LOAD:
-        screen_load_create(s_tiles[i], config.with_server_screens);
+        screen_load_create(s_tiles[i], config.with_detailed_screens);
         break;
       case PUCK_SCREEN_FLOWS:
         screen_flows_create(s_tiles[i]);

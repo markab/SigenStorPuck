@@ -73,6 +73,7 @@ struct Band {
 
   uint32_t last_minute = UINT32_MAX;  // forces the first refresh
   uint32_t last_generation = 0;
+  uint32_t last_revision = 0;
 };
 
 Band s_bands[MAX_BANDS];
@@ -403,15 +404,16 @@ void chart_band_refresh(lv_obj_t* obj) {
 
   // Whichever day is on screen. A band does not choose: stepping back a day
   // moves every chart at once, so the choice belongs to the view, not to the
-  // band. The generation check catches the switch even when the two days happen
-  // to share a head minute.
+  // band. Generation catches bank resets/switches even when two days share a
+  // head minute; revision catches Recorder writes behind an unchanged head.
   const HistoryBank bank = history_view();
   const uint32_t head = history_head_minute(bank);
   const uint32_t generation = history_generation(bank) ^ (static_cast<uint32_t>(bank) << 24);
-  if (head == band->last_minute && generation == band->last_generation) {
+  const uint32_t revision = history_revision(bank);
+  if (head == band->last_minute && generation == band->last_generation &&
+      revision == band->last_revision) {
     return;
   }
-  band->last_generation = generation;
 
   uint32_t from = 0;
   uint32_t to = 0;
@@ -419,6 +421,8 @@ void chart_band_refresh(lv_obj_t* obj) {
     // Nothing recorded yet. Draw nothing at all rather than a flat line along
     // the bottom, which would read as a real day of zero generation.
     band->last_minute = head;
+    band->last_generation = generation;
+    band->last_revision = revision;
     band->has_data = false;
     band->columns = 0;
     lv_obj_invalidate(obj);
@@ -437,8 +441,6 @@ void chart_band_refresh(lv_obj_t* obj) {
     band->has_data = false;
     return;  // deliberately without recording last_minute, so this is retried
   }
-  band->last_minute = head;
-
   {
     UiPerfTimer reduce_perf(UiPerfSection::HistoryReduce);
     history_reduce(bank, band->series, from, to, band->column, columns);
@@ -470,6 +472,12 @@ void chart_band_refresh(lv_obj_t* obj) {
     }
   }
   band->has_data = any;
+  // Do not mark the revision handled until a usable reduction has completed.
+  // A Recorder write behind `head` can otherwise be consumed by the cache key
+  // without its samples ever reaching the columns.
+  band->last_minute = head;
+  band->last_generation = generation;
+  band->last_revision = revision;
 
   if (band->autoscale) {
     // Anchored at zero for a series that never goes negative, so the height of
