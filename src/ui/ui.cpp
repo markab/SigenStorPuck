@@ -479,6 +479,14 @@ lv_obj_t* ui_create(lv_obj_t* parent, const UiConfig& config) {
   lv_obj_add_event_cb(s_tileview, on_tile_changed, LV_EVENT_VALUE_CHANGED, nullptr);
   lv_obj_add_event_cb(s_tileview, on_tile_scroll_begin, LV_EVENT_SCROLL_BEGIN, nullptr);
   lv_obj_add_event_cb(s_tileview, on_tile_scroll_end, LV_EVENT_SCROLL_END, nullptr);
+  // Named explicitly, because LVGL 8.4 does not. Adding tiles never sets the
+  // tileview's active tile — only lv_obj_set_tile() and a finished scroll do — so
+  // it is NULL until the first screen change, the highlight below matches nothing,
+  // and the device booted with no page dot lit. ui_current_screen() hid it by
+  // falling back to 0, and so did the sim, whose first ui_show_screen(0) did a
+  // real tile change until that call learned to skip "already there". Tile 0
+  // already sits at scroll 0, so this sends no events; it only records the fact.
+  lv_obj_set_tile(s_tileview, s_tiles[0], LV_ANIM_OFF);
   highlight_active_dot();
 
   return s_tileview;
