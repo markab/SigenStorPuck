@@ -637,6 +637,33 @@ int run_screenshot_pass(const std::string& output_directory) {
     }
   }
 
+  // The return to today, which runs on LVGL's inactivity clock — real time in the
+  // sim, so the timeout is shortened to two seconds for the check rather than
+  // waited out. Both halves are checked, because a return that fired at once would
+  // pass the second on its own: still on the past day a second after the press
+  // that put it there, and back on today once the timeout has passed.
+  {
+    ui_set_day_return(2);
+    ui_set_day_offset(-1);
+    lv_disp_trig_activity(nullptr);  // what the press that stepped back does
+    const auto run_for = [](uint32_t ms) {
+      for (uint32_t t = 0; t < ms; t += 20) {
+        sim_backend_delay(20);
+        lv_timer_handler();
+      }
+    };
+    run_for(1000);
+    const bool held = ui_day_offset() == -1;
+    run_for(2500);
+    const bool returned = ui_day_offset() == 0;
+    printf("[sim] day return: %s while recent, %s after the timeout\n",
+           held ? "held" : "RETURNED EARLY", returned ? "back to today" : "STILL ON A PAST DAY");
+    if (!held || !returned) {
+      ++failures;
+    }
+    ui_set_day_return(0);
+  }
+
   ui_set_day_offset(0);
   ui_clear_day();
 

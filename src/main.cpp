@@ -322,6 +322,7 @@ void setup() {
   ui_set_rotate_interval(settings_get().rotate_s);
   ui_set_rotate_enabled(settings_get().rotate_enabled);
   ui_set_sweep_interval(settings_get().sweep_min);
+  ui_set_day_return(PUCK_DAY_RETURN_S);
 
   net_begin();
   poller_begin();

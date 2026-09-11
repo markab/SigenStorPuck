@@ -131,6 +131,10 @@ void ui_set_rotate_interval(uint32_t seconds);
 // How often to run the sweep band, in minutes; 0 turns it off.
 void ui_set_sweep_interval(uint32_t minutes);
 
+// How long a past day may sit with no touch or press before the screens return to
+// today on their own, in seconds; 0 leaves it there until a button brings it back.
+void ui_set_day_return(uint32_t seconds);
+
 // Screen navigation, for the simulator's keyboard, its screenshot pass and the
 // BOOT button. Touch swiping needs none of this — the tileview handles that.
 int ui_screen_count();

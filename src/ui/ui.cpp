@@ -52,6 +52,7 @@ lv_obj_t* s_shift_root = nullptr;
 lv_obj_t* s_sweep = nullptr;
 uint32_t s_rotate_seconds = 0;
 uint32_t s_sweep_minutes = 0;
+uint32_t s_day_return_seconds = 0;
 lv_obj_t* s_overlay = nullptr;
 lv_obj_t* s_overlay_title = nullptr;
 lv_obj_t* s_overlay_detail = nullptr;
@@ -162,6 +163,18 @@ void housekeeping_tick(lv_timer_t* /*timer*/) {
       sweep_elapsed = 0;
       run_sweep();
     }
+  }
+
+  // A past day is something being looked at, not somewhere to leave the display.
+  // The only way off one used to be BOOT, so a single press of PWR — pressing it
+  // to brighten a dimmed screen is enough, since only a *sleeping* panel swallows
+  // the waking press — parked the device on yesterday indefinitely, and each
+  // midnight just moved it along to a new yesterday. Measured on the same
+  // inactivity clock as everything above, so a swipe or a press while somebody is
+  // actually reading holds it where it is.
+  if (s_day_return_seconds > 0 && s_day_offset != 0 &&
+      idle_ms >= s_day_return_seconds * 1000) {
+    ui_set_day_offset(0);
   }
 }
 
@@ -557,6 +570,10 @@ void ui_set_rotate_interval(uint32_t seconds) {
 
 void ui_set_sweep_interval(uint32_t minutes) {
   s_sweep_minutes = minutes;
+}
+
+void ui_set_day_return(uint32_t seconds) {
+  s_day_return_seconds = seconds;
 }
 
 void ui_set_device_battery(bool show, int percent, bool charging) {

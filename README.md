@@ -78,7 +78,8 @@ away.
 The day buttons are **SigenStorDisplay Server Only** — on Modbus there is no stored
 history to step back into, and the buttons say `LIVE ONLY` instead. With a server you can
 step back seven days; the Power screen always stays live, and the day you are looking at
-is named just above the page dots.
+is named just above the page dots. Left alone for two minutes, it goes back to today
+by itself.
 
 If the screen is off on a schedule, the first press of any button just wakes it up.
 
