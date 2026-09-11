@@ -11,13 +11,6 @@ forecast, consumption, where the day's energy went, and what it all cost.
 The Puck can take its readings from one of three places, and it matters which, because
 some screens and features need one of them.
 
-**Home Assistant.** The Puck reads mapped entities through Home Assistant's REST API.
-This is useful when Home Assistant is already the single collector for the inverter,
-battery and meters: the Puck consumes that normalized home-energy environment without
-becoming another direct Modbus client. The mappings are semantic and fully editable, so
-this works with different inverter and battery integrations, not only Sigenergy. No
-entity IDs are assumed.
-
 **Modbus TCP — talking straight to your plant.** No other software involved. The Puck
 reads your inverter or gateway directly over your own network. This remains the default
 for a new installation.
@@ -28,25 +21,32 @@ screens, stepping back through past days, and complete daily charts.
 **SigenStorDisplay has not been released yet.** The Puck already has full support for it
 built in and ready for when it is, but until then those parts are unavailable.
 
+**Home Assistant.** The Puck reads mapped entities through Home Assistant's REST API.
+This is useful when Home Assistant is already the single collector for the inverter,
+battery and meters: the Puck consumes that normalized home-energy environment without
+becoming another direct Modbus client. The mappings are semantic and fully editable, so
+this works with different inverter and battery integrations, not only Sigenergy. No
+entity IDs are assumed.
+
 ### What works with which
 
-| | Home Assistant | Modbus | SigenStorDisplay Server |
+| | Modbus | SigenStorDisplay Server | Home Assistant |
 |---|:--:|:--:|:--:|
 | **Power** screen | ● | ● | ● |
 | **Battery** screen | ● | ● | ● |
-| **Solar** screen | ◐ by default; ● with forecast configured | ● | ● |
-| **Load** screen | ◐ headline and live draw only | ◐ headline and live draw only | ● |
-| **Flows** screen | — | — | ● |
-| **Cost** screen | — | — | ● |
+| **Solar** screen | ● | ● | ◐ by default; ● with forecast configured |
+| **Load** screen | ◐ headline and live draw only | ● | ◐ headline and live draw only |
+| **Flows** screen | — | ● | — |
+| **Cost** screen | — | ● | — |
 | **Settings** screen | ● | ● | ● |
-| Solar forecast | ● disabled, Puck, or HA entities | ● calculated on the Puck | ● from the server |
-| Today's charts | ◐ restored from HA Recorder when available; otherwise from boot | ◐ from when the Puck was switched on | ● the whole day, and after a restart |
-| Step back through past days | — | — | ● up to 7 days |
-| Tariff rates and savings | — | — | ● |
+| Solar forecast | ● calculated on the Puck | ● from the server | ● disabled, Puck, or HA entities |
+| Today's charts | ◐ from when the Puck was switched on | ● the whole day, and after a restart | ◐ restored from HA Recorder when available; otherwise from boot |
+| Step back through past days | — | ● up to 7 days | — |
+| Tariff rates and savings | — | ● | — |
 
 ● full · ◐ partial · — not available
 
-On Home Assistant and Modbus the Flows and Cost screens are removed altogether rather
+On Modbus and Home Assistant the Flows and Cost screens are removed altogether rather
 than left showing dashes, so you get five screens instead of seven.
 
 ## The screens
@@ -63,7 +63,7 @@ Which screens appear at all is up to you — see **Screens** under Settings.
 | <img src="docs/img/power.png" width="300" alt="Power flow"> | <img src="docs/img/battery.png" width="300" alt="Battery"> |
 | **Power** — what is happening right now. Solar at the top, then clockwise: battery, home, EV, grid, around the plant in the middle. Dots run along each leg in the direction the power is going, faster when there is more of it. The ring is your state of charge.<br><br>*Works on all three sources when the corresponding values are available.* | **Battery** — charge level around the bezel, capacity in kWh, and how long until it is full or empty. Below that: charged and discharged today, battery health, and temperature.<br><br>*Works on all three sources. On Modbus, temperature and the daily totals need an inverter added under Plant; on HA, each figure needs its mapping.* |
 | <img src="docs/img/solar.png" width="300" alt="Solar"> | <img src="docs/img/load.png" width="300" alt="Load"> |
-| **Solar** — generation so far today, with the ring showing progress against the day's forecast. Then the forecast total and whichever optional remaining, progress and peak values are available; unavailable optional figures are hidden rather than shown as blank rows.<br><br>*Works on all three sources.* Home Assistant can use no forecast, calculate one on the Puck, or map HA forecast entities. | **Load** — everything used today, with what is being drawn right now.<br><br>*Partial on HA and Modbus.* The headline total, live figure and locally recorded curve work. The four source-breakdown figures need a **SigenStorDisplay Server**. |
+| **Solar** — generation so far today, with the ring showing progress against the day's forecast. Then the forecast total and whichever optional remaining, progress and peak values are available; unavailable optional figures are hidden rather than shown as blank rows.<br><br>*Works on all three sources.* Home Assistant can use no forecast, calculate one on the Puck, or map HA forecast entities. | **Load** — everything used today, with what is being drawn right now.<br><br>*Partial on Modbus and HA.* The headline total, live figure and locally recorded curve work. The four source-breakdown figures need a **SigenStorDisplay Server**. |
 | <img src="docs/img/flows.png" width="300" alt="Energy flows"> | <img src="docs/img/cost.png" width="300" alt="Cost"> |
 | **Flows** — where today's energy came from and where it went. Sources down the left, destinations down the right, one ribbon per path. The ring is how self-sufficient you have been.<br><br>**SigenStorDisplay Server Only.** | **Cost** — what you have saved today, the unit rate you are paying right now, and the next few tariff slots coloured against it.<br><br>**SigenStorDisplay Server Only.** |
 | <img src="docs/img/settings.png" width="300" alt="Settings"> | |
@@ -86,7 +86,7 @@ away.
 | **PWR** | Back one day | Auto-cycle on/off | Power off |
 | **BOOT** | Forward one day | Next screen | Restart |
 
-The day buttons are **SigenStorDisplay Server Only** — on Home Assistant and Modbus there
+The day buttons are **SigenStorDisplay Server Only** — on Modbus and Home Assistant there
 is no stored history to step back into, and the buttons say `LIVE ONLY` instead. With a server you can
 step back seven days; the Power screen always stays live, and the day you are looking at
 is named just above the page dots. Left alone for two minutes, it goes back to today
@@ -139,6 +139,30 @@ http://sigenstorpuck.local/
 
 ### 4. Choose and configure a data source
 
+#### Direct Modbus
+
+1. Check **Data source** is set to **Plant over Modbus**. It is out of the box.
+2. Under **Plant (Modbus)**, enter the IP address of your inverter or gateway. Leave the
+   port at `502` and the plant address at `247` unless you know otherwise.
+3. Optionally add your inverter as a device — this is what gives you battery temperature
+   and the daily totals — and a charger if you have one, for EV power.
+4. Save, then **Restart Device** from the Danger section.
+
+Two things to do outside the Puck, or it will not be able to connect:
+
+- In the **Sigen app**, allow Modbus TCP access for the Puck's IP address. Access is
+  granted per address, and a device that has not been added simply gets no reply.
+- In your **router**, give the Puck a fixed (reserved) IP address, so the permission you
+  just granted does not stop working the next time addresses are handed out.
+
+Data should appear within a few seconds of the restart.
+
+#### SigenStorDisplay Server
+
+Once it is available, set **Data source** to *SigenStor Display server*, then paste the
+enrolment URL from the server's **Admin → Kiosk devices** page into the **Server** section
+and save. The URL carries the server address and access token together.
+
 #### Home Assistant
 
 Prerequisites are a reachable Home Assistant instance, energy entities from any
@@ -175,30 +199,6 @@ leaves a gap, and a failed window never invalidates live data or discards comple
 windows. Transient failures are retried twice for the current window; malformed responses
 stop the backfill. No previous day is downloaded or made browseable.
 
-#### Direct Modbus
-
-1. Check **Data source** is set to **Plant over Modbus**. It is out of the box.
-2. Under **Plant (Modbus)**, enter the IP address of your inverter or gateway. Leave the
-   port at `502` and the plant address at `247` unless you know otherwise.
-3. Optionally add your inverter as a device — this is what gives you battery temperature
-   and the daily totals — and a charger if you have one, for EV power.
-4. Save, then **Restart Device** from the Danger section.
-
-Two things to do outside the Puck, or it will not be able to connect:
-
-- In the **Sigen app**, allow Modbus TCP access for the Puck's IP address. Access is
-  granted per address, and a device that has not been added simply gets no reply.
-- In your **router**, give the Puck a fixed (reserved) IP address, so the permission you
-  just granted does not stop working the next time addresses are handed out.
-
-Data should appear within a few seconds of the restart.
-
-#### SigenStorDisplay Server
-
-Once it is available, set **Data source** to *SigenStor Display server*, then paste the
-enrolment URL from the server's **Admin → Kiosk devices** page into the **Server** section
-and save. The URL carries the server address and access token together.
-
 ## Settings
 
 Everything below is on the Puck's own settings page at `http://sigenstorpuck.local/`.
@@ -215,9 +215,33 @@ Most changes take effect straight away; the ones needing a restart are marked �
 
 <table>
 <tr><th width="32%">Option</th><th>What it does</th></tr>
-<tr><td><strong>Home Assistant</strong> ↻</td><td>Read generic, explicitly mapped energy entities through Home Assistant's REST API. The Puck does not contact the plant over Modbus in this mode.</td></tr>
 <tr><td><strong>Plant over Modbus (LAN only)</strong> ↻</td><td><strong>The default.</strong> Read your inverter or gateway directly. Removes the Flows and Cost screens, which need data only a server has.</td></tr>
 <tr><td><strong>SigenStor Display server</strong> ↻</td><td>Read from a <strong>SigenStorDisplay Server</strong>. Not yet available.</td></tr>
+<tr><td><strong>Home Assistant</strong> ↻</td><td>Read generic, explicitly mapped energy entities through Home Assistant's REST API. The Puck does not contact the plant over Modbus in this mode.</td></tr>
+</table>
+
+### Plant (Modbus)
+
+*Used on the Modbus source.*
+
+<table>
+<tr><th width="32%">Option</th><th>What it does</th></tr>
+<tr><td><strong>Gateway or inverter IP</strong></td><td>The address on your network of the device that speaks Modbus TCP.</td></tr>
+<tr><td><strong>Port</strong></td><td><code>502</code> unless you have changed it on the plant.</td></tr>
+<tr><td><strong>Plant address</strong></td><td><code>247</code> unless you have changed it.</td></tr>
+<tr><td><strong>Slave ID</strong></td><td>The address of one device inside the plant, as shown in the Sigen app. <code>0</code> means the slot is unused. Four slots are available; all are optional.</td></tr>
+<tr><td><strong>Type</strong></td><td><em>Inverter</em> or <em>Charger</em>. Adding an inverter gives you battery temperature and the daily totals; adding a charger gives you EV power.</td></tr>
+<tr><td><strong>DC charger</strong></td><td>Tick if that inverter has a vehicle charger built into it, so its DC output counts as EV power.</td></tr>
+</table>
+
+### Server
+
+**SigenStorDisplay Server Only** — nothing here affects the Home Assistant or Modbus source.
+
+<table>
+<tr><th width="32%">Option</th><th>What it does</th></tr>
+<tr><td><strong>Enrolment URL</strong></td><td>Paste the whole URL from the server's Admin → Kiosk devices page. It fills in the server address and access token together. The page shows the last four characters of the stored token so you can tell one device's enrolment from another's.</td></tr>
+<tr><td><strong>Test server connection</strong></td><td>Fetches data once and reports exactly what happened — the quickest way to find a wrong address or a revoked token.</td></tr>
 </table>
 
 ### Home Assistant
@@ -258,30 +282,6 @@ HTTP is supported for a trusted LAN. HTTPS uses the firmware's trusted CA bundle
 validates the certificate; there is no insecure TLS mode. Use a hostname whose
 certificate chains to a CA trusted by the device.
 
-### Plant (Modbus)
-
-*Used on the Modbus source.*
-
-<table>
-<tr><th width="32%">Option</th><th>What it does</th></tr>
-<tr><td><strong>Gateway or inverter IP</strong></td><td>The address on your network of the device that speaks Modbus TCP.</td></tr>
-<tr><td><strong>Port</strong></td><td><code>502</code> unless you have changed it on the plant.</td></tr>
-<tr><td><strong>Plant address</strong></td><td><code>247</code> unless you have changed it.</td></tr>
-<tr><td><strong>Slave ID</strong></td><td>The address of one device inside the plant, as shown in the Sigen app. <code>0</code> means the slot is unused. Four slots are available; all are optional.</td></tr>
-<tr><td><strong>Type</strong></td><td><em>Inverter</em> or <em>Charger</em>. Adding an inverter gives you battery temperature and the daily totals; adding a charger gives you EV power.</td></tr>
-<tr><td><strong>DC charger</strong></td><td>Tick if that inverter has a vehicle charger built into it, so its DC output counts as EV power.</td></tr>
-</table>
-
-### Server
-
-**SigenStorDisplay Server Only** — nothing here affects the Home Assistant or Modbus source.
-
-<table>
-<tr><th width="32%">Option</th><th>What it does</th></tr>
-<tr><td><strong>Enrolment URL</strong></td><td>Paste the whole URL from the server's Admin → Kiosk devices page. It fills in the server address and access token together. The page shows the last four characters of the stored token so you can tell one device's enrolment from another's.</td></tr>
-<tr><td><strong>Test server connection</strong></td><td>Fetches data once and reports exactly what happened — the quickest way to find a wrong address or a revoked token.</td></tr>
-</table>
-
 ### Solar forecast
 
 Direct Modbus always calculates the forecast on the Puck. With a
@@ -321,7 +321,7 @@ on the Solar screen when unavailable.
 <tr><td><strong>Orientation</strong> ↻</td><td>Quarter turns, <code>0</code> to <code>3</code>, for mounting the Puck whichever way round suits.</td></tr>
 <tr><td><strong>Auto-cycle every</strong></td><td>Seconds between automatically moving to the next screen. <code>0</code> turns it off. Also switchable by holding PWR for 2 seconds.</td></tr>
 <tr><td><strong>Sweep every</strong></td><td>Minutes between a brightness band sweeping across the screen. This evens out wear on the panel, which matters on an AMOLED showing much the same picture all day. <code>0</code> turns it off.</td></tr>
-<tr><td><strong>Screens</strong> ↻</td><td>A tick per screen for whether it appears at all, and a second for whether the auto-cycle stops on it. Power and Settings are always shown, so their boxes are fixed. On Home Assistant and Modbus, Flows and Cost are struck through and cannot be ticked.</td></tr>
+<tr><td><strong>Screens</strong> ↻</td><td>A tick per screen for whether it appears at all, and a second for whether the auto-cycle stops on it. Power and Settings are always shown, so their boxes are fixed. On Modbus and Home Assistant, Flows and Cost are struck through and cannot be ticked.</td></tr>
 </table>
 
 ### Firmware
@@ -356,7 +356,7 @@ on the Solar screen when unavailable.
 | **Re-enrol needed** | *Server only.* The access token has been revoked. Create a new kiosk device and paste the fresh enrolment URL. |
 | **HA token rejected** | Home Assistant returned 401/403. Replace the long-lived token and check that it belongs to an active user. |
 | **entities unavailable** | HA answered, but every mapped entity is `unknown`, `unavailable`, non-numeric, or has an unsupported/missing unit. Use the connection test for detail and inspect those entities in HA Developer Tools. |
-| `LIVE ONLY` | You pressed a day button on Home Assistant or Modbus, neither of which has historical backfill in this version. |
+| `LIVE ONLY` | You pressed a day button on Modbus or Home Assistant, neither of which has historical backfill in this version. |
 
 If a Modbus setup worked and then stopped, the usual cause is the Puck's IP address
 changing, which quietly invalidates the permission granted in the Sigen app. Reserve the

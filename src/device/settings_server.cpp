@@ -267,86 +267,18 @@ String page(const String& message, bool message_is_error) {
   const bool puck_forecast = solar_forecast_uses_puck(settings.source, ha_forecast_source);
   const SourceCapabilities capabilities = data_source_capabilities(settings.source);
   html += "<h2>Data source</h2><form method=post action=/source>";
-  html += "<label class=opt><input type=radio name=src value=ha";
-  html += home_assistant ? " checked" : "";
-  html += "> Home Assistant</label>";
-  html += "<label class=opt><input type=radio name=src value=modbus";
-  html += modbus ? " checked" : "";
-  html += "> Plant over Modbus (LAN only)</label>";
   html += "<label class=opt><input type=radio name=src value=server";
   html += settings.source == DataSource::Server ? " checked" : "";
   html += "> SigenStor Display server</label>";
+  html += "<label class=opt><input type=radio name=src value=modbus";
+  html += modbus ? " checked" : "";
+  html += "> Plant over Modbus (LAN only)</label>";
+  html += "<label class=opt><input type=radio name=src value=ha";
+  html += home_assistant ? " checked" : "";
+  html += "> Home Assistant</label>";
   html += "<p class='hint gap'>Takes effect after a restart.</p>";
   html += "<button type=submit>Save</button></form>";
   append_poll_status(&html, status);
-
-  append_source_section_start(&html, "Home Assistant", home_assistant);
-  if (!home_assistant) {
-    html += "<p class=hint>Not in use: select Home Assistant above and restart to poll it.</p>";
-  }
-  html += "<form method=post action=/home-assistant>";
-  html += "<label for=haurl>Home Assistant base URL</label>";
-  html += "<input id=haurl name=haurl value='";
-  html += escape_html(settings.ha_base_url);
-  html += "' placeholder='http://homeassistant.local:8123'>";
-  html += "<label for=hatoken>Long-lived access token</label>";
-  html += "<input id=hatoken name=hatoken type=password autocomplete=new-password placeholder='currently ";
-  html += escape_html(settings_ha_token_masked());
-  html += "'>";
-  html += "<p class=hint>Leave blank to keep the stored token. The token is never shown here.</p>";
-  html += "<p class='hint gap'>Grey placeholders are examples only. Enter the entity IDs "
-          "exposed by your own Home Assistant integration; mappings are vendor-neutral and "
-          "fully configurable.</p>";
-  html += "<p class=hint>At least one live, battery, or today's energy mapping is required; "
-          "each individual mapping is optional. Power must report W or kW; energy must "
-          "report Wh or kWh.</p>";
-  for (size_t i = 0; i < HA_ENTITY_COUNT; ++i) {
-    if (i == static_cast<size_t>(HaEntity::PvPower)) {
-      html += "<h3>Live</h3>";
-    } else if (i == static_cast<size_t>(HaEntity::BatterySoc)) {
-      html += "<h3>Battery</h3>";
-    } else if (i == static_cast<size_t>(HaEntity::TodayPv)) {
-      html += "<h3>Today's energy</h3>";
-    } else if (i == static_cast<size_t>(HaEntity::ForecastToday)) {
-      html += "<h3>Solar forecast</h3>";
-      html += "<p class=hint>Choose one source for the existing Solar screen. This does not "
-              "change where live power data comes from.</p>";
-      html += "<label class=opt><input type=radio name=haforecast value=disabled";
-      html += ha_forecast_source == SolarForecastSource::Disabled ? " checked" : "";
-      html += "> Disabled</label>";
-      html += "<label class=opt><input type=radio name=haforecast value=puck";
-      html += ha_forecast_source == SolarForecastSource::Puck ? " checked" : "";
-      html += "> Calculate on Puck</label>";
-      html += "<label class=opt><input type=radio name=haforecast value=ha";
-      html += ha_forecast_source == SolarForecastSource::HomeAssistant ? " checked" : "";
-      html += "> Home Assistant entities</label>";
-      html += "<p class='hint gap'>For Calculate on Puck, save this form and configure the "
-              "location and roof arrays in Solar forecast below. Home Assistant remains the "
-              "only live plant data source.</p>";
-      html += "<h3>Home Assistant forecast entities</h3>";
-      html += "<p class=hint>Used only when Home Assistant entities is selected. Today "
-              "forecast is required; the other three mappings are optional. Energy must "
-              "report Wh or kWh, peak power W or kW, and percentage %.</p>";
-    }
-    const HaEntityDescriptor& entity = HA_ENTITIES[i];
-    html += "<label for=";
-    html += entity.form_name;
-    html += ">";
-    html += entity.label;
-    html += " entity</label><input id=";
-    html += entity.form_name;
-    html += " name=";
-    html += entity.form_name;
-    html += " maxlength=96 value='";
-    html += escape_html(settings.ha_entities[i]);
-    html += "' placeholder='";
-    html += escape_html(entity.placeholder);
-    html += "'>";
-  }
-  html += "<button type=submit>Save</button></form>";
-  html += "<form method=post action=/ha-test><button class=secondary type=submit>";
-  html += "Test Home Assistant connection</button></form>";
-  append_source_section_end(&html, home_assistant);
 
   append_source_section_start(&html, "Server", server);
   if (!server) {
@@ -426,6 +358,74 @@ String page(const String& message, bool message_is_error) {
   }
   html += "<button type=submit>Save</button></form>";
   append_source_section_end(&html, modbus);
+
+  append_source_section_start(&html, "Home Assistant", home_assistant);
+  if (!home_assistant) {
+    html += "<p class=hint>Not in use: select Home Assistant above and restart to poll it.</p>";
+  }
+  html += "<form method=post action=/home-assistant>";
+  html += "<label for=haurl>Home Assistant base URL</label>";
+  html += "<input id=haurl name=haurl value='";
+  html += escape_html(settings.ha_base_url);
+  html += "' placeholder='http://homeassistant.local:8123'>";
+  html += "<label for=hatoken>Long-lived access token</label>";
+  html += "<input id=hatoken name=hatoken type=password autocomplete=new-password placeholder='currently ";
+  html += escape_html(settings_ha_token_masked());
+  html += "'>";
+  html += "<p class=hint>Leave blank to keep the stored token. The token is never shown here.</p>";
+  html += "<p class='hint gap'>Grey placeholders are examples only. Enter the entity IDs "
+          "exposed by your own Home Assistant integration; mappings are vendor-neutral and "
+          "fully configurable.</p>";
+  html += "<p class=hint>At least one live, battery, or today's energy mapping is required; "
+          "each individual mapping is optional. Power must report W or kW; energy must "
+          "report Wh or kWh.</p>";
+  for (size_t i = 0; i < HA_ENTITY_COUNT; ++i) {
+    if (i == static_cast<size_t>(HaEntity::PvPower)) {
+      html += "<h3>Live</h3>";
+    } else if (i == static_cast<size_t>(HaEntity::BatterySoc)) {
+      html += "<h3>Battery</h3>";
+    } else if (i == static_cast<size_t>(HaEntity::TodayPv)) {
+      html += "<h3>Today's energy</h3>";
+    } else if (i == static_cast<size_t>(HaEntity::ForecastToday)) {
+      html += "<h3>Solar forecast</h3>";
+      html += "<p class=hint>Choose one source for the existing Solar screen. This does not "
+              "change where live power data comes from.</p>";
+      html += "<label class=opt><input type=radio name=haforecast value=disabled";
+      html += ha_forecast_source == SolarForecastSource::Disabled ? " checked" : "";
+      html += "> Disabled</label>";
+      html += "<label class=opt><input type=radio name=haforecast value=puck";
+      html += ha_forecast_source == SolarForecastSource::Puck ? " checked" : "";
+      html += "> Calculate on Puck</label>";
+      html += "<label class=opt><input type=radio name=haforecast value=ha";
+      html += ha_forecast_source == SolarForecastSource::HomeAssistant ? " checked" : "";
+      html += "> Home Assistant entities</label>";
+      html += "<p class='hint gap'>For Calculate on Puck, save this form and configure the "
+              "location and roof arrays in Solar forecast below. Home Assistant remains the "
+              "only live plant data source.</p>";
+      html += "<h3>Home Assistant forecast entities</h3>";
+      html += "<p class=hint>Used only when Home Assistant entities is selected. Today "
+              "forecast is required; the other three mappings are optional. Energy must "
+              "report Wh or kWh, peak power W or kW, and percentage %.</p>";
+    }
+    const HaEntityDescriptor& entity = HA_ENTITIES[i];
+    html += "<label for=";
+    html += entity.form_name;
+    html += ">";
+    html += entity.label;
+    html += " entity</label><input id=";
+    html += entity.form_name;
+    html += " name=";
+    html += entity.form_name;
+    html += " maxlength=96 value='";
+    html += escape_html(settings.ha_entities[i]);
+    html += "' placeholder='";
+    html += escape_html(entity.placeholder);
+    html += "'>";
+  }
+  html += "<button type=submit>Save</button></form>";
+  html += "<form method=post action=/ha-test><button class=secondary type=submit>";
+  html += "Test Home Assistant connection</button></form>";
+  append_source_section_end(&html, home_assistant);
 
   // --- solar forecast ------------------------------------------------------
   //
