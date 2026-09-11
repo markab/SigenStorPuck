@@ -363,7 +363,7 @@ lv_obj_t* ui_create(lv_obj_t* parent, const UiConfig& config) {
         screen_battery_create(s_tiles[i]);
         break;
       case PUCK_SCREEN_SOLAR:
-        screen_solar_create(s_tiles[i]);
+        screen_solar_create(s_tiles[i], config.solar_figures);
         break;
       case PUCK_SCREEN_LOAD:
         screen_load_create(s_tiles[i], config.with_detailed_screens);

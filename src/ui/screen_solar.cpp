@@ -62,6 +62,7 @@ lv_obj_t* s_versus = nullptr;
 lv_obj_t* s_peak_caption = nullptr;
 lv_obj_t* s_peak = nullptr;
 bool s_live = true;
+SolarOptionalMetricSlots s_slots;
 
 lv_obj_t* make_label(lv_obj_t* parent, const lv_font_t* font, uint32_t colour, lv_coord_t x,
                      lv_coord_t y) {
@@ -102,8 +103,8 @@ void position_optional_figure(lv_obj_t* caption, lv_obj_t* value, int8_t slot) {
     return;
   }
 
-  // Total forecast owns slot zero. Optional values close up behind it rather
-  // than retaining fixed positions that would leave holes for unknown fields.
+  // Total forecast owns slot zero. A figure the source can never supply leaves no
+  // hole: the ones it can supply close up behind the total.
   const bool right = (slot & 1) != 0;
   const bool second_row = slot >= 2;
   const lv_coord_t x = right ? COLUMN_X : -COLUMN_X;
@@ -117,7 +118,7 @@ void position_optional_figure(lv_obj_t* caption, lv_obj_t* value, int8_t slot) {
 
 }  // namespace
 
-lv_obj_t* screen_solar_create(lv_obj_t* parent) {
+lv_obj_t* screen_solar_create(lv_obj_t* parent, uint8_t figures) {
   s_root = lv_obj_create(parent);
   lv_obj_remove_style_all(s_root);
   lv_obj_set_size(s_root, PUCK_LCD_WIDTH, PUCK_LCD_HEIGHT);
@@ -205,6 +206,14 @@ lv_obj_t* screen_solar_create(lv_obj_t* parent) {
   lv_obj_add_flag(s_peak_caption, LV_OBJ_FLAG_HIDDEN);
   lv_obj_add_flag(s_peak, LV_OBJ_FLAG_HIDDEN);
 
+  // Placed once, from what the source can supply, and never moved: see
+  // solar_metric_layout.h for why a figure that is only not known yet keeps its
+  // place and shows "--".
+  s_slots = solar_optional_metric_slots(figures);
+  position_optional_figure(s_remaining_caption, s_remaining, s_slots.remaining);
+  position_optional_figure(s_versus_caption, s_versus, s_slots.vs_forecast);
+  position_optional_figure(s_peak_caption, s_peak, s_slots.peak);
+
   return s_root;
 }
 
@@ -279,17 +288,13 @@ void screen_solar_update(const Snapshot& snapshot) {
   lv_obj_set_style_bg_opa(s_pill, generating ? LV_OPA_20 : LV_OPA_10, LV_PART_MAIN);
 
   set_forecast_figure(s_forecast, snapshot, snapshot.solar.forecast_kwh, 1, " kWh");
-  const SolarOptionalMetricSlots slots = solar_optional_metric_slots(snapshot);
-  position_optional_figure(s_remaining_caption, s_remaining, slots.remaining);
-  position_optional_figure(s_versus_caption, s_versus, slots.vs_forecast);
-  position_optional_figure(s_peak_caption, s_peak, slots.peak);
-  if (slots.remaining != SolarOptionalMetricSlots::Hidden) {
+  if (s_slots.remaining != SolarOptionalMetricSlots::Hidden) {
     set_forecast_figure(s_remaining, snapshot, snapshot.solar.remaining_kwh, 1, " kWh");
   }
-  if (slots.vs_forecast != SolarOptionalMetricSlots::Hidden) {
+  if (s_slots.vs_forecast != SolarOptionalMetricSlots::Hidden) {
     set_forecast_figure(s_versus, snapshot, snapshot.solar.vs_forecast_pct, 0, "%");
   }
-  if (slots.peak != SolarOptionalMetricSlots::Hidden) {
+  if (s_slots.peak != SolarOptionalMetricSlots::Hidden) {
     set_forecast_figure(s_peak, snapshot, snapshot.solar.peak_kw, 1, " kW");
   }
 }

@@ -353,33 +353,38 @@ void test_server_forecast() {
 
 void test_solar_metric_layout() {
   printf("solar metric layout\n");
-  Snapshot snapshot;
-  SolarOptionalMetricSlots slots = solar_optional_metric_slots(snapshot);
+  // Driven by what a source can supply, never by a reading. The type makes that
+  // structural: there is no snapshot for the layout to look at, so a figure that
+  // is only unknown this minute — vs-forecast before dawn — cannot move anything.
+  SolarOptionalMetricSlots slots = solar_optional_metric_slots(SOLAR_FIGURES_ALL);
+  check(slots.remaining == 1 && slots.vs_forecast == 2 && slots.peak == 3,
+        "a source supplying every figure keeps the original fixed layout");
+  slots = solar_optional_metric_slots(0);
   check(slots.remaining == SolarOptionalMetricSlots::Hidden &&
             slots.vs_forecast == SolarOptionalMetricSlots::Hidden &&
             slots.peak == SolarOptionalMetricSlots::Hidden,
-        "unconfigured forecast hides every optional metric");
-
-  snapshot.valid = true;
-  snapshot.solar.configured = true;
-  snapshot.solar.forecast_kwh = {true, 8.0f};
-  slots = solar_optional_metric_slots(snapshot);
-  check(slots.remaining == SolarOptionalMetricSlots::Hidden &&
-            slots.vs_forecast == SolarOptionalMetricSlots::Hidden &&
-            slots.peak == SolarOptionalMetricSlots::Hidden,
-        "total-only forecast reserves no optional rows");
-
-  snapshot.solar.remaining_kwh = {true, 0.0f};
-  snapshot.solar.peak_kw = {true, 4.5f};
-  slots = solar_optional_metric_slots(snapshot);
+        "a source supplying no optional figure shows only the total");
+  slots = solar_optional_metric_slots(SOLAR_FIGURE_REMAINING | SOLAR_FIGURE_PEAK);
   check(slots.remaining == 1 && slots.vs_forecast == SolarOptionalMetricSlots::Hidden &&
             slots.peak == 2,
-        "known optional metrics pack without a gap and preserve genuine zero");
+        "figures a source never supplies close up without a gap");
 
-  snapshot.solar.vs_forecast_pct = {true, 93.0f};
-  slots = solar_optional_metric_slots(snapshot);
-  check(slots.remaining == 1 && slots.vs_forecast == 2 && slots.peak == 3,
-        "all optional metrics use the three available slots in semantic order");
+  check(solar_figures_supplied(DataSource::Server, SolarForecastSource::Disabled, false,
+                               false, false) == SOLAR_FIGURES_ALL,
+        "the server supplies every figure");
+  check(solar_figures_supplied(DataSource::Modbus, SolarForecastSource::Disabled, false,
+                               false, false) == SOLAR_FIGURES_ALL,
+        "Modbus supplies every figure, forecast configured or not");
+  check(solar_figures_supplied(DataSource::HomeAssistant, SolarForecastSource::Puck, false,
+                               false, false) == SOLAR_FIGURES_ALL,
+        "HA with the Puck's forecast supplies every figure");
+  check(solar_figures_supplied(DataSource::HomeAssistant, SolarForecastSource::Disabled, true,
+                               true, true) == 0,
+        "a disabled HA forecast supplies none, whatever is mapped");
+  check(solar_figures_supplied(DataSource::HomeAssistant, SolarForecastSource::HomeAssistant,
+                               true, false, true) ==
+            (SOLAR_FIGURE_REMAINING | SOLAR_FIGURE_PEAK),
+        "HA forecast entities supply exactly the figures that are mapped");
 }
 
 void test_home_assistant_payload() {

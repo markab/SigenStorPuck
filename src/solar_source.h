@@ -20,3 +20,11 @@ const char* solar_forecast_source_name(SolarForecastSource source);
 bool solar_forecast_uses_puck(DataSource source, SolarForecastSource ha_source);
 bool solar_forecast_uses_home_assistant(DataSource source,
                                         SolarForecastSource ha_source);
+
+// The optional Solar-screen figures the configured forecast can ever supply, as
+// SOLAR_FIGURE_* bits (solar_metric_layout.h). Server and Modbus supply all three,
+// as does Home Assistant when the Puck calculates the forecast; with HA forecast
+// entities, exactly the ones that are mapped; with the HA forecast disabled, none.
+uint8_t solar_figures_supplied(DataSource source, SolarForecastSource ha_source,
+                               bool ha_remaining_mapped, bool ha_percentage_mapped,
+                               bool ha_peak_mapped);

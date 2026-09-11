@@ -10,6 +10,7 @@
 #include <lvgl.h>
 
 #include "snapshot.h"
+#include "solar_metric_layout.h"
 
 // A screen's identity, fixed and independent of where it lands in the tileview.
 //
@@ -55,6 +56,10 @@ struct UiConfig {
   // Which screens the auto-cycle steps through. A screen worth swiping to is not
   // necessarily one worth parking on for minutes at a time.
   uint8_t rotate = 0xFF;
+  // Which optional Solar-screen figures the source can supply (SOLAR_FIGURE_*).
+  // Fixed for the life of the UI, like the screen list, so a figure that is merely
+  // not known yet keeps its place and shows "--" rather than moving.
+  uint8_t solar_figures = SOLAR_FIGURES_ALL;
 };
 
 // Builds the tileview and the enabled screens under `parent`, returning the

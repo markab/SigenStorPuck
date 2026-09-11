@@ -1,19 +1,15 @@
 #include "solar_metric_layout.h"
 
-SolarOptionalMetricSlots solar_optional_metric_slots(const Snapshot& snapshot) {
+SolarOptionalMetricSlots solar_optional_metric_slots(uint8_t supplied) {
   SolarOptionalMetricSlots slots;
-  if (!snapshot.valid || !snapshot.solar.configured) {
-    return slots;
-  }
-
   int8_t next = 1;  // slot zero is always today's total forecast
-  if (snapshot.solar.remaining_kwh.known) {
+  if ((supplied & SOLAR_FIGURE_REMAINING) != 0) {
     slots.remaining = next++;
   }
-  if (snapshot.solar.vs_forecast_pct.known) {
+  if ((supplied & SOLAR_FIGURE_VS_FORECAST) != 0) {
     slots.vs_forecast = next++;
   }
-  if (snapshot.solar.peak_kw.known) {
+  if ((supplied & SOLAR_FIGURE_PEAK) != 0) {
     slots.peak = next;
   }
   return slots;

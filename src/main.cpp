@@ -338,6 +338,15 @@ void setup() {
   ui_config.with_detailed_screens = source_capabilities.detailed_flows;
   ui_config.visible = settings_get().screens_visible;
   ui_config.rotate = settings_get().screens_rotate;
+  {
+    const Settings& s = settings_get();
+    const auto mapped = [&s](HaEntity entity) {
+      return !s.ha_entities[static_cast<size_t>(entity)].isEmpty();
+    };
+    ui_config.solar_figures = solar_figures_supplied(
+        s.source, s.ha_solar_forecast_source, mapped(HaEntity::ForecastRemaining),
+        mapped(HaEntity::ForecastPercentage), mapped(HaEntity::ForecastPeak));
+  }
   ui_create(lv_scr_act(), ui_config);
   // Sources without a dated API have no history to step into, so the buttons
   // refuse rather than moving an indicator over figures that will never change.
