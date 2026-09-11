@@ -245,6 +245,14 @@ void poll_task(void* /*argument*/) {
       const HistoryBackfillOutcome outcome =
           history_backfill_outcome(history, history_status);
       history_backfill.record(outcome, millis(), points);
+      // The Recorder parser, with its 768-byte object buffer, sits on this stack
+      // beside an HTTPS client when HA is on https://, and TASK_STACK_BYTES was
+      // sized before it existed. Reported each window so the headroom is measured
+      // on hardware rather than guessed at. ESP-IDF counts this in bytes.
+      Serial.printf("[ha-history] window %s, %u points, stack headroom %u B\n",
+                    fetch_result_name(history), static_cast<unsigned>(points),
+                    static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr) *
+                                          sizeof(StackType_t)));
       if (history_backfill.finished() && history_backfill.succeeded()) {
         Serial.printf("[ha-history] restored %u chart points from %u windows\n",
                       static_cast<unsigned>(history_backfill.points_written()),
