@@ -98,7 +98,7 @@ FetchResult status_result(int status) {
 }  // namespace
 
 FetchResult home_assistant_api_fetch(Snapshot* out, int* status_code,
-                                     HaParseInfo* parse_info) {
+                                     HaParseInfo* parse_info, bool latch_day_bounds) {
   if (status_code != nullptr) {
     *status_code = 0;
   }
@@ -211,9 +211,11 @@ FetchResult home_assistant_api_fetch(Snapshot* out, int* status_code,
   if (info.available == 0) {
     return FetchResult::EntityUnavailable;
   }
-  s_live_info = info;
-  s_live_info_valid = info.local_midnight_ts != 0 &&
-                      info.next_local_midnight_ts > info.local_midnight_ts;
+  if (latch_day_bounds) {
+    s_live_info = info;
+    s_live_info_valid = info.local_midnight_ts != 0 &&
+                        info.next_local_midnight_ts > info.local_midnight_ts;
+  }
   *out = parsed;
   return FetchResult::Ok;
 }

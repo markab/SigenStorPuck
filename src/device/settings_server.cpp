@@ -890,7 +890,8 @@ void handle_ha_test() {
   Snapshot snapshot;
   int status_code = 0;
   HaParseInfo info;
-  const FetchResult result = home_assistant_api_fetch(&snapshot, &status_code, &info);
+  const FetchResult result =
+      home_assistant_api_fetch(&snapshot, &status_code, &info, /*latch_day_bounds=*/false);
 
   String message;
   if (result == FetchResult::Ok) {

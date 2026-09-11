@@ -9,8 +9,14 @@
 // One POST /api/template using the stored semantic mappings. The output is only
 // committed after the rendered compact payload parses and at least one mapped
 // state is usable, preserving the caller's last good Snapshot on failure.
+//
+// `latch_day_bounds` false leaves the day boundaries and units that the Recorder
+// backfill reuses untouched. The settings page's connection test passes false: it
+// runs on the web server's task, and those values belong to the poll task, which
+// reads them without a lock between its own fetches.
 FetchResult home_assistant_api_fetch(Snapshot* out, int* status_code,
-                                     HaParseInfo* parse_info = nullptr);
+                                     HaParseInfo* parse_info = nullptr,
+                                     bool latch_day_bounds = true);
 
 // Returns the DST-aware local-day bounds latched by the successful live fetch.
 bool home_assistant_api_history_bounds(uint32_t* local_midnight_ts,
