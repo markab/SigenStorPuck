@@ -1,24 +1,23 @@
-// RM690B0 AMOLED panel over QSPI, wired to LVGL — the 2.41" landscape board.
+// SH8601 AMOLED panel over QSPI, wired to LVGL — the 2.41" (V2) landscape board.
 //
-// This is the puck241 counterpart of display.cpp (which drives the 1.75's
-// CO5300). The two implement the same display.h contract and are swapped by
-// build_src_filter per env, exactly the way src/sim/ swaps the desktop backend.
-// The structure is deliberately identical to display.cpp so the two stay easy to
-// diff; only the panel class and a few controller-specific notes differ.
+// The puck241 counterpart of display.cpp (which drives the 1.75's CO5300). Both
+// implement the same display.h contract and are swapped by build_src_filter per
+// env, the way src/sim/ swaps the desktop backend. The structure mirrors
+// display.cpp so the two stay easy to diff; only the panel class and the
+// controller-specific notes differ.
 //
-// !!! HARDWARE BRING-UP NOTES — verify on a real 2.41 before trusting output !!!
-//   * The QSPI/RST pins come from board_2p41.h, which currently holds PLACEHOLDER
-//     values. The 2.41's real pins are schematic-only and differ between board
-//     revisions V1 and V2 (Waveshare wiki). Fill board_2p41.h from the schematic
-//     for the actual revision first.
-//   * The RM690B0's native panel is 482x600 (portrait); the 2.41 shows 600x450
-//     landscape. So the panel construction below (w=600,h=450) and the rotation
-//     handling almost certainly need reconciling with the real wiring — Waveshare's
-//     own example constructs the panel in its native orientation and rotates. The
-//     1.75's display.cpp shows this board family needed empirical rotation work
-//     (see its comments); expect the same here.
-//   * Whether the RM690B0 needs even-aligned write windows (rounder_cb) is
-//     unconfirmed; kept on for safety, as most QSPI AMOLEDs do.
+// Pins are the real V2 values (board_2p41.h, from Waveshare's 09_LVGL_Test).
+//
+// !!! TWO HARDWARE BRING-UP ITEMS — confirm on real glass !!!
+//   * RESET IS ON THE TCA9554 EXPANDER, NOT A GPIO. PUCK_LCD_RST is -1, so
+//     Arduino_SH8601 will not pulse reset. The panel needs a reset pulse driven
+//     through the TCA9554 (0x20) before init — see the TODO in display_begin().
+//     Without it the panel may not come up.
+//   * The SH8601 is natively 450x600 portrait; the 2.41 shows 600x450 landscape.
+//     The construction below uses the landscape (logical) size directly, with
+//     turning left to flush_cb like the 1.75. Whether the panel instead needs a
+//     native-portrait construction plus the controller's own rotation is a
+//     bring-up question — Waveshare's example rotates 90 degrees.
 
 #include "display.h"
 
@@ -36,7 +35,7 @@ Arduino_DataBus* s_bus = nullptr;
 
 // Typed as the concrete panel, not the Arduino_GFX base: setBrightness() only
 // exists on the OLED subclass, and this board has no PWM backlight either.
-Arduino_RM690B0* s_panel = nullptr;
+Arduino_SH8601* s_panel = nullptr;
 
 lv_disp_draw_buf_t s_draw_buf;
 lv_disp_drv_t s_disp_drv;
@@ -50,8 +49,7 @@ uint8_t s_rotation = 0;
 lv_color_t* s_rotated = nullptr;
 
 // Most QSPI AMOLED controllers only accept even-aligned write windows; LVGL hands
-// us odd areas otherwise. Widen every invalidated area to an even start and odd
-// end. VERIFY whether the RM690B0 actually needs this on the 2.41.
+// us odd areas otherwise. VERIFY whether the SH8601 needs this on the 2.41.
 void rounder_cb(lv_disp_drv_t* /*drv*/, lv_area_t* area) {
   area->x1 &= ~1;
   area->y1 &= ~1;
@@ -65,7 +63,6 @@ void flush_cb(lv_disp_drv_t* drv, const lv_area_t* area, lv_color_t* pixels) {
   const uint32_t pixel_count = static_cast<uint32_t>(w * h);
   const bool frame_end = lv_disp_flush_is_last(drv);
 
-  // Unrotated is the untouched fast path: straight out of the DMA-capable buffer.
   if (s_rotation == 0 || s_rotated == nullptr) {
     const uint32_t panel_started = ui_perf_now_us();
     s_panel->draw16bitRGBBitmap(area->x1, area->y1, reinterpret_cast<uint16_t*>(pixels), w, h);
@@ -75,7 +72,6 @@ void flush_cb(lv_disp_drv_t* drv, const lv_area_t* area, lv_color_t* pixels) {
     return;
   }
 
-  // A quarter turn swaps the block's dimensions; a half turn does not.
   const bool quarter = s_rotation == 1 || s_rotation == 3;
   const int32_t dst_w = quarter ? h : w;
   const uint32_t rotation_started = ui_perf_now_us();
@@ -111,17 +107,17 @@ void flush_cb(lv_disp_drv_t* drv, const lv_area_t* area, lv_color_t* pixels) {
 }  // namespace
 
 bool display_begin(uint8_t rotation) {
+  // TODO(hardware bring-up): pulse the panel reset line via the TCA9554 expander
+  // (0x20) here before constructing the panel — PUCK_LCD_RST is -1 because reset
+  // is not on a GPIO. The exact EXIO bit is a schematic detail to confirm on V2.
+
   s_bus = new Arduino_ESP32QSPI(PUCK_LCD_CS, PUCK_LCD_SCLK, PUCK_LCD_D0, PUCK_LCD_D1,
                                 PUCK_LCD_D2, PUCK_LCD_D3);
-  // VERIFY: the RM690B0 is natively 482x600 portrait. Constructing it directly at
-  // 600x450 (landscape logical size) is the starting point; the real 2.41 may need
-  // a native-portrait construction plus a rotation. The built-in rotation arg is
-  // left 0 here (like the 1.75), with turning done in flush_cb.
-  s_panel = new Arduino_RM690B0(s_bus, PUCK_LCD_RST, 0, PUCK_LCD_WIDTH,
-                                PUCK_LCD_HEIGHT, PUCK_LCD_COL_OFFSET, PUCK_LCD_ROW_OFFSET, 0, 0);
+  s_panel = new Arduino_SH8601(s_bus, PUCK_LCD_RST, 0, PUCK_LCD_WIDTH,
+                               PUCK_LCD_HEIGHT, PUCK_LCD_COL_OFFSET, PUCK_LCD_ROW_OFFSET, 0, 0);
 
   if (!s_panel->begin(PUCK_LCD_QSPI_HZ)) {
-    Serial.println("[display] RM690B0 begin() failed");
+    Serial.println("[display] SH8601 begin() failed");
     return false;
   }
   s_panel->fillScreen(RGB565_BLACK);
@@ -130,8 +126,6 @@ bool display_begin(uint8_t rotation) {
   const size_t pixel_count = static_cast<size_t>(PUCK_LCD_WIDTH) * PUCK_LVGL_BUFFER_LINES;
   const size_t bytes = pixel_count * sizeof(lv_color_t);
 
-  // DMA-capable internal RAM matters for QSPI throughput; PSRAM works but the
-  // frame rate drops noticeably, so log which one we got.
   s_pixels = static_cast<lv_color_t*>(heap_caps_malloc(bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA));
   s_buffer_is_internal = s_pixels != nullptr;
   if (s_pixels == nullptr) {
@@ -163,10 +157,9 @@ bool display_begin(uint8_t rotation) {
   s_disp_drv.draw_buf = &s_draw_buf;
   s_disp_drv.flush_cb = flush_cb;
   s_disp_drv.rounder_cb = rounder_cb;
-  // sw_rotate stays off: flush_cb does the rotation. `rotated` is still set so LVGL
-  // rotates touch coordinates (lv_indev.c). 90 and 270 are deliberately swapped —
-  // see the full explanation in display.cpp; the same inverse-transform argument
-  // applies to any panel driven this way.
+  // sw_rotate off; flush_cb rotates. `rotated` is set so LVGL rotates touch
+  // coordinates (lv_indev.c), with 90/270 swapped — see display.cpp for the full
+  // inverse-transform argument, which applies to any panel driven this way.
   s_disp_drv.sw_rotate = 0;
   s_disp_drv.rotated = s_rotation == 1   ? LV_DISP_ROT_270
                        : s_rotation == 2 ? LV_DISP_ROT_180
@@ -176,7 +169,7 @@ bool display_begin(uint8_t rotation) {
 
   Serial.printf("[display] rotation %u%s\n", static_cast<unsigned>(s_rotation),
                 s_rotation != 0 ? " (rotated in flush)" : "");
-  Serial.printf("[display] RM690B0 %dx%d up, %u-byte buffer (%u lines) in %s\n", PUCK_LCD_WIDTH,
+  Serial.printf("[display] SH8601 %dx%d up, %u-byte buffer (%u lines) in %s\n", PUCK_LCD_WIDTH,
                 PUCK_LCD_HEIGHT, static_cast<unsigned>(bytes),
                 static_cast<unsigned>(PUCK_LVGL_BUFFER_LINES),
                 s_buffer_is_internal ? "internal DMA RAM" : "PSRAM");
@@ -198,9 +191,6 @@ void display_set_sleep(bool asleep) {
     s_panel->displayOff();
   } else {
     s_panel->displayOn();
-    // Panel RAM holds nothing meaningful after a sleep, and LVGL believes the
-    // screen still shows whatever it last flushed — so without this the display
-    // comes back as noise until something changes.
     lv_obj_invalidate(lv_scr_act());
   }
   Serial.printf("[display] panel %s\n", asleep ? "asleep" : "awake");

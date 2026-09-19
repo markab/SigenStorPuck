@@ -65,11 +65,16 @@ void ensure_reset_released() {
   if (done) {
     return;
   }
-  pinMode(PUCK_TOUCH_RST, OUTPUT);
-  digitalWrite(PUCK_TOUCH_RST, LOW);
-  delay(30);
-  digitalWrite(PUCK_TOUCH_RST, HIGH);
-  delay(50);
+  // On the V2, PUCK_TOUCH_RST is -1: touch reset is on the TCA9554 expander, not
+  // a GPIO. TODO(bring-up): pulse it via the expander (0x20). For a board that
+  // wires reset to a real GPIO, toggle it directly.
+  if (PUCK_TOUCH_RST >= 0) {
+    pinMode(PUCK_TOUCH_RST, OUTPUT);
+    digitalWrite(PUCK_TOUCH_RST, LOW);
+    delay(30);
+    digitalWrite(PUCK_TOUCH_RST, HIGH);
+    delay(50);
+  }
   done = true;
 }
 
