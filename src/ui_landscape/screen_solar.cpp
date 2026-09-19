@@ -9,12 +9,14 @@
 #include <stdio.h>
 
 #include "board_config.h"
+#include "edge_bar.h"
 #include "format.h"
 #include "theme.h"
 
 namespace {
 
 lv_obj_t* s_root = nullptr;
+lv_obj_t* s_edge = nullptr;
 lv_obj_t* s_headline = nullptr;
 lv_obj_t* s_pill = nullptr;
 lv_obj_t* s_forecast = nullptr;
@@ -42,6 +44,9 @@ lv_obj_t* screen_solar_create(lv_obj_t* parent, uint8_t /*figures*/) {
   lv_obj_set_style_bg_opa(s_root, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_center(s_root);
 
+  // Generation against today's forecast; hidden outright when there is none.
+  s_edge = edge_bar_create(s_root);
+
   lv_obj_t* caption = make_label(s_root, PUCK_FONT_SMALL, PUCK_COLOUR_MUTED, -110, -80);
   lv_label_set_text(caption, "GENERATED");
   s_headline = make_label(s_root, PUCK_FONT_HERO, PUCK_COLOUR_TEXT, -110, -30);
@@ -68,6 +73,20 @@ void screen_solar_update(const Snapshot& snapshot) {
     lv_label_set_text(s_headline, text);
   } else {
     lv_label_set_text(s_headline, "--");
+  }
+
+  // The ring is generation so far against the whole day's forecast. No forecast,
+  // no ring — an unfilled track reads as a real zero, and the Modbus source has
+  // no forecast.
+  const bool has_forecast = snapshot.valid && snapshot.solar.configured &&
+                            snapshot.solar.forecast_kwh.known &&
+                            snapshot.solar.forecast_kwh.value > 0.0f;
+  if (has_forecast && snapshot.today.present && snapshot.today.solar.known) {
+    edge_bar_set_hidden(s_edge, false);
+    edge_bar_set(s_edge, snapshot.today.solar.value / snapshot.solar.forecast_kwh.value,
+                 PUCK_COLOUR_SOLAR);
+  } else {
+    edge_bar_set_hidden(s_edge, true);
   }
 
   if (s_live && snapshot.valid && snapshot.power.pv.known) {

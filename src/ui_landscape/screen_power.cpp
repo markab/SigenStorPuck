@@ -13,6 +13,7 @@
 #include <stdio.h>
 
 #include "board_config.h"
+#include "edge_bar.h"
 #include "format.h"
 #include "theme.h"
 
@@ -42,6 +43,7 @@ struct Leg {
 };
 
 lv_obj_t* s_root = nullptr;
+lv_obj_t* s_edge = nullptr;
 lv_obj_t* s_plant_value = nullptr;
 lv_obj_t* s_plant_status = nullptr;
 lv_obj_t* s_soc_label = nullptr;
@@ -141,6 +143,9 @@ lv_obj_t* screen_power_create(lv_obj_t* parent) {
   lv_obj_set_style_bg_opa(s_root, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_center(s_root);
 
+  // State of charge traces the bezel, behind everything else.
+  s_edge = edge_bar_create(s_root);
+
   // The virtual plant node: inverter and gateway as one, a hairline disc.
   lv_obj_t* hub = make_group(s_root);
   lv_obj_set_size(hub, 120, 120);
@@ -191,6 +196,7 @@ void screen_power_update(const Snapshot& snapshot) {
 
   if (!snapshot.valid) {
     const MaybeFloat unknown;
+    edge_bar_set(s_edge, 0.0f, PUCK_COLOUR_BATTERY);
     lv_label_set_text(s_soc_label, "SOC --");
     set_leg(LEG_SOLAR, unknown, "", true);
     set_leg(LEG_GRID, unknown, "", true);
@@ -204,8 +210,10 @@ void screen_power_update(const Snapshot& snapshot) {
     char text[16];
     snprintf(text, sizeof(text), "SOC %.0f%%", snapshot.battery.soc_pct.value);
     lv_label_set_text(s_soc_label, text);
+    edge_bar_set(s_edge, snapshot.battery.soc_pct.value / 100.0f, PUCK_COLOUR_BATTERY);
   } else {
     lv_label_set_text(s_soc_label, "SOC --");
+    edge_bar_set(s_edge, 0.0f, PUCK_COLOUR_BATTERY);
   }
 
   set_leg(LEG_SOLAR, snapshot.power.pv, "kW generating", true);

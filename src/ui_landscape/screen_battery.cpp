@@ -10,12 +10,14 @@
 #include <stdio.h>
 
 #include "board_config.h"
+#include "edge_bar.h"
 #include "format.h"
 #include "theme.h"
 
 namespace {
 
 lv_obj_t* s_root = nullptr;
+lv_obj_t* s_edge = nullptr;
 lv_obj_t* s_headline = nullptr;
 lv_obj_t* s_stored = nullptr;
 lv_obj_t* s_pill = nullptr;
@@ -43,6 +45,8 @@ lv_obj_t* screen_battery_create(lv_obj_t* parent) {
   lv_obj_set_style_bg_opa(s_root, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_center(s_root);
 
+  s_edge = edge_bar_create(s_root);
+
   lv_obj_t* caption = make_label(s_root, PUCK_FONT_SMALL, PUCK_COLOUR_MUTED, -110, -80);
   lv_label_set_text(caption, "STATE OF CHARGE");
   s_headline = make_label(s_root, PUCK_FONT_HERO, PUCK_COLOUR_TEXT, -110, -30);
@@ -65,6 +69,7 @@ void screen_battery_update(const Snapshot& snapshot) {
   if (snapshot.valid && snapshot.battery.soc_pct.known) {
     snprintf(text, sizeof(text), "%.0f%%", snapshot.battery.soc_pct.value);
     lv_label_set_text(s_headline, text);
+    edge_bar_set(s_edge, snapshot.battery.soc_pct.value / 100.0f, PUCK_COLOUR_BATTERY);
     if (snapshot.battery.capacity_kwh.known) {
       const float stored = snapshot.battery.capacity_kwh.value *
                            snapshot.battery.soc_pct.value / 100.0f;
@@ -74,6 +79,7 @@ void screen_battery_update(const Snapshot& snapshot) {
   } else {
     lv_label_set_text(s_headline, "--%");
     lv_label_set_text(s_stored, "");
+    edge_bar_set(s_edge, 0.0f, PUCK_COLOUR_BATTERY);
   }
 
   if (s_live && snapshot.valid && snapshot.power.batt.known &&
