@@ -1,25 +1,42 @@
 #!/usr/bin/env bash
 #
-# Builds the release artifacts into dist/:
+# Builds the release artifacts for every board variant into dist/:
 #
-#   firmware.bin   the OTA image, for the device updating itself
-#   merged.bin     the whole flash in one file, for the web installer
-#   manifest.json  ESP Web Tools manifest, and what the device reads to find out
-#                  whether there is a newer version
+#   dist/<slug>/firmware.bin   the OTA image, for that board updating itself
+#   dist/<slug>/merged.bin     the whole flash in one file, for the web installer
+#   dist/<slug>/manifest.json  ESP Web Tools manifest, and what the device reads
+#                              to find out whether there is a newer version
+#   dist/firmware-<slug>.bin   distinctly-named copies for the GitHub Release,
+#   dist/merged-<slug>.bin     whose asset namespace is flat (no subdirectories)
 #
-# One manifest serves both: the installer uses `builds` to flash, and the device
-# reads `version` to compare against its own.
+# One manifest per variant serves both consumers: the installer uses `builds` to
+# flash, and the device reads `version`. Because both boards are ESP32-S3, the
+# installer cannot tell them apart from the chip — so each variant gets its own
+# manifest, and the device fetches its own by slug (see updater.cpp). The `board`
+# field guards against flashing one board's image onto the other, since the two
+# share a version.
+#
+# Every variant is the same ESP32-S3R8 / 16 MB flash, so the chip, flash size,
+# partition offsets and merge layout are identical — only firmware.bin's contents
+# differ. This is why one packager serves both.
 
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-build_dir="${repo_root}/.pio/build/puck"
 dist="${repo_root}/dist"
 
-# The single source of truth for the version is the firmware's own string. Taking
-# it from the tag instead would let a release be cut whose manifest advertises a
-# version the binary does not report — and the device compares against what the
-# binary reports, so it would either update in a loop or never update at all.
+# env : slug : human-readable name. The slug names the release directory on Pages
+# and the OTA manifest, and must match PUCK_BOARD_SLUG in each board profile.
+variants=(
+	"puck:puck-1.75:Waveshare ESP32-S3-Touch-AMOLED-1.75 (round)"
+	"puck241:puck-2.41:Waveshare ESP32-S3-Touch-AMOLED-2.41 (landscape)"
+)
+
+# The single source of truth for the version is the firmware's own string, shared
+# by both variants. Taking it from the tag instead would let a release be cut
+# whose manifest advertises a version the binary does not report — and the device
+# compares against what the binary reports, so it would either update in a loop or
+# never update at all.
 version="$(sed -n 's/^#define PUCK_FW_VERSION "\(.*\)"$/\1/p' "${repo_root}/src/board_config.h")"
 if [[ -z "${version}" ]]; then
 	echo "could not read PUCK_FW_VERSION from src/board_config.h" >&2
@@ -37,53 +54,51 @@ if [[ -n "${GITHUB_REF_NAME:-}" && "${GITHUB_REF_NAME}" == v* ]]; then
 	fi
 fi
 
-owner_repo="${GITHUB_REPOSITORY:-markab/SigenStorPuck}"
-
-# Run esptool through PlatformIO rather than finding it ourselves. It is already a
-# PlatformIO package (tool-esptoolpy) and pio knows which interpreter has pyserial;
-# invoking the bundled script with the system python fails on that missing import.
-# One code path that works on a workstation and in CI, so this script can be tested
-# before a tag depends on it.
-
-rm -rf "${dist}"
-mkdir -p "${dist}"
-cp "${build_dir}/firmware.bin" "${dist}/firmware.bin"
-
-# boot_app0 lives in the framework, not the build directory.
+# boot_app0 lives in the framework, not the build directory. Shared by every
+# variant (same partition table).
 boot_app0="$(find "${HOME}/.platformio/packages" -name boot_app0.bin -path '*partitions*' | head -1)"
 if [[ -z "${boot_app0}" ]]; then
 	echo "could not find boot_app0.bin in the installed framework" >&2
 	exit 1
 fi
 
-# --flash_mode keep: the bootloader header PlatformIO produced is already correct
-# for this board's QIO flash and octal PSRAM. Re-specifying it here is a chance to
-# get it wrong for no benefit.
-#
-# The ESP32-S3's bootloader sits at 0x0, not the 0x1000 used on the original ESP32.
-pio pkg exec -- esptool.py --chip esp32s3 merge_bin \
-	-o "${dist}/merged.bin" \
-	--flash_mode keep \
-	--flash_size 16MB \
-	0x0 "${build_dir}/bootloader.bin" \
-	0x8000 "${build_dir}/partitions.bin" \
-	0xe000 "${boot_app0}" \
-	0x10000 "${build_dir}/firmware.bin"
+rm -rf "${dist}"
+mkdir -p "${dist}"
 
-# `path` is relative, and that is the whole trick.
-#
-# An absolute URL into the GitHub release cannot be fetched by the installer page:
-# release assets send no access-control-allow-origin header, so a browser blocks the
-# cross-origin request and flashing never starts. Relative means the page and the
-# binary must sit on one origin, which is what the Pages job arranges by publishing
-# merged.bin next to index.html.
-#
-# It also resolves correctly against the release itself, so pointing anything at the
-# release copy of this manifest still works.
-cat > "${dist}/manifest.json" <<JSON
+for entry in "${variants[@]}"; do
+	IFS=: read -r env slug name <<<"${entry}"
+	build_dir="${repo_root}/.pio/build/${env}"
+	out="${dist}/${slug}"
+
+	if [[ ! -f "${build_dir}/firmware.bin" ]]; then
+		echo "no build for ${env} at ${build_dir} — run 'pio run -e ${env}' first" >&2
+		exit 1
+	fi
+
+	mkdir -p "${out}"
+	cp "${build_dir}/firmware.bin" "${out}/firmware.bin"
+
+	# --flash_mode keep: the bootloader header PlatformIO produced is already correct
+	# for this board's QIO flash and octal PSRAM. The ESP32-S3's bootloader sits at
+	# 0x0, not the 0x1000 used on the original ESP32.
+	pio pkg exec -- esptool.py --chip esp32s3 merge_bin \
+		-o "${out}/merged.bin" \
+		--flash_mode keep \
+		--flash_size 16MB \
+		0x0 "${build_dir}/bootloader.bin" \
+		0x8000 "${build_dir}/partitions.bin" \
+		0xe000 "${boot_app0}" \
+		0x10000 "${build_dir}/firmware.bin"
+
+	# `path` is relative, and that is the whole trick: release assets send no CORS
+	# header, so the installer page must fetch the binary from its own origin. The
+	# Pages job publishes this manifest and merged.bin together under <slug>/, so
+	# "merged.bin" resolves next to the manifest. `board` is the cross-flash guard.
+	cat >"${out}/manifest.json" <<JSON
 {
-  "name": "SigenStorPuck",
+  "name": "SigenStorPuck — ${name}",
   "version": "${version}",
+  "board": "${slug}",
   "new_install_prompt_erase": true,
   "builds": [
     {
@@ -99,5 +114,12 @@ cat > "${dist}/manifest.json" <<JSON
 }
 JSON
 
-echo "packaged ${version}:"
-ls -la "${dist}"
+	# Distinctly-named copies for the GitHub Release (flat asset namespace).
+	cp "${out}/firmware.bin" "${dist}/firmware-${slug}.bin"
+	cp "${out}/merged.bin" "${dist}/merged-${slug}.bin"
+
+	echo "packaged ${slug} (${env}) ${version}"
+done
+
+echo "---"
+find "${dist}" -type f | sort

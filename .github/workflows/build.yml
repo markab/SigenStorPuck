@@ -37,7 +37,9 @@ jobs:
         run: pip install --upgrade platformio esptool
 
       - name: Build firmware
-        run: pio run -e puck
+        run: |
+          pio run -e puck
+          pio run -e puck241
 
       # Worth building too: the simulator shares the snapshot model, the enrolment
       # URL parser and every screen, so this catches breakage in code the firmware
@@ -58,10 +60,12 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
+          # One firmware and one whole-flash image per board variant. A Release's
+          # asset namespace is flat, so these carry the slug in the name; the
+          # per-slug manifests live on Pages next to their merged.bin.
           files: |
-            dist/firmware.bin
-            dist/merged.bin
-            dist/manifest.json
+            dist/firmware-*.bin
+            dist/merged-*.bin
           generate_release_notes: true
 
       # Handed to the pages job, which cannot see this job's workspace.
@@ -88,8 +92,9 @@ jobs:
   # environment rule at all.
   #
   # The cost is that the installer flashes the tip of main rather than the newest
-  # tagged release. That does not conflict with anything: the device's updater reads
-  # the manifest from the GitHub release, not from Pages, so the two are independent.
+  # tagged release. The device's updater reads the same per-slug manifest from Pages
+  # (SigenStorPuck/<slug>/manifest.json), so the installer and OTA stay in step —
+  # both advertise whatever main's PUCK_FW_VERSION says, gated on that bump.
   #
   # Tags only, deliberately. The page and the binary it flashes have to be served
   # from the same origin — GitHub release assets send no CORS header, so a page

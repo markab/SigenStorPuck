@@ -35,8 +35,15 @@ namespace {
 // PUCK_FW_VERSION publishes nothing a device will act on.
 //
 // Redirects are still followed: Pages serves these through a CDN.
-constexpr const char* MANIFEST_URL = "https://markab.github.io/SigenStorPuck/manifest.json";
-constexpr const char* FIRMWARE_URL = "https://markab.github.io/SigenStorPuck/firmware.bin";
+//
+// Per-board: each variant fetches its own slug's manifest and image
+// (SigenStorPuck/<slug>/...), so a 2.41 never pulls a 1.75 build. The two share a
+// version, so the URL — built from the compile-time PUCK_BOARD_SLUG — is the
+// discriminator, backed up by the `board` field check below.
+constexpr const char* MANIFEST_URL =
+    "https://markab.github.io/SigenStorPuck/" PUCK_BOARD_SLUG "/manifest.json";
+constexpr const char* FIRMWARE_URL =
+    "https://markab.github.io/SigenStorPuck/" PUCK_BOARD_SLUG "/firmware.bin";
 
 // Opening the settings page starts a check, and saving any form re-renders it, so
 // without a floor a few minutes of fiddling with settings would be a few dozen
@@ -199,6 +206,17 @@ UpdateStatus perform_check() {
   if (result.latest_version.isEmpty()) {
     result.state = UpdateState::Failed;
     result.message = "manifest has no version";
+    return result;
+  }
+
+  // Cross-flash guard: never act on a manifest built for another board. The
+  // per-slug URL already keeps them apart; this catches a misplaced manifest,
+  // which matters because the two variants share a version and so cannot be told
+  // apart by version alone. An absent board field is allowed (older manifests).
+  const String board = doc["board"] | "";
+  if (!board.isEmpty() && board != PUCK_BOARD_SLUG) {
+    result.state = UpdateState::Failed;
+    result.message = "the release is for a different board";
     return result;
   }
 

@@ -13,27 +13,30 @@
   The manifest and the firmware are served from this same origin, and they have to
   be: GitHub release assets carry no access-control-allow-origin header, so a page
   fetching them from another origin is blocked by the browser and flashing never
-  begins. CI publishes merged.bin next to this file when a release is cut.
+  begins. CI publishes each board's merged.bin next to its manifest under <slug>/.
+
+  There is one manifest per board because the two boards are both ESP32-S3 — ESP Web
+  Tools picks a build by matching the connected chip's family, so it cannot tell a
+  1.75 from a 2.41. Each Install button below points at its own board's manifest.
 
   ESP Web Tools itself is served from this origin too, mirrored into vendor/ by
-  tools/vendor_installer_deps.sh. It used to load from unpkg at a floating major
-  version, which meant the code that writes to somebody's device could change
-  without this repository changing, and that a CDN outage broke flashing — while
-  that script was being written, unpkg was returning HTTP 500 for one of the
-  chunks. Subresource integrity was not an answer: the entry module is ~3 KB and
-  dynamically imports everything that does the actual work, so the hash would
-  have covered almost none of what runs.
+  tools/vendor_installer_deps.sh.
 -->
 <script type="module" src="vendor/esp-web-tools/install-button.js"></script>
 <style>
   :root { color-scheme: dark light; }
   body {
     font-family: system-ui, -apple-system, sans-serif;
-    max-width: 36rem; margin: 3rem auto; padding: 0 1.25rem; line-height: 1.55;
+    max-width: 40rem; margin: 3rem auto; padding: 0 1.25rem; line-height: 1.55;
   }
   h1 { font-size: 1.6rem; margin-bottom: .25rem; }
   p.sub { color: #888; margin-top: 0; }
-  .install { margin: 2rem 0; }
+  .boards { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+            gap: 1rem; margin: 1.5rem 0 2rem; }
+  .board { border: 1px solid color-mix(in srgb, currentColor 15%, transparent);
+           border-radius: .6rem; padding: 1rem 1.1rem; }
+  .board h3 { margin: 0 0 .2rem; font-size: 1.15rem; }
+  .board p { margin: 0 0 .9rem; color: #888; font-size: .9rem; }
   ol { padding-left: 1.2rem; }
   li { margin: .4rem 0; }
   .note {
@@ -44,26 +47,40 @@
          padding: .1rem .35rem; border-radius: .25rem; }
   footer { margin-top: 3rem; color: #888; font-size: .85rem; }
   a { color: #0a84ff; }
+  .unsupported { color: #888; font-size: .85rem; }
 </style>
 </head>
 <body>
 
 <h1>SigenStorPuck</h1>
-<p class="sub">A round status display for a SigenStor solar and battery installation.</p>
+<p class="sub">A status display for a SigenStor solar and battery installation.</p>
 
-<div class="install">
-  <esp-web-install-button
-    manifest="manifest.json">
-    <button slot="activate">Install SigenStorPuck</button>
-    <span slot="unsupported">
-      This browser cannot flash over USB. Open this page in <strong>Chrome</strong> or
-      <strong>Edge</strong> on a desktop — WebSerial does not exist in Safari or Firefox,
-      and is unavailable on iOS entirely.
-    </span>
-    <span slot="not-allowed">
-      Serial access was blocked. This page has to be served over HTTPS to flash.
-    </span>
-  </esp-web-install-button>
+<h2>Choose your board</h2>
+<p class="sub">Plug it into this computer with USB-C first. Both flash the same way.</p>
+
+<div class="boards">
+  <div class="board">
+    <h3>1.75&Prime; round</h3>
+    <p>ESP32-S3-Touch-AMOLED-1.75 — a 466&times;466 round AMOLED.</p>
+    <esp-web-install-button manifest="puck-1.75/manifest.json">
+      <button slot="activate">Install 1.75&Prime; round</button>
+      <span slot="unsupported" class="unsupported">Open this page in Chrome or Edge on a
+        desktop — WebSerial does not exist in Safari or Firefox.</span>
+      <span slot="not-allowed" class="unsupported">Serial access was blocked; this page must
+        be served over HTTPS.</span>
+    </esp-web-install-button>
+  </div>
+  <div class="board">
+    <h3>2.41&Prime; landscape</h3>
+    <p>ESP32-S3-Touch-AMOLED-2.41 (V2) — a 600&times;450 landscape AMOLED.</p>
+    <esp-web-install-button manifest="puck-2.41/manifest.json">
+      <button slot="activate">Install 2.41&Prime; landscape</button>
+      <span slot="unsupported" class="unsupported">Open this page in Chrome or Edge on a
+        desktop — WebSerial does not exist in Safari or Firefox.</span>
+      <span slot="not-allowed" class="unsupported">Serial access was blocked; this page must
+        be served over HTTPS.</span>
+    </esp-web-install-button>
+  </div>
 </div>
 
 <h2>After flashing</h2>
@@ -77,13 +94,9 @@
 
 <div class="note">
   <strong>Only needed once.</strong> This installer is for the first flash and for
-  recovery. Afterwards the Puck updates itself, so you should not need to come back
-  here.
+  recovery. Afterwards the Puck updates itself — and each board updates from its own
+  build — so you should not need to come back here.
 </div>
-
-<h2>Hardware</h2>
-<p>Waveshare ESP32-S3-Touch-AMOLED-1.75 — a 466&times;466 round AMOLED with capacitive
-touch. Plug it into this computer with USB-C before clicking Install.</p>
 
 <footer>
   <a href="https://github.com/markab/SigenStorPuck">Source and releases</a>
