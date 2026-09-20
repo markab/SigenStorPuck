@@ -55,6 +55,12 @@
 <h1>SigenStorPuck</h1>
 <p class="sub">A status display for a SigenStor solar and battery installation.</p>
 
+<div class="note">
+  <strong>Use Chrome or Edge on a desktop.</strong> Flashing is over WebSerial — Safari,
+  Firefox and every browser on iPhone or iPad can't do it, and there's nothing to download
+  either way.
+</div>
+
 <h2>Choose your board</h2>
 <p class="sub">Plug it into this computer with USB-C first. Both flash the same way.</p>
 
@@ -72,7 +78,8 @@
   </div>
   <div class="board">
     <h3>2.41&Prime; landscape</h3>
-    <p>ESP32-S3-Touch-AMOLED-2.41 (V2) — a 600&times;450 landscape AMOLED.</p>
+    <p>ESP32-S3-Touch-AMOLED-2.41, <strong>V2 revision</strong> — a 600&times;450 landscape
+    AMOLED. <strong>Early release, for testing</strong> — not yet verified on hardware.</p>
     <esp-web-install-button manifest="puck-2.41/manifest.json">
       <button slot="activate">Install 2.41&Prime; landscape</button>
       <span slot="unsupported" class="unsupported">Open this page in Chrome or Edge on a
@@ -87,8 +94,11 @@
 <ol>
   <li>The Puck raises a WiFi access point called <code>SigenStorPuck-Setup</code>. Join it
       and choose your network.</li>
-  <li>Open <code>http://sigenstorpuck.local/</code> and paste the enrolment URL from
-      SigenStor Display's <em>Admin → Kiosk devices</em>.</li>
+  <li>Open <code>http://sigenstorpuck.local/</code> and choose your data source: talk
+      straight to the plant over <strong>Modbus</strong> (the default), use
+      <strong>Home Assistant</strong>, or a <strong>SigenStorDisplay Server</strong>. Only
+      the server needs an enrolment URL — Modbus needs the plant's IP, Home Assistant its
+      URL and token.</li>
   <li>It starts showing live data, and updates itself from GitHub Releases after that.</li>
 </ol>
 
