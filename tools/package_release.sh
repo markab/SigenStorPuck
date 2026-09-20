@@ -121,5 +121,18 @@ JSON
 	echo "packaged ${slug} (${env}) ${version}"
 done
 
+# Backwards compatibility for the flat, pre-split URL.
+#
+# 1.75 boards already in the field run firmware whose updater polls
+# SigenStorPuck/manifest.json (no slug) — the layout from before this split. That
+# path must keep working, or those devices can never make the one OTA hop to
+# firmware that uses the per-slug URL: they would poll a 404 forever and be stuck
+# on the old version until re-flashed over USB. The 1.75 is the original board, so
+# it owns the flat path; new 1.75 firmware polls puck-1.75/ and this alias is only
+# ever read by not-yet-updated devices.
+cp "${dist}/puck-1.75/manifest.json" "${dist}/manifest.json"
+cp "${dist}/puck-1.75/firmware.bin" "${dist}/firmware.bin"
+cp "${dist}/puck-1.75/merged.bin" "${dist}/merged.bin"
+
 echo "---"
 find "${dist}" -type f | sort
