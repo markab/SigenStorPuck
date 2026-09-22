@@ -1,18 +1,16 @@
 // FT6336 (FocalTech) capacitive touch over the shared I2C bus, wired to LVGL —
-// the 2.41" landscape board. The puck241 counterpart of touch.cpp (CST9217),
+// the 2.41" landscape board (V1). The puck241 counterpart of touch.cpp (CST9217),
 // implementing the same touch.h contract and swapped in by build_src_filter.
 //
-// !!! HARDWARE BRING-UP NOTES — verify on a real 2.41 !!!
-//   * PUCK_TOUCH_RST / PUCK_TOUCH_INT in board_2p41.h are PLACEHOLDER. On the real
-//     2.41 these differ between revisions and, importantly, some of them route
-//     through the TCA9554 I/O expander (EXIO pins), not direct ESP32 GPIOs:
-//       V1: TP_INT = EXIO2, TP_RESET = GPIO3
-//       V2: TP_INT = GPIO3, TP_RESET = EXIO1
-//     ensure_reset_released() below drives PUCK_TOUCH_RST as a direct GPIO. If the
-//     target revision wires reset through the expander, this must instead toggle
-//     that EXIO line over I2C (TCA9554) — a bring-up follow-up.
-//   * The mount mirror is taken from PUCK_TOUCH_MIRROR_X/Y (board_2p41.h),
-//     currently false/false; confirm against the panel scan order on hardware.
+// On V1: TP_RESET = GPIO3 (a real GPIO), TP_INT = EXIO2 (unused; we poll). The
+// controller holds its I2C lines idle until reset is released, so ensure_reset_
+// released() pulses GPIO3 before the boot-time bus scan or nothing answers.
+//
+// The panel is shown landscape via a software rotation in the display backend,
+// which keeps disp_drv.rotated at NONE (LVGL would otherwise swap the resolution,
+// see display_sh8601.cpp). So LVGL does not rotate pointer input — indev_read_cb
+// does, mapping the FT6336's native-portrait reading into the logical landscape
+// frame. If taps land mirrored, the fix is PUCK_TOUCH_MIRROR_X/Y in board_2p41.h.
 
 #include "touch.h"
 
@@ -58,16 +56,12 @@ bool i2c_responds(uint8_t address) {
 }
 
 // The controller holds its I2C lines idle until reset is released, so a scan run
-// before this reports no touch device. See the bring-up note above: on some 2.41
-// revisions PUCK_TOUCH_RST is an expander line, not a GPIO.
+// before this reports no touch device. On V1 reset is GPIO3, a real GPIO.
 void ensure_reset_released() {
   static bool done = false;
   if (done) {
     return;
   }
-  // On the V2, PUCK_TOUCH_RST is -1: touch reset is on the TCA9554 expander, not
-  // a GPIO. TODO(bring-up): pulse it via the expander (0x20). For a board that
-  // wires reset to a real GPIO, toggle it directly.
   if (PUCK_TOUCH_RST >= 0) {
     pinMode(PUCK_TOUCH_RST, OUTPUT);
     digitalWrite(PUCK_TOUCH_RST, LOW);
@@ -83,14 +77,20 @@ void indev_read_cb(lv_indev_drv_t* /*drv*/, lv_indev_data_t* data) {
   if (points.hasPoints()) {
     const TouchPoint& point = points.getPoint(0);
 
-    // Mount correction from the board profile. Only the mounting flip belongs
-    // here — LVGL rotates pointer coordinates itself from disp->driver->rotated
-    // (lv_indev.c), so applying the display rotation here as well would turn every
-    // swipe the wrong way.
-    lv_coord_t x = PUCK_TOUCH_MIRROR_X ? static_cast<lv_coord_t>(PUCK_LCD_WIDTH - 1 - point.x)
-                                       : static_cast<lv_coord_t>(point.x);
-    lv_coord_t y = PUCK_TOUCH_MIRROR_Y ? static_cast<lv_coord_t>(PUCK_LCD_HEIGHT - 1 - point.y)
-                                       : static_cast<lv_coord_t>(point.y);
+    // The FT6336 reports in native portrait (0..449 x 0..599). The display driver
+    // leaves disp_drv.rotated at NONE on this board (LVGL would otherwise swap the
+    // resolution), so LVGL does not rotate the pointer — we do it here to match the
+    // display's software rotation of 270 degrees: native (nx, ny) -> logical
+    // (NH-1-ny, nx). The mount mirror flips (board profile) compose on top, for
+    // squaring touch to the glass once seen on hardware.
+    lv_coord_t x = static_cast<lv_coord_t>(PUCK_LCD_NATIVE_HEIGHT - 1 - point.y);
+    lv_coord_t y = static_cast<lv_coord_t>(point.x);
+    if (PUCK_TOUCH_MIRROR_X) {
+      x = static_cast<lv_coord_t>(PUCK_LCD_WIDTH - 1 - x);
+    }
+    if (PUCK_TOUCH_MIRROR_Y) {
+      y = static_cast<lv_coord_t>(PUCK_LCD_HEIGHT - 1 - y);
+    }
 
     // Undo the fine rotation about the centre of the panel.
     if (s_fine_active) {
@@ -150,9 +150,11 @@ bool touch_begin() {
   }
   s_address = PUCK_TOUCH_ADDR_PRIMARY;
 
-  s_touch.setMaxCoordinates(PUCK_LCD_WIDTH, PUCK_LCD_HEIGHT);
+  // Native portrait, matching what the controller reports; indev_read_cb rotates
+  // the point into the logical landscape frame (LVGL does not, see the header).
+  s_touch.setMaxCoordinates(PUCK_LCD_NATIVE_WIDTH, PUCK_LCD_NATIVE_HEIGHT);
   // Mirroring is applied in indev_read_cb from the board profile, not in the
-  // library, because it has to compose with the display rotation.
+  // library, because it has to compose with the software rotation.
   s_touch.setMirrorXY(false, false);
 
   lv_indev_drv_init(&s_indev_drv);
