@@ -1,23 +1,28 @@
-// SH8601 AMOLED panel over QSPI, wired to LVGL — the 2.41" (V2) landscape board.
+// RM690B0 AMOLED panel over QSPI, wired to LVGL — the 2.41" landscape board (V1).
 //
 // The puck241 counterpart of display.cpp (which drives the 1.75's CO5300). Both
 // implement the same display.h contract and are swapped by build_src_filter per
-// env, the way src/sim/ swaps the desktop backend. The structure mirrors
-// display.cpp so the two stay easy to diff; only the panel class and the
-// controller-specific notes differ.
+// env, the way src/sim/ swaps the desktop backend.
 //
-// Pins are the real V2 values (board_2p41.h, from Waveshare's 09_LVGL_Test).
+// Pins are the real V1 values (board_2p41.h, from Waveshare's own V1 demo). The
+// controller is an RM690B0, but it is command-compatible with the SH8601 and
+// Waveshare's own examples wrap it with their SH8601 driver, so Arduino_GFX's
+// Arduino_SH8601 drives it here too.
 //
-// !!! TWO HARDWARE BRING-UP ITEMS — confirm on real glass !!!
-//   * RESET IS ON THE TCA9554 EXPANDER, NOT A GPIO. PUCK_LCD_RST is -1, so
-//     Arduino_SH8601 will not pulse reset. The panel needs a reset pulse driven
-//     through the TCA9554 (0x20) before init — see the TODO in display_begin().
-//     Without it the panel may not come up.
-//   * The SH8601 is natively 450x600 portrait; the 2.41 shows 600x450 landscape.
-//     The construction below uses the landscape (logical) size directly, with
-//     turning left to flush_cb like the 1.75. Whether the panel instead needs a
-//     native-portrait construction plus the controller's own rotation is a
-//     bring-up question — Waveshare's example rotates 90 degrees.
+// Bring-up facts confirmed on real V1 hardware:
+//   * OLED reset is GPIO21, a real GPIO. (On the V2 revision it is an expander
+//     line and GPIO21 is the tearing-effect signal — the two are swapped between
+//     revisions.) Without pulsing it the panel never leaves reset and stays dark
+//     however correct the init and transport are.
+//   * The stock Arduino_SH8601 init does not light this panel; it needs a software
+//     reset, a leading MADCTL + COLMOD, and the panel's page-0x20 vendor block —
+//     apply_sh8601_vendor_init() sends the demo's exact sequence instead.
+//   * The panel is natively 450x600 portrait with a 16-pixel column offset in the
+//     RM690B0's 482-wide RAM. It is constructed at that native size
+//     (PUCK_LCD_NATIVE_*); the landscape 600x450 view comes from the flush_cb
+//     software rotation the 1.75 uses for mounting turns. Hardware rotation
+//     (MADCTL swap) is not usable — Arduino_GFX streams pixels row-major, which a
+//     swap transposes.
 
 #include "display.h"
 
@@ -48,8 +53,8 @@ bool s_asleep = false;
 uint8_t s_rotation = 0;
 lv_color_t* s_rotated = nullptr;
 
-// Most QSPI AMOLED controllers only accept even-aligned write windows; LVGL hands
-// us odd areas otherwise. VERIFY whether the SH8601 needs this on the 2.41.
+// QSPI AMOLED controllers only accept even-aligned write windows; LVGL hands us
+// odd areas otherwise. Confirmed needed on the RM690B0 here.
 void rounder_cb(lv_disp_drv_t* /*drv*/, lv_area_t* area) {
   area->x1 &= ~1;
   area->y1 &= ~1;
@@ -104,22 +109,73 @@ void flush_cb(lv_disp_drv_t* drv, const lv_area_t* area, lv_color_t* pixels) {
   lv_disp_flush_ready(drv);
 }
 
+// Reproduce the V1 demo's init sequence (which wraps the RM690B0 as
+// esp_lcd_sh8601). The stock Arduino_SH8601 init leaves out three things this
+// panel needs — a software reset, a leading MADCTL + COLMOD, and the panel's
+// page-0x20 block — and without them it comes up out of reset but dark. Called
+// straight after the hardware reset, matching the demo's panel_reset() then
+// panel_init() order. MADCTL is 0x00 (no hardware rotate): rotation is done in
+// flush_cb and the draw window is set per flush, so the demo's 0x36 rotate and
+// its CASET/PASET are deliberately left out.
+void apply_sh8601_vendor_init() {
+  s_bus->sendCommand(0x01);      // SWRESET (the demo's panel_reset with rst_gpio < 0)
+  delay(80);
+
+  s_bus->beginWrite();
+  s_bus->writeC8D8(0x36, 0x00);  // MADCTL: RGB, no hardware rotate (flush_cb rotates)
+  s_bus->writeC8D8(0x3A, 0x55);  // COLMOD: 16 bit/pixel (RGB565)
+  s_bus->writeC8D8(0xFE, 0x20);  // select command page 0x20
+  s_bus->writeC8D8(0x26, 0x0A);  // panel power-up config the stock init skips
+  s_bus->writeC8D8(0x24, 0x80);
+  s_bus->writeC8D8(0xFE, 0x00);  // back to command page 0
+  s_bus->writeC8D8(0x3A, 0x55);
+  s_bus->writeC8D8(0xC2, 0x00);
+  s_bus->endWrite();
+  delay(10);
+
+  s_bus->beginWrite();
+  s_bus->writeC8D8(0x35, 0x00);  // tearing-effect line on
+  s_bus->writeC8D8(0x51, 0x00);  // brightness 0 for now; raised after DISPON
+  s_bus->endWrite();
+  delay(10);
+
+  s_bus->sendCommand(0x11);  // sleep out
+  delay(80);
+  s_bus->sendCommand(0x29);  // display on
+  delay(10);
+
+  s_bus->beginWrite();
+  s_bus->writeC8D8(0x51, 0xFF);  // brightness up now the panel is on
+  s_bus->endWrite();
+}
+
 }  // namespace
 
 bool display_begin(uint8_t rotation) {
-  // TODO(hardware bring-up): pulse the panel reset line via the TCA9554 expander
-  // (0x20) here before constructing the panel — PUCK_LCD_RST is -1 because reset
-  // is not on a GPIO. The exact EXIO bit is a schematic detail to confirm on V2.
-
   s_bus = new Arduino_ESP32QSPI(PUCK_LCD_CS, PUCK_LCD_SCLK, PUCK_LCD_D0, PUCK_LCD_D1,
                                 PUCK_LCD_D2, PUCK_LCD_D3);
-  s_panel = new Arduino_SH8601(s_bus, PUCK_LCD_RST, 0, PUCK_LCD_WIDTH,
-                               PUCK_LCD_HEIGHT, PUCK_LCD_COL_OFFSET, PUCK_LCD_ROW_OFFSET, 0, 0);
+  // Constructed at the native portrait size; flush_cb rotates the logical
+  // landscape frame onto it. col_offset lands the visible band at native column
+  // 16 (Arduino_GFX adds it to x in writeAddrWindow).
+  s_panel = new Arduino_SH8601(s_bus, PUCK_LCD_RST, 0, PUCK_LCD_NATIVE_WIDTH,
+                               PUCK_LCD_NATIVE_HEIGHT, PUCK_LCD_COL_OFFSET, PUCK_LCD_ROW_OFFSET, 0, 0);
 
   if (!s_panel->begin(PUCK_LCD_QSPI_HZ)) {
     Serial.println("[display] SH8601 begin() failed");
     return false;
   }
+  // Hardware reset on GPIO21 (a real GPIO on V1), active-low, with the demo's
+  // timing — then the vendor init in the demo's order. begin() ran the stock init
+  // already; this reset discards it so the vendor sequence starts from a clean
+  // controller.
+  pinMode(PUCK_LCD_RST, OUTPUT);
+  digitalWrite(PUCK_LCD_RST, HIGH);
+  delay(10);
+  digitalWrite(PUCK_LCD_RST, LOW);
+  delay(10);
+  digitalWrite(PUCK_LCD_RST, HIGH);
+  delay(150);
+  apply_sh8601_vendor_init();
   s_panel->fillScreen(RGB565_BLACK);
   s_panel->setBrightness(PUCK_LCD_BRIGHTNESS);
 
@@ -137,7 +193,10 @@ bool display_begin(uint8_t rotation) {
     return false;
   }
 
-  s_rotation = rotation & 0x03;
+  // The panel is physically portrait, so its baseline is a 270-degree turn to
+  // reach the product's landscape (which came out upright on the glass); any
+  // runtime mounting turn composes on top.
+  s_rotation = static_cast<uint8_t>((PUCK_LCD_ROTATION + rotation) & 0x03);
   if (s_rotation != 0) {
     s_rotated = static_cast<lv_color_t*>(heap_caps_malloc(bytes, MALLOC_CAP_INTERNAL));
     if (s_rotated == nullptr) {
@@ -157,19 +216,18 @@ bool display_begin(uint8_t rotation) {
   s_disp_drv.draw_buf = &s_draw_buf;
   s_disp_drv.flush_cb = flush_cb;
   s_disp_drv.rounder_cb = rounder_cb;
-  // sw_rotate off; flush_cb rotates. `rotated` is set so LVGL rotates touch
-  // coordinates (lv_indev.c), with 90/270 swapped — see display.cpp for the full
-  // inverse-transform argument, which applies to any panel driven this way.
   s_disp_drv.sw_rotate = 0;
-  s_disp_drv.rotated = s_rotation == 1   ? LV_DISP_ROT_270
-                       : s_rotation == 2 ? LV_DISP_ROT_180
-                       : s_rotation == 3 ? LV_DISP_ROT_90
-                                         : LV_DISP_ROT_NONE;
+  // Deliberately NOT rotated through LVGL. On a non-square panel LV_DISP_ROT_90/270
+  // makes lv_disp_get_hor_res() return ver_res, so LVGL would treat the screen as
+  // 450x600 and lay the 600x450 UI out off-centre in a sub-window. flush_cb does
+  // the pixel rotation, so LVGL stays at the true 600x450; touch is rotated in
+  // touch_ft6336.cpp instead of by LVGL.
+  s_disp_drv.rotated = LV_DISP_ROT_NONE;
   lv_disp_drv_register(&s_disp_drv);
 
   Serial.printf("[display] rotation %u%s\n", static_cast<unsigned>(s_rotation),
                 s_rotation != 0 ? " (rotated in flush)" : "");
-  Serial.printf("[display] SH8601 %dx%d up, %u-byte buffer (%u lines) in %s\n", PUCK_LCD_WIDTH,
+  Serial.printf("[display] RM690B0 %dx%d up, %u-byte buffer (%u lines) in %s\n", PUCK_LCD_WIDTH,
                 PUCK_LCD_HEIGHT, static_cast<unsigned>(bytes),
                 static_cast<unsigned>(PUCK_LVGL_BUFFER_LINES),
                 s_buffer_is_internal ? "internal DMA RAM" : "PSRAM");
