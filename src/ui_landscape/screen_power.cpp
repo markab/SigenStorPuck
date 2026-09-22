@@ -116,7 +116,7 @@ void build_leg(LegId id, const char* name, uint32_t colour, LegPos pos) {
                         LV_FLEX_ALIGN_CENTER);
   lv_obj_align(leg.box, LV_ALIGN_CENTER, pos.dx, pos.dy);
 
-  leg.name = make_label(leg.box, PUCK_FONT_SMALL, colour);
+  leg.name = make_label(leg.box, PUCK_FONT_BODY, colour);
   lv_label_set_text(leg.name, name);
   leg.value = make_label(leg.box, PUCK_FONT_LARGE, PUCK_COLOUR_TEXT);
   lv_label_set_text(leg.value, "--");
@@ -290,7 +290,7 @@ lv_obj_t* screen_power_create(lv_obj_t* parent) {
   build_leg(LEG_HOME, "HOME", PUCK_COLOUR_HOME, POS_HOME);
 
   // State of charge, bottom-centre (screen 1 carries no day chip there).
-  s_soc_label = make_label(s_root, PUCK_FONT_BODY, PUCK_COLOUR_BATTERY);
+  s_soc_label = make_label(s_root, PUCK_FONT_LARGE, PUCK_COLOUR_BATTERY);
   lv_label_set_text(s_soc_label, "SOC --");
   lv_obj_align(s_soc_label, LV_ALIGN_CENTER, 0, 168);
 

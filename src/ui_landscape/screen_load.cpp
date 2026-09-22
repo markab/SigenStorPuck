@@ -62,13 +62,13 @@ lv_obj_t* screen_load_create(lv_obj_t* parent, bool with_breakdown) {
     chart_band_set_smoothing(s_band, BAND_SMOOTHING);
   }
 
-  lv_obj_t* caption = make_label(s_root, PUCK_FONT_SMALL, PUCK_COLOUR_MUTED, 0, -70);
+  lv_obj_t* caption = make_label(s_root, PUCK_FONT_BODY, PUCK_COLOUR_MUTED, 0, -74);
   lv_label_set_text(caption, "CONSUMED");
-  s_headline = make_label(s_root, PUCK_FONT_HERO, PUCK_COLOUR_TEXT, 0, -20);
+  s_headline = make_label(s_root, PUCK_FONT_HERO, PUCK_COLOUR_TEXT, 0, -22);
   lv_label_set_text(s_headline, "--");
-  lv_obj_t* unit = make_label(s_root, PUCK_FONT_SMALL, PUCK_COLOUR_MUTED, 0, 20);
+  lv_obj_t* unit = make_label(s_root, PUCK_FONT_BODY, PUCK_COLOUR_MUTED, 0, 22);
   lv_label_set_text(unit, "kWh used");
-  s_pill = make_label(s_root, PUCK_FONT_BODY, PUCK_COLOUR_HOME, 0, 60);
+  s_pill = make_label(s_root, PUCK_FONT_LARGE, PUCK_COLOUR_HOME, 0, 64);
   lv_label_set_text(s_pill, "");
   return s_root;
 }

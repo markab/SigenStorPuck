@@ -106,9 +106,9 @@ void build_node(NodeUi* node, const char* name, uint32_t colour, lv_coord_t x, l
   lv_obj_align(node->bar, LV_ALIGN_CENTER, x, y);
 
   const lv_coord_t label_x = x < 0 ? -LABEL_X : LABEL_X;
-  node->name = make_label(s_root, PUCK_FONT_SMALL, colour, label_x, y - 13);
+  node->name = make_label(s_root, PUCK_FONT_BODY, colour, label_x, y - 15);
   lv_label_set_text(node->name, name);
-  node->value = make_label(s_root, PUCK_FONT_BODY, PUCK_COLOUR_TEXT, label_x, y + 12);
+  node->value = make_label(s_root, PUCK_FONT_LARGE, PUCK_COLOUR_TEXT, label_x, y + 15);
   lv_label_set_text(node->value, "--");
 }
 
@@ -221,7 +221,7 @@ lv_obj_t* screen_flows_create(lv_obj_t* parent) {
   s_hero = make_label(s_root, PUCK_FONT_HERO, PUCK_COLOUR_TEXT, 0, -168);
   lv_label_set_text(s_hero, "--");
 
-  s_caption = make_label(s_root, PUCK_FONT_SMALL, PUCK_COLOUR_MUTED, 0, -134);
+  s_caption = make_label(s_root, PUCK_FONT_BODY, PUCK_COLOUR_MUTED, 0, -132);
   lv_label_set_text(s_caption, "self-sufficient");
 
   static const char* const SOURCE_NAME[SRC_COUNT] = {"SOLAR", "BATT", "GRID"};
