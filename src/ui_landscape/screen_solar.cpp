@@ -9,13 +9,23 @@
 #include <stdio.h>
 
 #include "board_config.h"
+#include "chart_band.h"
 #include "edge_bar.h"
 #include "format.h"
 #include "theme.h"
 
 namespace {
 
+// The day's generation curve, ghosted right back behind the figures. Range auto,
+// so a dull day and a bright one both fill the band.
+constexpr lv_coord_t BAND_WIDTH = PUCK_LCD_WIDTH;
+constexpr lv_coord_t BAND_HEIGHT = 220;
+constexpr lv_coord_t BAND_Y = 20;
+constexpr lv_opa_t BAND_GHOST = 110;
+constexpr uint8_t BAND_SMOOTHING = 7;
+
 lv_obj_t* s_root = nullptr;
+lv_obj_t* s_band = nullptr;
 lv_obj_t* s_edge = nullptr;
 lv_obj_t* s_headline = nullptr;
 lv_obj_t* s_pill = nullptr;
@@ -44,6 +54,16 @@ lv_obj_t* screen_solar_create(lv_obj_t* parent, uint8_t /*figures*/) {
   lv_obj_set_style_bg_opa(s_root, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_center(s_root);
 
+  // The ghosted day chart, behind everything else.
+  s_band = chart_band_create(s_root, HistorySeries::Pv, PUCK_COLOUR_SOLAR);
+  if (s_band != nullptr) {
+    lv_obj_set_size(s_band, BAND_WIDTH, BAND_HEIGHT);
+    lv_obj_align(s_band, LV_ALIGN_CENTER, 0, BAND_Y);
+    chart_band_set_range(s_band, 0.0f, 0.0f);
+    chart_band_set_intensity(s_band, BAND_GHOST);
+    chart_band_set_smoothing(s_band, BAND_SMOOTHING);
+  }
+
   // Generation against today's forecast; hidden outright when there is none.
   s_edge = edge_bar_create(s_root);
 
@@ -66,6 +86,9 @@ lv_obj_t* screen_solar_create(lv_obj_t* parent, uint8_t /*figures*/) {
 void screen_solar_update(const Snapshot& snapshot) {
   if (s_root == nullptr) {
     return;
+  }
+  if (s_band != nullptr) {
+    chart_band_refresh(s_band);
   }
   char text[24];
   if (snapshot.valid && snapshot.today.present && snapshot.today.solar.known) {
