@@ -31,6 +31,7 @@ enum PuckScreen : uint8_t {
   PUCK_SCREEN_LOAD,
   // Appended for the same reason: the day's grid import/export with a bipolar
   // chart, plus live frequency and voltage. Swiped after load; see the order.
+  // Built on both boards.
   PUCK_SCREEN_GRID,
   PUCK_SCREEN_COUNT,
 };
@@ -44,9 +45,9 @@ static constexpr PuckScreen PUCK_SCREEN_ORDER[PUCK_SCREEN_COUNT] = {
 };
 
 // Screens only the 2.41 landscape UI builds; the round ui.cpp masks these out of
-// its wanted set. The grid screen is landscape-only for now — the round variant
-// can follow.
-static constexpr uint8_t PUCK_LANDSCAPE_ONLY_SCREENS = (1u << PUCK_SCREEN_GRID);
+// its wanted set. None at present — both boards build every screen — but the
+// mechanism stays for a future landscape-only screen.
+static constexpr uint8_t PUCK_LANDSCAPE_ONLY_SCREENS = 0;
 
 // Screens that require detailed source capabilities: cost needs tariff tables
 // and flows needs a source-to-sink decomposition, neither of which Modbus or

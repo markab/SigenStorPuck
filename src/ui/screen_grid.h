@@ -9,7 +9,8 @@
 // Frequency and voltage come only from the Modbus source (read from the
 // inverter's running-info registers); /api/summary carries neither, so on the
 // server source those two stats stay empty and the rest of the screen stands on
-// its own. Landscape only for now — there is no round variant.
+// its own. Built for both boards: src/ui/screen_grid.cpp is the round layout,
+// src/ui_landscape/screen_grid.cpp the wide one.
 
 #pragma once
 

@@ -10,6 +10,7 @@
 #include "screen_battery.h"
 #include "screen_cost.h"
 #include "screen_flows.h"
+#include "screen_grid.h"
 #include "screen_load.h"
 #include "screen_power.h"
 #include "screen_settings.h"
@@ -79,7 +80,7 @@ bool screen_has_chart(int index) {
   }
   const PuckScreen screen = s_screen_at[index];
   return screen == PUCK_SCREEN_BATTERY || screen == PUCK_SCREEN_SOLAR ||
-         screen == PUCK_SCREEN_LOAD;
+         screen == PUCK_SCREEN_LOAD || screen == PUCK_SCREEN_GRID;
 }
 
 // The live reading and the viewed day, held apart because different screens want
@@ -372,6 +373,9 @@ lv_obj_t* ui_create(lv_obj_t* parent, const UiConfig& config) {
       case PUCK_SCREEN_LOAD:
         screen_load_create(s_tiles[i], config.with_detailed_screens);
         break;
+      case PUCK_SCREEN_GRID:
+        screen_grid_create(s_tiles[i]);
+        break;
       case PUCK_SCREEN_FLOWS:
         screen_flows_create(s_tiles[i]);
         break;
@@ -525,6 +529,7 @@ void refresh_screens() {
   screen_battery_set_live(live);
   screen_solar_set_live(live);
   screen_load_set_live(live);
+  screen_grid_set_live(live);
 
   for (int i = 0; i < s_screen_count; ++i) {
     switch (s_screen_at[i]) {
@@ -539,6 +544,9 @@ void refresh_screens() {
         break;
       case PUCK_SCREEN_LOAD:
         screen_load_update(day);
+        break;
+      case PUCK_SCREEN_GRID:
+        screen_grid_update(day);
         break;
       case PUCK_SCREEN_FLOWS:
         screen_flows_update(day);
