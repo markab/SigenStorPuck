@@ -35,7 +35,9 @@ lv_obj_t* s_band = nullptr;
 lv_obj_t* s_edge = nullptr;
 lv_obj_t* s_headline = nullptr;
 lv_obj_t* s_pill = nullptr;
+lv_obj_t* s_forecast_caption = nullptr;
 lv_obj_t* s_forecast = nullptr;
+lv_obj_t* s_remaining_caption = nullptr;
 lv_obj_t* s_remaining = nullptr;
 bool s_live = true;
 
@@ -82,18 +84,25 @@ lv_obj_t* screen_solar_create(lv_obj_t* parent, uint8_t /*figures*/) {
   // Generation against today's forecast; hidden outright when there is none.
   s_edge = edge_bar_create(s_root);
 
-  lv_obj_t* caption = make_label(s_root, PUCK_FONT_BODY, PUCK_COLOUR_MUTED, -110, -132);
+  lv_obj_t* caption = make_label(s_root, PUCK_FONT_BODY, PUCK_COLOUR_MUTED, -110, -156);
   lv_label_set_text(caption, "GENERATED");
-  s_headline = make_label(s_root, PUCK_FONT_HERO, PUCK_COLOUR_TEXT, -110, -82);
+  s_headline = make_label(s_root, PUCK_FONT_HERO, PUCK_COLOUR_TEXT, -110, -106);
   lv_label_set_text(s_headline, "--");
-  lv_obj_t* unit = make_label(s_root, PUCK_FONT_BODY, PUCK_COLOUR_MUTED, -110, -40);
+  lv_obj_t* unit = make_label(s_root, PUCK_FONT_BODY, PUCK_COLOUR_MUTED, -110, -64);
   lv_label_set_text(unit, "kWh so far");
-  s_pill = make_label(s_root, PUCK_FONT_LARGE, PUCK_COLOUR_SOLAR, -110, 0);
+  s_pill = make_label(s_root, PUCK_FONT_LARGE, PUCK_COLOUR_SOLAR, -110, -24);
   lv_label_set_text(s_pill, "");
 
-  s_forecast = make_label(s_root, PUCK_FONT_LARGE, PUCK_COLOUR_TEXT, 150, -100);
+  // Top-right stats: the descriptor word small and muted above each figure, the
+  // number itself LARGE below — the word carries less than the value, so it reads
+  // smaller, matching "GENERATED" over the headline on the left.
+  s_forecast_caption = make_label(s_root, PUCK_FONT_SMALL, PUCK_COLOUR_MUTED, 150, -116);
+  lv_label_set_text(s_forecast_caption, "FORECAST");
+  s_forecast = make_label(s_root, PUCK_FONT_LARGE, PUCK_COLOUR_TEXT, 150, -90);
   lv_label_set_text(s_forecast, "");
-  s_remaining = make_label(s_root, PUCK_FONT_LARGE, PUCK_COLOUR_TEXT, 150, -52);
+  s_remaining_caption = make_label(s_root, PUCK_FONT_SMALL, PUCK_COLOUR_MUTED, 150, -48);
+  lv_label_set_text(s_remaining_caption, "REMAINING");
+  s_remaining = make_label(s_root, PUCK_FONT_LARGE, PUCK_COLOUR_TEXT, 150, -22);
   lv_label_set_text(s_remaining, "");
   return s_root;
 }
@@ -157,17 +166,22 @@ void screen_solar_update(const Snapshot& snapshot) {
     lv_obj_add_flag(s_pill, LV_OBJ_FLAG_HIDDEN);
   }
 
+  // The caption travels with its figure: no forecast, nothing to label.
   if (snapshot.valid && snapshot.solar.configured && snapshot.solar.forecast_kwh.known) {
-    snprintf(text, sizeof(text), "%.1f kWh forecast", snapshot.solar.forecast_kwh.value);
+    snprintf(text, sizeof(text), "%.1f kWh", snapshot.solar.forecast_kwh.value);
     lv_label_set_text(s_forecast, text);
+    lv_obj_clear_flag(s_forecast_caption, LV_OBJ_FLAG_HIDDEN);
   } else {
     lv_label_set_text(s_forecast, "");
+    lv_obj_add_flag(s_forecast_caption, LV_OBJ_FLAG_HIDDEN);
   }
   if (snapshot.valid && snapshot.solar.configured && snapshot.solar.remaining_kwh.known) {
-    snprintf(text, sizeof(text), "%.1f kWh to come", snapshot.solar.remaining_kwh.value);
+    snprintf(text, sizeof(text), "%.1f kWh", snapshot.solar.remaining_kwh.value);
     lv_label_set_text(s_remaining, text);
+    lv_obj_clear_flag(s_remaining_caption, LV_OBJ_FLAG_HIDDEN);
   } else {
     lv_label_set_text(s_remaining, "");
+    lv_obj_add_flag(s_remaining_caption, LV_OBJ_FLAG_HIDDEN);
   }
 }
 
