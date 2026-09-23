@@ -4,7 +4,9 @@
 
 #include "board_config.h"
 #include "chart_band.h"
+#include "forecast_store.h"
 #include "format.h"
+#include "history.h"
 #include "solar_metric_layout.h"
 #include "theme.h"
 
@@ -35,6 +37,11 @@ constexpr lv_coord_t BAND_CLIP_RADIUS = PUCK_RING_DIAMETER / 2 - PUCK_RING_WIDTH
 
 constexpr lv_opa_t BAND_GHOST = 110;
 
+// The forecast curve sits behind the actual, fainter still, so the still-to-come
+// half shows through where the actual has nothing yet. The same ratio to the
+// actual as the landscape screen keeps between its two bands.
+constexpr lv_opa_t FORECAST_GHOST = 46;
+
 // Wider than screen 2's: PV under broken cloud reduces to a picket fence, and
 // behind four figures that is noise rather than information. The day's shape is
 // what this is here to carry.
@@ -46,7 +53,10 @@ constexpr lv_coord_t ROW_ONE_VALUE_Y = 70;
 constexpr lv_coord_t ROW_TWO_LABEL_Y = 116;
 constexpr lv_coord_t ROW_TWO_VALUE_Y = 142;
 
+HistoryColumn s_forecast_cols[288];
+
 lv_obj_t* s_root = nullptr;
+lv_obj_t* s_forecast_band = nullptr;
 lv_obj_t* s_band = nullptr;
 lv_obj_t* s_arc = nullptr;
 lv_obj_t* s_generated = nullptr;
@@ -142,6 +152,18 @@ lv_obj_t* screen_solar_create(lv_obj_t* parent, uint8_t figures) {
   lv_obj_set_style_arc_color(s_arc, lv_color_hex(PUCK_COLOUR_SOLAR), LV_PART_INDICATOR);
   lv_obj_add_flag(s_arc, LV_OBJ_FLAG_HIDDEN);
 
+  // Created before the actual band so it draws behind it. Fed from forecast_store
+  // (the whole day, future included), not the history ring — see forecast_store.h.
+  // Same geometry and bezel clip as the actual, just fainter.
+  s_forecast_band = chart_band_create(s_root, HistorySeries::Pv, PUCK_COLOUR_SOLAR);
+  if (s_forecast_band != nullptr) {
+    lv_obj_set_size(s_forecast_band, BAND_WIDTH, BAND_HEIGHT);
+    lv_obj_align(s_forecast_band, LV_ALIGN_CENTER, 0, BAND_Y);
+    chart_band_set_intensity(s_forecast_band, FORECAST_GHOST);
+    chart_band_set_bezel_clip(s_forecast_band, BAND_CLIP_RADIUS);
+    chart_band_set_smoothing(s_forecast_band, BAND_SMOOTHING);
+  }
+
   s_band = chart_band_create(s_root, HistorySeries::Pv, PUCK_COLOUR_SOLAR);
   if (s_band != nullptr) {
     lv_obj_set_size(s_band, BAND_WIDTH, BAND_HEIGHT);
@@ -224,6 +246,27 @@ void screen_solar_update(const Snapshot& snapshot) {
 
   char text[48];
   char scratch[24];
+
+  // The forecast curve behind the actual generation, sharing its vertical scale
+  // so "generated so far" sits under the forecast line rather than being rescaled
+  // to its own smaller peak. Only on today's own day (forecast_store_columns
+  // refuses a stepped-back day) and only when the source supplies a forecast;
+  // otherwise the actual band goes back to auto-scaling on its own.
+  if (s_forecast_band != nullptr) {
+    uint32_t from = 0;
+    uint32_t to = 0;
+    float peak = 0.0f;
+    const size_t n = chart_band_column_count(s_forecast_band);
+    if (n > 0 && snapshot.valid && snapshot.solar.configured &&
+        history_window(history_view(), &from, &to) &&
+        forecast_store_columns(from, to, s_forecast_cols, n, &peak) && peak > 0.0f) {
+      chart_band_set_columns(s_forecast_band, s_forecast_cols, n, 0.0f, peak);
+      chart_band_set_range(s_band, 0.0f, peak);
+    } else {
+      chart_band_clear(s_forecast_band);
+      chart_band_set_range(s_band, 0.0f, 0.0f);  // no forecast: actual auto-scales
+    }
+  }
 
   if (s_band != nullptr) {
     chart_band_refresh(s_band);
