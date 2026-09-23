@@ -150,8 +150,9 @@ void screen_grid_update(const Snapshot& snapshot) {
     lv_obj_add_flag(s_pill, LV_OBJ_FLAG_HIDDEN);
   }
 
-  // Frequency and voltage: Modbus-only and live. The caption travels with its
-  // figure so the server source shows a clean gap, not two dangling labels.
+  // Frequency and voltage: live, and only where the source supplies them. The
+  // caption travels with its figure so a source without them shows a clean gap,
+  // not two dangling labels.
   const bool freq_known = s_live && snapshot.valid && snapshot.power.grid_freq_hz.known;
   if (freq_known) {
     snprintf(text, sizeof(text), "%.2f Hz", snapshot.power.grid_freq_hz.value);

@@ -386,16 +386,6 @@ void show_current_fixture() {
     return;
   }
 
-  // The Modbus source reads grid frequency and phase voltage from the inverter;
-  // the server fixtures carry neither, so synthesise them so the grid screen
-  // previews in full rather than with an empty top-right quadrant.
-  if (snapshot.valid) {
-    snapshot.power.grid_freq_hz.known = true;
-    snapshot.power.grid_freq_hz.value = 49.98f;
-    snapshot.power.grid_voltage_v.known = true;
-    snapshot.power.grid_voltage_v.value = 241.0f;
-  }
-
   lv_obj_set_style_text_color(s_body, lv_color_hex(COLOUR_TEXT), LV_PART_MAIN);
   lv_label_set_text(s_body, describe(snapshot).c_str());
   // Rebuilt per fixture, so stepping between them does not leave the previous

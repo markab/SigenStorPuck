@@ -352,6 +352,28 @@ void test_server_forecast() {
   check_near(snapshot.solar.peak_kw.value, 4.8f, "server forecast peak unchanged");
 }
 
+// Grid frequency and voltage arrive in /api/summary's power block from server
+// 0.26.0; an older server simply omits them, and they must stay unknown rather
+// than read as a 0 Hz grid.
+void test_server_grid_ac() {
+  printf("server grid AC\n");
+  const char* payload =
+      "{\"v\":1,\"ts\":1788970000,\"ok\":true,"
+      "\"power\":{\"grid\":-1.1,\"grid_freq_hz\":49.98,\"grid_voltage_v\":241.3}}";
+  Snapshot snapshot;
+  check(snapshot_parse(payload, strlen(payload), &snapshot), "server payload with grid AC parses");
+  check(snapshot.power.grid_freq_hz.known, "grid frequency read from the power block");
+  check_near(snapshot.power.grid_freq_hz.value, 49.98f, "grid frequency unchanged");
+  check(snapshot.power.grid_voltage_v.known, "grid voltage read from the power block");
+  check_near(snapshot.power.grid_voltage_v.value, 241.3f, "grid voltage unchanged");
+
+  const char* older = "{\"v\":1,\"ts\":1788970000,\"ok\":true,\"power\":{\"grid\":-1.1}}";
+  Snapshot old_snapshot;
+  check(snapshot_parse(older, strlen(older), &old_snapshot), "pre-0.26 payload parses");
+  check(!old_snapshot.power.grid_freq_hz.known && !old_snapshot.power.grid_voltage_v.known,
+        "an older server leaves grid frequency and voltage unknown");
+}
+
 void test_solar_metric_layout() {
   printf("solar metric layout\n");
   // Driven by what a source can supply, never by a reading. The type makes that
@@ -1725,6 +1747,7 @@ int run_selftest() {
   test_home_assistant_forecast();
   test_home_assistant_payload();
   test_server_forecast();
+  test_server_grid_ac();
   test_solar_metric_layout();
   test_decode();
   test_plan();

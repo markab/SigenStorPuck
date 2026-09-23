@@ -53,9 +53,10 @@ struct Snapshot {
   struct Power {
     MaybeFloat pv;     // kW from solar
     MaybeFloat grid;   // kW, >0 importing, <0 exporting
-    // AC grid measurements for the grid screen. Modbus only — read from the
-    // inverter's running-info block (31002, 31011); /api/summary carries neither,
-    // so they stay unknown on the server source.
+    // AC grid measurements for the grid screen, from the inverter's running-info
+    // block (31002, 31011): read directly on the Modbus source, and carried in
+    // /api/summary's power block from server 0.26.0. Unknown on HA and on older
+    // servers.
     MaybeFloat grid_freq_hz;    // grid frequency, Hz
     MaybeFloat grid_voltage_v;  // phase A voltage, V
     MaybeFloat batt;   // kW, >0 charging, <0 discharging

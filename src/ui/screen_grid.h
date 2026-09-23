@@ -6,11 +6,12 @@
 // day you step back to, while the live pill and the AC figures are hidden on a
 // past day because they are right-now values the server cannot date.
 //
-// Frequency and voltage come only from the Modbus source (read from the
-// inverter's running-info registers); /api/summary carries neither, so on the
-// server source those two stats stay empty and the rest of the screen stands on
-// its own. Built for both boards: src/ui/screen_grid.cpp is the round layout,
-// src/ui_landscape/screen_grid.cpp the wide one.
+// Frequency and voltage come from the inverter's running-info registers — read
+// directly on the Modbus source, and via /api/summary from server 0.26.0. Where
+// neither supplies them (Home Assistant, an older server) those two stats stay
+// empty and the rest of the screen stands on its own. Built for both boards:
+// src/ui/screen_grid.cpp is the round layout, src/ui_landscape/screen_grid.cpp
+// the wide one.
 
 #pragma once
 

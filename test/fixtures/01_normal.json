@@ -10,7 +10,9 @@
     "home": 1.12,
     "ev": 0.0,
     "plant": 2.22,
-    "off_grid": false
+    "off_grid": false,
+    "grid_freq_hz": 49.98,
+    "grid_voltage_v": 241.3
   },
   "battery": {
     "soc": 78.5,

@@ -65,6 +65,10 @@ bool snapshot_parse(const char* json, size_t length, Snapshot* out) {
   parsed.power.plant = maybe_float(power["plant"]);
   parsed.power.off_grid_known = !power["off_grid"].isNull();
   parsed.power.off_grid = power["off_grid"] | false;
+  // Absent from a server older than 0.26.0, which leaves the grid screen's
+  // top-right quadrant empty rather than showing a false zero.
+  parsed.power.grid_freq_hz = maybe_float(power["grid_freq_hz"]);
+  parsed.power.grid_voltage_v = maybe_float(power["grid_voltage_v"]);
 
   JsonVariantConst battery = doc["battery"];
   parsed.battery.soc_pct = maybe_float(battery["soc"]);
