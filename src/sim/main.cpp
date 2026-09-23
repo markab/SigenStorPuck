@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "board_config.h"
+#include "forecast_store.h"
 #include "history.h"
 #include "sim_backend.h"
 #include "snapshot.h"
@@ -332,6 +333,20 @@ void synthesise_history(const Snapshot& snapshot) {
       }
       history_put(HistoryBank::Live, HistorySeries::Soc, minute, soc);
     }
+  }
+
+  // A clear-sky forecast for the whole day, for the solar screen's "forecast
+  // ahead". Same bell as the actual but without the cloud, so it sits a little
+  // above the cloud-broken generation and runs on past now to dusk.
+  if (snapshot.power.pv.known && peak > 0.05f) {
+    const uint32_t day_start = end - static_cast<uint32_t>(end_local);
+    float slot_kwh[48];
+    for (int i = 0; i < 48; ++i) {
+      slot_kwh[i] = peak * solar_shape(i * 30 + 15) * 0.5f;  // kW * 0.5 h
+    }
+    forecast_store_set(slot_kwh, 48, day_start, 30);
+  } else {
+    forecast_store_clear();
   }
 }
 

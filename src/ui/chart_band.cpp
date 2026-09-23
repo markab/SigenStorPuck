@@ -14,8 +14,10 @@ namespace {
 constexpr lv_coord_t COLUMN_PX = 2;
 
 // Enough for a band spanning the whole panel, not just the safe square: a
-// bezel-clipped band is drawn edge to edge and lets the glass cut the ends.
-constexpr size_t MAX_COLUMNS = 240;  // a full-width band at COLUMN_PX
+// bezel-clipped band is drawn edge to edge and lets the glass cut the ends. The
+// 2.41's landscape band is 564 px wide (282 columns at COLUMN_PX), so this must
+// clear that or a wide band stops short of its right edge.
+constexpr size_t MAX_COLUMNS = 288;  // a full-width landscape band at COLUMN_PX
 
 // Three weights, which is what makes this an envelope rather than a silhouette:
 // a faint wash under the curve, the column's own min-to-max spread picked out a
@@ -384,6 +386,48 @@ void chart_band_set_range(lv_obj_t* obj, float min_value, float max_value) {
   band->range_min = min_value;
   band->range_max = max_value;
   band->last_minute = UINT32_MAX;  // the picture changes even if the data has not
+}
+
+void chart_band_set_columns(lv_obj_t* obj, const HistoryColumn* cols, size_t n,
+                            float drawn_min, float drawn_max) {
+  Band* band = band_for(obj);
+  if (band == nullptr) {
+    return;
+  }
+  // Externally-supplied columns, for a curve that does not live in the history
+  // ring — the solar forecast, whose future half the ring cannot hold. The band
+  // is never chart_band_refresh()ed; the screen feeds it this and it draws it.
+  if (n > MAX_COLUMNS) {
+    n = MAX_COLUMNS;
+  }
+  for (size_t i = 0; i < n; ++i) {
+    band->column[i] = cols[i];
+  }
+  band->columns = n;
+  band->has_data = n > 0;
+  band->drawn_min = drawn_min;
+  band->drawn_max = (drawn_max - drawn_min < MIN_SPAN) ? drawn_min + MIN_SPAN : drawn_max;
+  lv_obj_invalidate(obj);
+}
+
+void chart_band_clear(lv_obj_t* obj) {
+  Band* band = band_for(obj);
+  if (band == nullptr) {
+    return;
+  }
+  band->has_data = false;
+  band->columns = 0;
+  lv_obj_invalidate(obj);
+}
+
+size_t chart_band_column_count(lv_obj_t* obj) {
+  if (obj == nullptr) {
+    return 0;
+  }
+  lv_obj_update_layout(obj);
+  const lv_coord_t width = lv_obj_get_width(obj);
+  const size_t n = width > 0 ? static_cast<size_t>(width / COLUMN_PX) : 0;
+  return n > MAX_COLUMNS ? MAX_COLUMNS : n;
 }
 
 

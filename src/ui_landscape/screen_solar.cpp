@@ -11,7 +11,9 @@
 #include "board_config.h"
 #include "chart_band.h"
 #include "edge_bar.h"
+#include "forecast_store.h"
 #include "format.h"
+#include "history.h"
 #include "theme.h"
 
 namespace {
@@ -21,10 +23,14 @@ namespace {
 constexpr lv_coord_t BAND_WIDTH = 564;  // 00:00..24:00 touch the inner ring both sides
 constexpr lv_coord_t BAND_HEIGHT = 130;
 constexpr lv_coord_t BAND_Y = 108;   // lower strip, bottom clear of the ring corners
-constexpr lv_opa_t BAND_GHOST = 110;
+constexpr lv_opa_t BAND_GHOST = 130;      // the actual generation, more present
+constexpr lv_opa_t FORECAST_GHOST = 55;   // the forecast behind it, fainter
 constexpr uint8_t BAND_SMOOTHING = 7;
 
+HistoryColumn s_forecast_cols[288];
+
 lv_obj_t* s_root = nullptr;
+lv_obj_t* s_forecast_band = nullptr;
 lv_obj_t* s_band = nullptr;
 lv_obj_t* s_edge = nullptr;
 lv_obj_t* s_headline = nullptr;
@@ -54,7 +60,16 @@ lv_obj_t* screen_solar_create(lv_obj_t* parent, uint8_t /*figures*/) {
   lv_obj_set_style_bg_opa(s_root, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_center(s_root);
 
-  // The ghosted day chart, behind everything else.
+  // The forecast curve, faintest and behind, so the future half shows through
+  // where the actual has nothing yet. Fed from forecast_store, not the ring.
+  s_forecast_band = chart_band_create(s_root, HistorySeries::Pv, PUCK_COLOUR_SOLAR);
+  if (s_forecast_band != nullptr) {
+    lv_obj_set_size(s_forecast_band, BAND_WIDTH, BAND_HEIGHT);
+    lv_obj_align(s_forecast_band, LV_ALIGN_CENTER, 0, BAND_Y);
+    chart_band_set_intensity(s_forecast_band, FORECAST_GHOST);
+  }
+
+  // The actual generation so far, over the forecast.
   s_band = chart_band_create(s_root, HistorySeries::Pv, PUCK_COLOUR_SOLAR);
   if (s_band != nullptr) {
     lv_obj_set_size(s_band, BAND_WIDTH, BAND_HEIGHT);
@@ -86,6 +101,25 @@ lv_obj_t* screen_solar_create(lv_obj_t* parent, uint8_t /*figures*/) {
 void screen_solar_update(const Snapshot& snapshot) {
   if (s_root == nullptr) {
     return;
+  }
+
+  // The forecast curve behind the actual generation, sharing its vertical scale
+  // so "generated so far" sits under the forecast line rather than being rescaled
+  // to its own smaller peak. Only on today's own day (forecast_store_columns
+  // refuses a stepped-back day), and only when the source supplies a forecast.
+  if (s_forecast_band != nullptr) {
+    uint32_t from = 0;
+    uint32_t to = 0;
+    float peak = 0.0f;
+    const size_t n = chart_band_column_count(s_forecast_band);
+    if (n > 0 && history_window(history_view(), &from, &to) &&
+        forecast_store_columns(from, to, s_forecast_cols, n, &peak) && peak > 0.0f) {
+      chart_band_set_columns(s_forecast_band, s_forecast_cols, n, 0.0f, peak);
+      chart_band_set_range(s_band, 0.0f, peak);
+    } else {
+      chart_band_clear(s_forecast_band);
+      chart_band_set_range(s_band, 0.0f, 0.0f);  // no forecast: actual auto-scales
+    }
   }
   if (s_band != nullptr) {
     chart_band_refresh(s_band);
