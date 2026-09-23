@@ -128,20 +128,18 @@ void screen_grid_update(const Snapshot& snapshot) {
   }
 
   // The live import/export rate, from the same grid power the main screen shows.
-  // Hidden on a past day, where "now" is not what the totals are about.
-  if (s_live && snapshot.valid && snapshot.power.grid.known) {
+  // Hidden on a past day, where "now" is not what the totals are about, and when
+  // next to nothing is flowing either way — a meter's idle jitter needs no label.
+  if (s_live && snapshot.valid && snapshot.power.grid.known &&
+      fabsf(snapshot.power.grid.value) >= 0.05f) {
     const float g = snapshot.power.grid.value;
-    if (fabsf(g) < 0.05f) {
-      lv_label_set_text(s_pill, "grid balanced");
-    } else {
-      char num[16];
-      MaybeFloat mag;
-      mag.known = true;
-      mag.value = fabsf(g);
-      puck_format_magnitude(mag, PUCK_KW_DECIMALS, num, sizeof(num));
-      snprintf(text, sizeof(text), "%s kW %s", num, g > 0.0f ? "importing" : "exporting");
-      lv_label_set_text(s_pill, text);
-    }
+    char num[16];
+    MaybeFloat mag;
+    mag.known = true;
+    mag.value = fabsf(g);
+    puck_format_magnitude(mag, PUCK_KW_DECIMALS, num, sizeof(num));
+    snprintf(text, sizeof(text), "%s kW %s", num, g > 0.0f ? "importing" : "exporting");
+    lv_label_set_text(s_pill, text);
     lv_obj_clear_flag(s_pill, LV_OBJ_FLAG_HIDDEN);
   } else {
     lv_obj_add_flag(s_pill, LV_OBJ_FLAG_HIDDEN);
