@@ -78,6 +78,12 @@ struct Band {
 
 Band s_bands[MAX_BANDS];
 
+// Global draw pause. On a software-rotated panel a full-width band is hundreds of
+// draw_rects, and redrawing that on every frame of a tileview swipe is what makes
+// the swipe drag. Paused while a swipe is in flight (ui.cpp), the bands skip their
+// draw and the sliding frames stay light; they redraw once on release.
+bool s_paused = false;
+
 Band* band_for(lv_obj_t* obj) {
   if (obj == nullptr) {
     return nullptr;
@@ -86,6 +92,9 @@ Band* band_for(lv_obj_t* obj) {
 }
 
 void draw_band(lv_event_t* event) {
+  if (s_paused) {
+    return;
+  }
   lv_obj_t* obj = lv_event_get_target(event);
   Band* band = band_for(obj);
   if (band == nullptr || !band->has_data || band->columns == 0) {
@@ -349,6 +358,21 @@ lv_obj_t* chart_band_create(lv_obj_t* parent, HistorySeries series, uint32_t col
   lv_obj_set_user_data(obj, band);
   lv_obj_add_event_cb(obj, draw_band, LV_EVENT_DRAW_MAIN_END, nullptr);
   return obj;
+}
+
+void chart_band_pause_all(bool paused) {
+  if (s_paused == paused) {
+    return;
+  }
+  s_paused = paused;
+  // On resume, redraw every band once — the sliding frames drew nothing.
+  if (!paused) {
+    for (size_t i = 0; i < MAX_BANDS; ++i) {
+      if (s_bands[i].used && s_bands[i].obj != nullptr) {
+        lv_obj_invalidate(s_bands[i].obj);
+      }
+    }
+  }
 }
 
 void chart_band_set_range(lv_obj_t* obj, float min_value, float max_value) {

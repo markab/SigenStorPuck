@@ -42,7 +42,7 @@ constexpr lv_coord_t LEG_BOX_WIDTH = 150;
 // leg's position.
 constexpr lv_coord_t FLOW_INNER = 70;
 constexpr lv_coord_t FLOW_OUTER = 132;
-constexpr int FLOW_DOTS = 3;
+constexpr int FLOW_DOTS = 2;
 constexpr lv_coord_t FLOW_DOT_SIZE = 9;
 
 // Dot speed maps |kW| onto a travel period, so a heavy flow visibly runs faster
@@ -50,7 +50,9 @@ constexpr lv_coord_t FLOW_DOT_SIZE = 9;
 constexpr uint32_t FLOW_PERIOD_SLOW_MS = 2400;
 constexpr uint32_t FLOW_PERIOD_FAST_MS = 700;
 constexpr float FLOW_SPEED_FULL_KW = 6.0f;
-constexpr uint32_t FLOW_TICK_MS = 33;
+// 20 fps rather than 30. On the rotated panel each dot move is a small rotated
+// flush; fewer of them per second leaves headroom for the poll and swipes.
+constexpr uint32_t FLOW_TICK_MS = 50;
 
 enum LegId { LEG_SOLAR = 0, LEG_GRID, LEG_BATTERY, LEG_EV, LEG_HOME, LEG_COUNT };
 

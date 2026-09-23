@@ -21,6 +21,11 @@
 // reads without competing with the number in front of it.
 lv_obj_t* chart_band_create(lv_obj_t* parent, HistorySeries series, uint32_t colour);
 
+// Pauses (or resumes) drawing of every band. A paused band skips its draw
+// callback entirely, so a tileview swipe does not repaint hundreds of chart
+// slices per frame through the rotated flush. Resuming redraws each band once.
+void chart_band_pause_all(bool paused);
+
 // Fixes the vertical range. Pass max <= min to scale to whatever the window
 // holds, which is what PV wants; SoC wants a fixed 0-100 so the curve's height
 // means the same thing every time you look at it.

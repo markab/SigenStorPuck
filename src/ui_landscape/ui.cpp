@@ -5,6 +5,7 @@
 #include <time.h>
 
 #include "board_config.h"
+#include "chart_band.h"
 #include "history.h"
 #include "qr_block.h"
 #include "screen_battery.h"
@@ -287,6 +288,10 @@ void on_tile_changed(lv_event_t* /*event*/) {
 }
 
 void on_tile_scroll_begin(lv_event_t* event) {
+  // Freeze the ghosted charts for the whole drag-and-settle: on the rotated panel
+  // repainting hundreds of chart slices per slide frame is what made the swipe
+  // drag. They redraw once when it settles.
+  chart_band_pause_all(true);
   if (lv_anim_t* animation = lv_event_get_scroll_anim(event)) {
     lv_anim_set_time(animation, SWIPE_SETTLE_MS);
     ui_perf_swipe_settle(SWIPE_SETTLE_MS);
@@ -306,6 +311,8 @@ void on_tile_scroll_end(lv_event_t* /*event*/) {
   if (active == nullptr || lv_obj_get_scroll_x(s_tileview) != lv_obj_get_x(active)) {
     return;
   }
+  // Settled: let the charts draw again.
+  chart_band_pause_all(false);
   const int current = ui_current_screen();
   ui_perf_transition_ready(current, screen_has_chart(current));
 }
