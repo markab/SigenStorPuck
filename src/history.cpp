@@ -228,6 +228,12 @@ void history_record(const Snapshot& snapshot) {
     bank.ring[static_cast<size_t>(HistorySeries::Load)].sample[slot] =
         encode(snapshot.power.home.value + ev);
   }
+  // Signed: import positive, export negative. The grid screen's chart splits the
+  // two around a zero line.
+  if (snapshot.power.grid.known) {
+    bank.ring[static_cast<size_t>(HistorySeries::Grid)].sample[slot] =
+        encode(snapshot.power.grid.value);
+  }
 }
 
 uint32_t history_head_minute(HistoryBank which) {

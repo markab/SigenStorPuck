@@ -333,6 +333,19 @@ void synthesise_history(const Snapshot& snapshot) {
       }
       history_put(HistoryBank::Live, HistorySeries::Soc, minute, soc);
     }
+
+    // Grid: load minus generation, signed. Import (positive) morning and evening,
+    // export (negative) through the solar middle of the day — a bipolar curve for
+    // the grid screen's chart.
+    if (snapshot.power.grid.known) {
+      const float cloud =
+          overcast ? 0.35f + 0.5f * hash01(minute) : cloud_factor(minute, local);
+      const float pv_now = snapshot.power.pv.known ? peak * solar_shape(local) * cloud : 0.0f;
+      const float morning = expf(-powf((local - 450) / 90.0f, 2.0f));
+      const float evening = expf(-powf((local - 1140) / 120.0f, 2.0f));
+      const float load_now = 0.35f + 1.4f * morning + 2.2f * evening;
+      history_put(HistoryBank::Live, HistorySeries::Grid, minute, load_now - pv_now);
+    }
   }
 
   // A clear-sky forecast for the whole day, for the solar screen's "forecast
@@ -371,6 +384,16 @@ void show_current_fixture() {
     lv_obj_set_style_text_color(s_body, lv_color_hex(COLOUR_WARN), LV_PART_MAIN);
     ui_update(Snapshot{});
     return;
+  }
+
+  // The Modbus source reads grid frequency and phase voltage from the inverter;
+  // the server fixtures carry neither, so synthesise them so the grid screen
+  // previews in full rather than with an empty top-right quadrant.
+  if (snapshot.valid) {
+    snapshot.power.grid_freq_hz.known = true;
+    snapshot.power.grid_freq_hz.value = 49.98f;
+    snapshot.power.grid_voltage_v.known = true;
+    snapshot.power.grid_voltage_v.value = 241.0f;
   }
 
   lv_obj_set_style_text_color(s_body, lv_color_hex(COLOUR_TEXT), LV_PART_MAIN);

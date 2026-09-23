@@ -47,7 +47,10 @@ constexpr uint8_t MAX_SMOOTHING = 15;
 constexpr lv_coord_t CENTRE_X = PUCK_LCD_WIDTH / 2;
 constexpr lv_coord_t CENTRE_Y = PUCK_LCD_HEIGHT / 2;
 
-constexpr size_t MAX_BANDS = 4;
+// Enough for every band alive at once: battery (1), solar (2, actual + forecast),
+// load (1) and, on the landscape UI, grid (1). Each carries a MAX_COLUMNS reduce
+// cache, ~3.4 KB, so the pool is sized to what the screens actually build.
+constexpr size_t MAX_BANDS = 6;
 
 struct Band {
   bool used = false;
@@ -60,6 +63,13 @@ struct Band {
   lv_opa_t intensity = LV_OPA_COVER;
   uint8_t smoothing = 1;
   lv_coord_t clip_radius = 0;
+
+  // Bipolar: a signed series drawn about a centre zero line, filling up in
+  // `colour` for positive and down in `colour_neg` for negative. The range is
+  // forced symmetric so the baseline sits at the band's middle. Used by the grid
+  // screen, where positive is import and negative export.
+  bool bipolar = false;
+  uint32_t colour_neg = 0;
 
   // The reduced window, cached.
   //
@@ -93,6 +103,78 @@ Band* band_for(lv_obj_t* obj) {
   return static_cast<Band*>(lv_obj_get_user_data(obj));
 }
 
+// A signed series about a centre zero line: positive fills up in `colour`,
+// negative down in `colour_neg`, with a faint rule on zero. A ghosted backdrop
+// like the others, so flat intensity fills rather than the monopolar gradient,
+// and no bezel clip — the grid screen is the rectangular 2.41 panel. A column
+// whose envelope straddles zero draws both halves, so a minute that swung from
+// import to export shows as both.
+void draw_band_bipolar(lv_draw_ctx_t* ctx, Band* band, const lv_area_t& coords,
+                       lv_coord_t height) {
+  const float span = band->drawn_max - band->drawn_min;
+  const float scale = static_cast<float>(height - 1) / (span < MIN_SPAN ? MIN_SPAN : span);
+  const auto y_of = [&](float v) -> lv_coord_t {
+    lv_coord_t y = coords.y2 - static_cast<lv_coord_t>((v - band->drawn_min) * scale);
+    if (y < coords.y1) {
+      y = coords.y1;
+    }
+    if (y > coords.y2) {
+      y = coords.y2;
+    }
+    return y;
+  };
+  const lv_coord_t baseline = y_of(0.0f);
+
+  lv_draw_rect_dsc_t imp;
+  lv_draw_rect_dsc_init(&imp);
+  imp.bg_color = lv_color_hex(band->colour);
+  imp.bg_opa = band->intensity;
+  lv_draw_rect_dsc_t exp;
+  lv_draw_rect_dsc_init(&exp);
+  exp.bg_color = lv_color_hex(band->colour_neg);
+  exp.bg_opa = band->intensity;
+
+  for (size_t c = 0; c < band->columns; ++c) {
+    if (!band->column[c].known) {
+      continue;
+    }
+    const lv_coord_t x = coords.x1 + static_cast<lv_coord_t>(c) * COLUMN_PX;
+    if (x > coords.x2) {
+      break;
+    }
+    lv_area_t area;
+    area.x1 = x;
+    area.x2 = x + COLUMN_PX - 1;
+    if (area.x2 > coords.x2) {
+      area.x2 = coords.x2;
+    }
+    const float hi = band->column[c].max_value;
+    const float lo = band->column[c].min_value;
+    if (hi > 0.0f) {
+      area.y1 = y_of(hi);
+      area.y2 = baseline;
+      lv_draw_rect(ctx, &imp, &area);
+    }
+    if (lo < 0.0f) {
+      area.y1 = baseline;
+      area.y2 = y_of(lo);
+      lv_draw_rect(ctx, &exp, &area);
+    }
+  }
+
+  // The zero line, so import above and export below read against a fixed datum.
+  lv_draw_rect_dsc_t zero;
+  lv_draw_rect_dsc_init(&zero);
+  zero.bg_color = lv_color_hex(PUCK_COLOUR_MUTED);
+  zero.bg_opa = LV_OPA_40;
+  lv_area_t line;
+  line.x1 = coords.x1;
+  line.x2 = coords.x2;
+  line.y1 = baseline;
+  line.y2 = baseline;
+  lv_draw_rect(ctx, &zero, &line);
+}
+
 void draw_band(lv_event_t* event) {
   if (s_paused) {
     return;
@@ -110,6 +192,11 @@ void draw_band(lv_event_t* event) {
 
   const lv_coord_t height = lv_area_get_height(&coords);
   if (height <= 0) {
+    return;
+  }
+
+  if (band->bipolar) {
+    draw_band_bipolar(ctx, band, coords, height);
     return;
   }
 
@@ -463,6 +550,17 @@ void chart_band_set_intensity(lv_obj_t* obj, lv_opa_t intensity) {
   lv_obj_invalidate(obj);
 }
 
+void chart_band_set_bipolar(lv_obj_t* obj, bool on, uint32_t colour_neg) {
+  Band* band = band_for(obj);
+  if (band == nullptr) {
+    return;
+  }
+  band->bipolar = on;
+  band->colour_neg = colour_neg;
+  band->last_minute = UINT32_MAX;  // the scale becomes symmetric; re-reduce
+  lv_obj_invalidate(obj);
+}
+
 void chart_band_refresh(lv_obj_t* obj) {
   Band* band = band_for(obj);
   if (band == nullptr) {
@@ -547,7 +645,16 @@ void chart_band_refresh(lv_obj_t* obj) {
   band->last_generation = generation;
   band->last_revision = revision;
 
-  if (band->autoscale) {
+  if (band->bipolar) {
+    // Symmetric about zero, so the baseline is the band's centre and a kW of
+    // import stands as tall above it as a kW of export hangs below.
+    float m = highest > 0.0f ? highest : 0.0f;
+    if (-lowest > m) {
+      m = -lowest;
+    }
+    band->drawn_min = -m;
+    band->drawn_max = m;
+  } else if (band->autoscale) {
     // Anchored at zero for a series that never goes negative, so the height of
     // the curve stays proportional to the reading rather than to its spread —
     // a quiet day should look quiet, not be stretched to fill the band.

@@ -37,6 +37,7 @@ enum class HistorySeries : uint8_t {
   Pv,    // kW from solar
   Soc,   // battery state of charge, %
   Load,  // kW consumed, house and EV together
+  Grid,  // kW at the grid, signed: >0 importing, <0 exporting
   Count,
 };
 

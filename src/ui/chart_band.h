@@ -51,6 +51,13 @@ void chart_band_set_range(lv_obj_t* band, float min_value, float max_value);
 // strong so the shape of the day still reads through the text on top.
 void chart_band_set_intensity(lv_obj_t* band, lv_opa_t intensity);
 
+// Switches a band to bipolar: a signed series drawn about a centre zero line,
+// filling up in the band's `colour` for positive readings and down in
+// `colour_neg` for negative ones, with a faint rule on zero. The vertical range
+// is forced symmetric so the baseline sits at the band's middle. This is what the
+// grid screen uses to draw import above the line and export below it.
+void chart_band_set_bipolar(lv_obj_t* band, bool on, uint32_t colour_neg);
+
 // Confines the band to a circle centred on the display, radius `radius`; 0 (the
 // default) leaves it rectangular.
 //
