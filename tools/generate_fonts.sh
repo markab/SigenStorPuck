@@ -26,7 +26,10 @@ RANGE="0x20-0x7E,0xA3,0xB0,0xB7"
 # 4 bits per pixel matches LVGL's own built-in Montserrat antialiasing.
 BPP=4
 
-SIZES=(14 20 28 48)
+# The base sizes (14/20/28/48) are the round board's; the +4 set (18/24/32/52)
+# is the 2.41 landscape board's, which runs every text role one step larger for
+# readability at arm's length — see the PUCK_BOARD_2P41 remap in src/ui/theme.h.
+SIZES=(14 18 20 24 28 32 48 52)
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 out_dir="${repo_root}/src/ui/fonts"

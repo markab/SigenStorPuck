@@ -85,11 +85,18 @@
 //
 // The built-ins stay off: carrying two near-identical Montserrats would waste
 // flash and make it easy to reach for the one that cannot render a pound sign.
+// The base sizes are the round board's; the +4 set (18/24/32/52) is the 2.41
+// landscape board's, one step larger for readability — see theme.h. Both sets
+// are declared in every build; the linker drops whichever the board doesn't use.
 #define LV_FONT_CUSTOM_DECLARE \
   LV_FONT_DECLARE(puck_font_14) \
+  LV_FONT_DECLARE(puck_font_18) \
   LV_FONT_DECLARE(puck_font_20) \
+  LV_FONT_DECLARE(puck_font_24) \
   LV_FONT_DECLARE(puck_font_28) \
-  LV_FONT_DECLARE(puck_font_48)
+  LV_FONT_DECLARE(puck_font_32) \
+  LV_FONT_DECLARE(puck_font_48) \
+  LV_FONT_DECLARE(puck_font_52)
 
 #define LV_FONT_DEFAULT &puck_font_20
 
