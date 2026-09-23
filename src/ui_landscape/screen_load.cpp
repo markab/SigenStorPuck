@@ -1,9 +1,13 @@
 // Screen (swiped 4th), landscape: the day's consumption for the 2.41" board.
 //
-// Headline consumption over a ghosted day curve, with a live draw pill. No ring
-// (as on the round board — consumption has no ceiling). The band is ghosted
-// lower than the others because the near-white home colour reads far brighter at
-// the same opacity.
+// Headline consumption over a ghosted day curve, with a live draw pill. The band
+// is ghosted lower than the others because the near-white home colour reads far
+// brighter at the same opacity.
+//
+// The bezel ring here is self-sufficiency, not consumption: consumption has no
+// ceiling to be a fraction of, but the share of it met without the grid is a
+// clean 0..100%, so it earns a ring. Drawn only when the source carries the day's
+// flow split; hidden otherwise, like the figure beside it.
 
 #include "screen_load.h"
 
@@ -12,6 +16,7 @@
 
 #include "board_config.h"
 #include "chart_band.h"
+#include "edge_bar.h"
 #include "format.h"
 #include "theme.h"
 
@@ -25,6 +30,7 @@ constexpr uint8_t BAND_SMOOTHING = 7;
 
 lv_obj_t* s_root = nullptr;
 lv_obj_t* s_band = nullptr;
+lv_obj_t* s_edge = nullptr;
 lv_obj_t* s_headline = nullptr;
 lv_obj_t* s_pill = nullptr;
 lv_obj_t* s_selfsuff_caption = nullptr;
@@ -63,6 +69,10 @@ lv_obj_t* screen_load_create(lv_obj_t* parent, bool with_breakdown) {
     chart_band_set_intensity(s_band, BAND_GHOST);
     chart_band_set_smoothing(s_band, BAND_SMOOTHING);
   }
+
+  // Self-sufficiency traces the bezel; hidden until there is a figure for it.
+  s_edge = edge_bar_create(s_root);
+  edge_bar_set_hidden(s_edge, true);
 
   // Same top-quadrant layout as the solar screen: left column of caption /
   // headline / unit / pill, top lines at -156.
@@ -133,10 +143,13 @@ void screen_load_update(const Snapshot& snapshot) {
     lv_label_set_text(s_selfsuff, text);
     lv_obj_clear_flag(s_selfsuff_caption, LV_OBJ_FLAG_HIDDEN);
     lv_obj_clear_flag(s_selfsuff, LV_OBJ_FLAG_HIDDEN);
+    edge_bar_set_hidden(s_edge, false);
+    edge_bar_set(s_edge, pct / 100.0f, PUCK_COLOUR_HOME);
   } else {
     lv_label_set_text(s_selfsuff, "");
     lv_obj_add_flag(s_selfsuff_caption, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(s_selfsuff, LV_OBJ_FLAG_HIDDEN);
+    edge_bar_set_hidden(s_edge, true);
   }
 }
 
