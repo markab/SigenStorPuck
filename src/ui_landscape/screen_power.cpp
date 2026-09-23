@@ -29,8 +29,8 @@ struct LegPos {
   lv_coord_t dx;
   lv_coord_t dy;
 };
-constexpr LegPos POS_SOLAR = {-165, -105};
-constexpr LegPos POS_GRID = {0, -151};
+constexpr LegPos POS_SOLAR = {0, -151};     // top-centre apex — the array leads
+constexpr LegPos POS_GRID = {-165, -105};   // top-left
 constexpr LegPos POS_BATTERY = {165, -105};
 constexpr LegPos POS_EV = {-165, 105};
 constexpr LegPos POS_HOME = {165, 105};
