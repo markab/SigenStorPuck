@@ -7,6 +7,7 @@
 #include <time.h>
 
 #include "board_config.h"
+#include "forecast_store.h"
 #include "settings.h"
 #include "solar_forecast.h"
 
@@ -110,6 +111,16 @@ void recompute(const SolarSite& site) {
   solar_forecast_day(site, s_day_start, s_hours, s_hour_count, s_day_start, s_slot_kwh);
   s_computed_for = site;
   s_have_forecast = true;
+
+  // The whole-day curve for the solar screen's "forecast ahead", as average kW
+  // per slot. s_day_start is local-midnight epoch seconds; the store indexes in
+  // unix-minutes like history.
+  float slot_kw[SOLAR_SLOTS_PER_DAY];
+  const float hours = static_cast<float>(SOLAR_SLOT_MINUTES) / 60.0f;
+  for (size_t i = 0; i < SOLAR_SLOTS_PER_DAY; ++i) {
+    slot_kw[i] = s_slot_kwh[i] / hours;
+  }
+  forecast_store_set(slot_kw, SOLAR_SLOTS_PER_DAY, s_day_start / 60);
 
   const SolarSummary summary =
       solar_summarise(s_slot_kwh, s_day_start, static_cast<uint32_t>(time(nullptr)));

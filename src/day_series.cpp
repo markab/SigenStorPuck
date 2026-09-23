@@ -2,6 +2,7 @@
 
 #include <ArduinoJson.h>
 
+#include "forecast_store.h"
 #include "history.h"
 
 namespace {
@@ -9,6 +10,11 @@ namespace {
 // A day at the finest slot the server offers is 288 entries a series. Anything
 // claiming more than a day of slots is not a day payload.
 constexpr size_t MAX_SLOTS = 1440;
+
+// The forecast curve is stored whole rather than reduced into columns, so this
+// caps the array we hand forecast_store_set. 288 five-minute slots is the finest
+// a day is ever cut into; a little slack over that.
+constexpr size_t MAX_FORECAST_SLOTS = 300;
 
 // Writes one slot's value across every minute it covers.
 //
@@ -48,6 +54,29 @@ void fill_series(HistoryBank bank, HistorySeries series, JsonArrayConst values,
   }
 }
 
+// Files today's whole-day PV forecast into forecast_store, for the solar screen
+// to draw ahead of now. Unlike the recorded series this is NOT cut at
+// now_minute: "the forecast ahead" is precisely the unelapsed half, and the
+// store keeps the full curve. An absent or empty array clears the store, so a
+// server without the forecast (older than 0.19.0) leaves no stale curve behind.
+void store_forecast(JsonArrayConst forecast_kw, uint32_t first_minute) {
+  if (forecast_kw.isNull() || forecast_kw.size() == 0) {
+    forecast_store_clear();
+    return;
+  }
+  // Poll-task only (sigen_api_fetch_day and the single-threaded selftest), so a
+  // static scratch buffer keeps it off a stack the Recorder path guards closely.
+  static float slots[MAX_FORECAST_SLOTS];
+  size_t count = 0;
+  for (JsonVariantConst value : forecast_kw) {
+    if (count >= MAX_FORECAST_SLOTS) {
+      break;
+    }
+    slots[count++] = value.isNull() ? 0.0f : value.as<float>();
+  }
+  forecast_store_set(slots, count, first_minute);
+}
+
 }  // namespace
 
 bool day_series_parse(HistoryBank bank, const char* json, size_t length, uint32_t now_minute) {
@@ -81,5 +110,12 @@ bool day_series_parse(HistoryBank bank, const char* json, size_t length, uint32_
   // fill from live polls as it did before.
   fill_series(bank, HistorySeries::Load, doc["load_kw"].as<JsonArrayConst>(), first_minute,
               static_cast<uint32_t>(slot_minutes), now_minute);
+
+  // Only today carries a forecast worth drawing ahead — a stepped-back day's
+  // payload leaves the store untouched, and the solar screen refuses a forecast
+  // on any day but today anyway (forecast_store_columns).
+  if (bank == HistoryBank::Live) {
+    store_forecast(doc["forecast_kw"].as<JsonArrayConst>(), first_minute);
+  }
   return true;
 }

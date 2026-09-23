@@ -2,32 +2,29 @@
 
 namespace {
 
-constexpr size_t MAX_SLOTS = 50;  // 48 half-hour slots in a day, plus slack
+constexpr size_t MAX_SLOTS = 300;  // 288 five-minute slots in a day, plus slack
+constexpr float DAY_MINUTES = 1440.0f;
 
 float s_slot_kw[MAX_SLOTS] = {};
 size_t s_slots = 0;
 uint32_t s_day_start = 0;   // local midnight, unix-minutes
-uint32_t s_slot_minutes = 30;
 bool s_valid = false;
 
 }  // namespace
 
-void forecast_store_set(const float* slot_kwh, size_t slots, uint32_t day_start_minute,
-                        uint32_t slot_minutes) {
-  if (slot_kwh == nullptr || slots == 0 || slot_minutes == 0) {
+void forecast_store_set(const float* slot_kw, size_t slots, uint32_t day_start_minute) {
+  if (slot_kw == nullptr || slots == 0) {
     forecast_store_clear();
     return;
   }
   if (slots > MAX_SLOTS) {
     slots = MAX_SLOTS;
   }
-  const float hours = static_cast<float>(slot_minutes) / 60.0f;
   for (size_t i = 0; i < slots; ++i) {
-    s_slot_kw[i] = slot_kwh[i] / hours;  // energy per slot -> average kW in the slot
+    s_slot_kw[i] = slot_kw[i];
   }
   s_slots = slots;
   s_day_start = day_start_minute;
-  s_slot_minutes = slot_minutes;
   s_valid = true;
 }
 
@@ -50,7 +47,8 @@ bool forecast_store_columns(uint32_t from_minute, uint32_t to_minute, HistoryCol
   }
 
   const float span_min = static_cast<float>(to_minute - from_minute);
-  const float per_min = 1.0f / static_cast<float>(s_slot_minutes);
+  // Slots cover the whole day, so a minute maps to slots/1440 of a slot.
+  const float per_min = static_cast<float>(s_slots) / DAY_MINUTES;
   const float last = static_cast<float>(s_slots - 1);
   float peak = 0.0f;
 

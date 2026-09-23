@@ -340,11 +340,11 @@ void synthesise_history(const Snapshot& snapshot) {
   // above the cloud-broken generation and runs on past now to dusk.
   if (snapshot.power.pv.known && peak > 0.05f) {
     const uint32_t day_start = end - static_cast<uint32_t>(end_local);
-    float slot_kwh[48];
+    float slot_kw[48];
     for (int i = 0; i < 48; ++i) {
-      slot_kwh[i] = peak * solar_shape(i * 30 + 15) * 0.5f;  // kW * 0.5 h
+      slot_kw[i] = peak * solar_shape(i * 30 + 15);  // average kW in the slot
     }
-    forecast_store_set(slot_kwh, 48, day_start, 30);
+    forecast_store_set(slot_kw, 48, day_start);
   } else {
     forecast_store_clear();
   }

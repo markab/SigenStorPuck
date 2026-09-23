@@ -13,12 +13,13 @@
 
 #include "history.h"  // HistoryColumn
 
-// Sets the forecast: `slot_kwh` is per-slot energy for one local day starting at
-// `day_start_minute` (local midnight, in unix-minutes, the same index space the
-// history ring uses), `slot_minutes` the slot length. Stored internally as kW so
-// it charts on the same axis as the actual PV. Passing an empty array clears it.
-void forecast_store_set(const float* slot_kwh, size_t slots, uint32_t day_start_minute,
-                        uint32_t slot_minutes);
+// Sets the forecast: `slot_kw` is the average kW in each slot of one local day
+// starting at `day_start_minute` (local midnight, in unix-minutes, the same index
+// space the history ring uses). The slots are taken to cover the whole day, so a
+// slot's length is 1440 / `slots` minutes — a 48-slot half-hourly feed and a
+// 288-slot five-minute feed both work. kW, matching solar_kw and the actual PV
+// chart. Passing an empty array clears it.
+void forecast_store_set(const float* slot_kw, size_t slots, uint32_t day_start_minute);
 void forecast_store_clear();
 
 // Fills `columns` reduced columns for the window [from_minute, to_minute) by

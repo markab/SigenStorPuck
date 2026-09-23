@@ -16,6 +16,7 @@
 #include "button_gesture.h"
 #include "day_series.h"
 #include "display_rotation.h"
+#include "forecast_store.h"
 #include "history.h"
 #include "history_backfill_retry.h"
 #include "home_assistant.h"
@@ -1298,7 +1299,43 @@ void test_day_series() {
   check(!day_series_parse(HistoryBank::Live, "{\"slot_minutes\":15}", 19, now), "a payload with no day is rejected");
   check(!day_series_parse(HistoryBank::Live, json, strlen(json), 0), "no clock means nothing is filed");
 
+  // forecast_kw, when present, feeds forecast_store for the solar screen to draw
+  // ahead of now — and unlike the recorded series it is stored for the whole day,
+  // future slots included, because "the forecast ahead" is precisely the
+  // unelapsed half. Four coarse slots stand in for the day's ninety-six.
+  forecast_store_clear();
+  char with_fc[640];
+  snprintf(with_fc, sizeof(with_fc),
+           "{\"slot_minutes\":15,\"day_start\":%u,\"tz_offset_min\":60,"
+           "\"solar_kw\":[0.0,1.5,3.0,4.5],"
+           "\"soc_pct\":[null,40.0,55.0,70.0],"
+           "\"forecast_kw\":[1.0,2.0,4.0,3.0]}",
+           static_cast<unsigned>(day_start));
+  check(day_series_parse(HistoryBank::Live, with_fc, strlen(with_fc), now),
+        "a payload carrying a forecast parses");
+  HistoryColumn fcols[4];
+  float fpeak = 0.0f;
+  check(forecast_store_columns(midnight_minute, midnight_minute + 1440, fcols, 4, &fpeak),
+        "the forecast covers the payload's own day");
+  check(fpeak > 0.0f, "the forecast has a nonzero peak");
+  check(fcols[3].known, "the forecast is stored past now, to the day's end");
+
+  // A later payload with no forecast clears the store, so a source that stops
+  // sending one leaves no stale curve on the glass.
+  check(day_series_parse(HistoryBank::Live, json, strlen(json), now),
+        "a forecast-less payload still parses");
+  check(!forecast_store_columns(midnight_minute, midnight_minute + 1440, fcols, 4, &fpeak),
+        "the forecast store clears when the payload drops it");
+
+  // A stepped-back day never feeds the forecast store — it is today's alone.
+  check(day_series_parse(HistoryBank::Day, with_fc, strlen(with_fc), now),
+        "a past-day payload parses into the Day ring");
+  check(!forecast_store_columns(midnight_minute, midnight_minute + 1440, fcols, 4, &fpeak),
+        "a past-day payload leaves the forecast store untouched");
+  forecast_store_clear();
+
   history_reset(HistoryBank::Live);
+  history_reset(HistoryBank::Day);
 }
 
 // The two rings are the point of HistoryBank: one ring cannot hold two days,

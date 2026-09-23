@@ -112,7 +112,8 @@ void screen_solar_update(const Snapshot& snapshot) {
     uint32_t to = 0;
     float peak = 0.0f;
     const size_t n = chart_band_column_count(s_forecast_band);
-    if (n > 0 && history_window(history_view(), &from, &to) &&
+    if (n > 0 && snapshot.valid && snapshot.solar.configured &&
+        history_window(history_view(), &from, &to) &&
         forecast_store_columns(from, to, s_forecast_cols, n, &peak) && peak > 0.0f) {
       chart_band_set_columns(s_forecast_band, s_forecast_cols, n, 0.0f, peak);
       chart_band_set_range(s_band, 0.0f, peak);
