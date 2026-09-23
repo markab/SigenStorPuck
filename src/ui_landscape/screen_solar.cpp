@@ -67,18 +67,18 @@ lv_obj_t* screen_solar_create(lv_obj_t* parent, uint8_t /*figures*/) {
   // Generation against today's forecast; hidden outright when there is none.
   s_edge = edge_bar_create(s_root);
 
-  lv_obj_t* caption = make_label(s_root, PUCK_FONT_BODY, PUCK_COLOUR_MUTED, -110, -108);
+  lv_obj_t* caption = make_label(s_root, PUCK_FONT_BODY, PUCK_COLOUR_MUTED, -110, -132);
   lv_label_set_text(caption, "GENERATED");
-  s_headline = make_label(s_root, PUCK_FONT_HERO, PUCK_COLOUR_TEXT, -110, -58);
+  s_headline = make_label(s_root, PUCK_FONT_HERO, PUCK_COLOUR_TEXT, -110, -82);
   lv_label_set_text(s_headline, "--");
-  lv_obj_t* unit = make_label(s_root, PUCK_FONT_BODY, PUCK_COLOUR_MUTED, -110, -16);
+  lv_obj_t* unit = make_label(s_root, PUCK_FONT_BODY, PUCK_COLOUR_MUTED, -110, -40);
   lv_label_set_text(unit, "kWh so far");
-  s_pill = make_label(s_root, PUCK_FONT_LARGE, PUCK_COLOUR_SOLAR, -110, 26);
+  s_pill = make_label(s_root, PUCK_FONT_LARGE, PUCK_COLOUR_SOLAR, -110, 0);
   lv_label_set_text(s_pill, "");
 
-  s_forecast = make_label(s_root, PUCK_FONT_LARGE, PUCK_COLOUR_TEXT, 150, -76);
+  s_forecast = make_label(s_root, PUCK_FONT_LARGE, PUCK_COLOUR_TEXT, 150, -100);
   lv_label_set_text(s_forecast, "");
-  s_remaining = make_label(s_root, PUCK_FONT_LARGE, PUCK_COLOUR_TEXT, 150, -28);
+  s_remaining = make_label(s_root, PUCK_FONT_LARGE, PUCK_COLOUR_TEXT, 150, -52);
   lv_label_set_text(s_remaining, "");
   return s_root;
 }

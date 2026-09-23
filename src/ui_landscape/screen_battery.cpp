@@ -66,16 +66,16 @@ lv_obj_t* screen_battery_create(lv_obj_t* parent) {
 
   s_edge = edge_bar_create(s_root);
 
-  lv_obj_t* caption = make_label(s_root, PUCK_FONT_BODY, PUCK_COLOUR_MUTED, -110, -108);
+  lv_obj_t* caption = make_label(s_root, PUCK_FONT_BODY, PUCK_COLOUR_MUTED, -110, -132);
   lv_label_set_text(caption, "STATE OF CHARGE");
-  s_headline = make_label(s_root, PUCK_FONT_HERO, PUCK_COLOUR_TEXT, -110, -58);
+  s_headline = make_label(s_root, PUCK_FONT_HERO, PUCK_COLOUR_TEXT, -110, -82);
   lv_label_set_text(s_headline, "--%");
-  s_stored = make_label(s_root, PUCK_FONT_BODY, PUCK_COLOUR_MUTED, -110, -16);
+  s_stored = make_label(s_root, PUCK_FONT_BODY, PUCK_COLOUR_MUTED, -110, -40);
   lv_label_set_text(s_stored, "");
-  s_pill = make_label(s_root, PUCK_FONT_LARGE, PUCK_COLOUR_BATTERY, -110, 26);
+  s_pill = make_label(s_root, PUCK_FONT_LARGE, PUCK_COLOUR_BATTERY, -110, 0);
   lv_label_set_text(s_pill, "");
 
-  s_health = make_label(s_root, PUCK_FONT_LARGE, PUCK_COLOUR_TEXT, 150, -78);
+  s_health = make_label(s_root, PUCK_FONT_LARGE, PUCK_COLOUR_TEXT, 150, -100);
   lv_label_set_text(s_health, "");
   return s_root;
 }
