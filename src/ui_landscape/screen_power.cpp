@@ -38,10 +38,13 @@ constexpr LegPos POS_HOME = {165, 105};
 constexpr lv_coord_t LEG_BOX_WIDTH = 150;
 
 // The channel the flow dots travel down: from just outside the hub (FLOW_INNER)
-// to short of the leg text (FLOW_OUTER), along the line from the centre to the
-// leg's position.
-constexpr lv_coord_t FLOW_INNER = 70;
-constexpr lv_coord_t FLOW_OUTER = 132;
+// to a fixed margin short of each leg's text, along the line from the centre to
+// the leg's position. The outer end is per-leg (leg distance minus
+// LEG_TEXT_MARGIN) rather than a fixed radius, so a far corner leg and the nearer
+// top leg leave the same small gap to their label instead of the corner cutting
+// off early with a long empty run.
+constexpr lv_coord_t FLOW_INNER = 56;
+constexpr lv_coord_t LEG_TEXT_MARGIN = 50;
 constexpr int FLOW_DOTS = 2;
 constexpr lv_coord_t FLOW_DOT_SIZE = 9;
 
@@ -131,10 +134,11 @@ void build_leg(LegId id, const char* name, uint32_t colour, LegPos pos) {
                         static_cast<float>(pos.dy) * pos.dy);
   const float ux = d > 0.0f ? pos.dx / d : 0.0f;
   const float uy = d > 0.0f ? pos.dy / d : 0.0f;
+  const float outer = d - static_cast<float>(LEG_TEXT_MARGIN);
   leg.inner.x = static_cast<lv_coord_t>(CENTRE_X + lroundf(ux * FLOW_INNER));
   leg.inner.y = static_cast<lv_coord_t>(CENTRE_Y + lroundf(uy * FLOW_INNER));
-  leg.outer.x = static_cast<lv_coord_t>(CENTRE_X + lroundf(ux * FLOW_OUTER));
-  leg.outer.y = static_cast<lv_coord_t>(CENTRE_Y + lroundf(uy * FLOW_OUTER));
+  leg.outer.x = static_cast<lv_coord_t>(CENTRE_X + lroundf(ux * outer));
+  leg.outer.y = static_cast<lv_coord_t>(CENTRE_Y + lroundf(uy * outer));
 
   for (int i = 0; i < FLOW_DOTS; ++i) {
     lv_obj_t* dot = make_group(s_root);
@@ -269,7 +273,7 @@ lv_obj_t* screen_power_create(lv_obj_t* parent) {
 
   // The virtual plant node: inverter and gateway as one, a hairline disc.
   lv_obj_t* hub = make_group(s_root);
-  lv_obj_set_size(hub, 120, 120);
+  lv_obj_set_size(hub, 104, 104);
   lv_obj_center(hub);
   lv_obj_set_style_radius(hub, LV_RADIUS_CIRCLE, LV_PART_MAIN);
   lv_obj_set_style_border_width(hub, 1, LV_PART_MAIN);
