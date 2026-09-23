@@ -4,9 +4,10 @@
 // The round screen's Sankey, re-laid for a wide rectangle: three source nodes
 // down the left, four sink nodes down the right, one ribbon per flow whose
 // thickness is the energy that took that path. A colour is always a node, and a
-// ribbon takes the colour of the node it leaves. Self-sufficiency is the edge bar
-// round the bezel plus the hero figure. See src/ui/screen_flows.cpp for the full
-// reasoning behind the fixed rows, the one-scale rule and the colour convention.
+// ribbon takes the colour of the node it leaves. Self-sufficiency used to sit at
+// the top of this screen as a ring and a hero figure; it now lives in the load
+// screen's top-right, leaving the whole height here for the diagram. See
+// src/ui/screen_flows.cpp for the fixed rows, one-scale rule and colour rule.
 
 #include "screen_flows.h"
 
@@ -14,22 +15,24 @@
 #include <stdio.h>
 
 #include "board_config.h"
-#include "edge_bar.h"
 #include "format.h"
 #include "theme.h"
 
 namespace {
 
 // Fixed rows for the two columns (offsets from the centre). Three sources on the
-// left, four sinks on the right, sharing a top and a bottom. Kept below the
-// self-sufficiency figure at the top, so no ribbon runs behind it.
-constexpr lv_coord_t LEFT_ROW_Y[3] = {-70, 0, 70};
-constexpr lv_coord_t RIGHT_ROW_Y[4] = {-92, -31, 31, 92};
+// left, four sinks on the right, sharing a top and a bottom. With the
+// self-sufficiency figure gone (now on the load screen) the whole diagram uses
+// the full height, spread wider so the larger labels don't crowd each other.
+constexpr lv_coord_t LEFT_ROW_Y[3] = {-88, 0, 88};
+constexpr lv_coord_t RIGHT_ROW_Y[4] = {-108, -36, 36, 108};
 
-constexpr lv_coord_t NODE_X = 205;
+// Nodes pulled in from 205, so the wider labels have room to the bezel and the
+// ribbons don't run under them.
+constexpr lv_coord_t NODE_X = 182;
 constexpr lv_coord_t NODE_WIDTH = 10;
 constexpr lv_coord_t RIBBON_X = NODE_X - NODE_WIDTH / 2 - 1;  // inner edge
-constexpr lv_coord_t LABEL_X = 250;
+constexpr lv_coord_t LABEL_X = 246;
 
 // The tallest a node bar may be drawn, set by the tighter (sink) column so
 // neighbours never touch.
@@ -73,9 +76,6 @@ Geometry s_geometry;
 
 lv_obj_t* s_root = nullptr;
 lv_obj_t* s_canvas = nullptr;
-lv_obj_t* s_edge = nullptr;
-lv_obj_t* s_hero = nullptr;
-lv_obj_t* s_caption = nullptr;
 
 struct NodeUi {
   lv_obj_t* bar = nullptr;
@@ -107,9 +107,9 @@ void build_node(NodeUi* node, const char* name, uint32_t colour, lv_coord_t x, l
   lv_obj_align(node->bar, LV_ALIGN_CENTER, x, y);
 
   const lv_coord_t label_x = x < 0 ? -LABEL_X : LABEL_X;
-  node->name = make_label(s_root, PUCK_FONT_BODY, colour, label_x, y - 15);
+  node->name = make_label(s_root, PUCK_FONT_BODY, colour, label_x, y - 19);
   lv_label_set_text(node->name, name);
-  node->value = make_label(s_root, PUCK_FONT_LARGE, PUCK_COLOUR_TEXT, label_x, y + 15);
+  node->value = make_label(s_root, PUCK_FONT_LARGE, PUCK_COLOUR_TEXT, label_x, y + 19);
   lv_label_set_text(node->value, "--");
 }
 
@@ -202,10 +202,6 @@ lv_obj_t* screen_flows_create(lv_obj_t* parent) {
   lv_obj_set_style_bg_opa(s_root, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_clear_flag(s_root, LV_OBJ_FLAG_SCROLLABLE);
 
-  // Self-sufficiency traces the bezel; hidden until there is a figure for it.
-  s_edge = edge_bar_create(s_root);
-  edge_bar_set_hidden(s_edge, true);
-
   // The ribbon channel, drawn before the node bars so the bars cap the ends.
   s_canvas = lv_obj_create(s_root);
   lv_obj_remove_style_all(s_canvas);
@@ -218,12 +214,6 @@ lv_obj_t* screen_flows_create(lv_obj_t* parent) {
   lv_obj_t* title = make_label(s_root, PUCK_FONT_SMALL, PUCK_COLOUR_MUTED, 0, -208);
   lv_obj_set_style_text_letter_space(title, 3, LV_PART_MAIN);
   lv_label_set_text(title, "FLOWS  \xC2\xB7  kWh");
-
-  s_hero = make_label(s_root, PUCK_FONT_HERO, PUCK_COLOUR_TEXT, 0, -171);
-  lv_label_set_text(s_hero, "--");
-
-  s_caption = make_label(s_root, PUCK_FONT_BODY, PUCK_COLOUR_MUTED, 0, -137);
-  lv_label_set_text(s_caption, "self-sufficient");
 
   static const char* const SOURCE_NAME[SRC_COUNT] = {"SOLAR", "BATT", "GRID"};
   static const char* const SINK_NAME[SNK_COUNT] = {"HOME", "EV", "BATT", "GRID"};
@@ -263,15 +253,11 @@ void screen_flows_update(const Snapshot& snapshot) {
 
   float source_total[SRC_COUNT] = {};
   float sink_total[SNK_COUNT] = {};
-  float from_grid = 0.0f;
   float largest = 0.0f;
   bool any = false;
   for (size_t i = 0; i < FLOW_COUNT; ++i) {
     source_total[FLOWS[i].from] += amount[i];
     sink_total[FLOWS[i].to] += amount[i];
-    if (FLOWS[i].from == SRC_GRID && (FLOWS[i].to == SNK_HOME || FLOWS[i].to == SNK_EV)) {
-      from_grid += amount[i];
-    }
     if (amount[i] > 0.0f) {
       any = true;
     }
@@ -286,8 +272,6 @@ void screen_flows_update(const Snapshot& snapshot) {
   if (!any || largest <= 0.0f) {
     clear_geometry();
     lv_obj_invalidate(s_canvas);
-    lv_label_set_text(s_hero, "--");
-    edge_bar_set_hidden(s_edge, true);
     for (const NodeUi& node : s_source) {
       show_node(node, false);
     }
@@ -340,23 +324,4 @@ void screen_flows_update(const Snapshot& snapshot) {
   }
   s_geometry.valid = true;
   lv_obj_invalidate(s_canvas);
-
-  const float consumed = sink_total[SNK_HOME] + sink_total[SNK_EV];
-  if (consumed <= 0.0f) {
-    lv_label_set_text(s_hero, "--");
-    edge_bar_set_hidden(s_edge, true);
-    return;
-  }
-  float pct = (consumed - from_grid) / consumed * 100.0f;
-  if (pct < 0.0f) {
-    pct = 0.0f;
-  }
-  if (pct > 100.0f) {
-    pct = 100.0f;
-  }
-  char text[16];
-  snprintf(text, sizeof(text), "%.0f%%", pct);
-  lv_label_set_text(s_hero, text);
-  edge_bar_set_hidden(s_edge, false);
-  edge_bar_set(s_edge, pct / 100.0f, PUCK_COLOUR_HOME);
 }

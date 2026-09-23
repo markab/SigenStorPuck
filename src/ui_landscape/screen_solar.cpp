@@ -93,16 +93,16 @@ lv_obj_t* screen_solar_create(lv_obj_t* parent, uint8_t /*figures*/) {
   s_pill = make_label(s_root, PUCK_FONT_LARGE, PUCK_COLOUR_SOLAR, -110, -24);
   lv_label_set_text(s_pill, "");
 
-  // Top-right stats: the descriptor word small and muted above each figure, the
-  // number itself LARGE below — the word carries less than the value, so it reads
-  // smaller, matching "GENERATED" over the headline on the left.
-  s_forecast_caption = make_label(s_root, PUCK_FONT_SMALL, PUCK_COLOUR_MUTED, 150, -116);
+  // Top-right stats: the descriptor word muted above each figure, the number
+  // itself LARGE below — the word still reads as the label, matching "GENERATED"
+  // over the headline on the left, whose top line this column now aligns to.
+  s_forecast_caption = make_label(s_root, PUCK_FONT_BODY, PUCK_COLOUR_MUTED, 150, -156);
   lv_label_set_text(s_forecast_caption, "FORECAST");
-  s_forecast = make_label(s_root, PUCK_FONT_LARGE, PUCK_COLOUR_TEXT, 150, -90);
+  s_forecast = make_label(s_root, PUCK_FONT_LARGE, PUCK_COLOUR_TEXT, 150, -122);
   lv_label_set_text(s_forecast, "");
-  s_remaining_caption = make_label(s_root, PUCK_FONT_SMALL, PUCK_COLOUR_MUTED, 150, -48);
+  s_remaining_caption = make_label(s_root, PUCK_FONT_BODY, PUCK_COLOUR_MUTED, 150, -82);
   lv_label_set_text(s_remaining_caption, "REMAINING");
-  s_remaining = make_label(s_root, PUCK_FONT_LARGE, PUCK_COLOUR_TEXT, 150, -22);
+  s_remaining = make_label(s_root, PUCK_FONT_LARGE, PUCK_COLOUR_TEXT, 150, -48);
   lv_label_set_text(s_remaining, "");
   return s_root;
 }
