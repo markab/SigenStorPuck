@@ -17,9 +17,9 @@
 
 namespace {
 
-constexpr lv_coord_t BAND_WIDTH = 440;   // inset, so it stays inside the ring
-constexpr lv_coord_t BAND_HEIGHT = 150;
-constexpr lv_coord_t BAND_Y = 92;    // lower third, clear of the figures
+constexpr lv_coord_t BAND_WIDTH = 564;  // 00:00..24:00 touch the inner ring both sides
+constexpr lv_coord_t BAND_HEIGHT = 130;
+constexpr lv_coord_t BAND_Y = 108;   // lower strip, bottom clear of the ring corners
 constexpr lv_opa_t BAND_GHOST = 70;  // lower than the others: home is near-white
 constexpr uint8_t BAND_SMOOTHING = 7;
 
@@ -62,13 +62,13 @@ lv_obj_t* screen_load_create(lv_obj_t* parent, bool with_breakdown) {
     chart_band_set_smoothing(s_band, BAND_SMOOTHING);
   }
 
-  lv_obj_t* caption = make_label(s_root, PUCK_FONT_BODY, PUCK_COLOUR_MUTED, 0, -74);
+  lv_obj_t* caption = make_label(s_root, PUCK_FONT_BODY, PUCK_COLOUR_MUTED, 0, -104);
   lv_label_set_text(caption, "CONSUMED");
-  s_headline = make_label(s_root, PUCK_FONT_HERO, PUCK_COLOUR_TEXT, 0, -22);
+  s_headline = make_label(s_root, PUCK_FONT_HERO, PUCK_COLOUR_TEXT, 0, -54);
   lv_label_set_text(s_headline, "--");
-  lv_obj_t* unit = make_label(s_root, PUCK_FONT_BODY, PUCK_COLOUR_MUTED, 0, 22);
+  lv_obj_t* unit = make_label(s_root, PUCK_FONT_BODY, PUCK_COLOUR_MUTED, 0, -12);
   lv_label_set_text(unit, "kWh used");
-  s_pill = make_label(s_root, PUCK_FONT_LARGE, PUCK_COLOUR_HOME, 0, 64);
+  s_pill = make_label(s_root, PUCK_FONT_LARGE, PUCK_COLOUR_HOME, 0, 28);
   lv_label_set_text(s_pill, "");
   return s_root;
 }

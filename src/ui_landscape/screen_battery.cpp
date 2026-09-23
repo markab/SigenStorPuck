@@ -18,9 +18,9 @@
 namespace {
 
 // The day's SoC, ghosted right back behind the figures.
-constexpr lv_coord_t BAND_WIDTH = 440;   // inset, so it stays inside the ring
-constexpr lv_coord_t BAND_HEIGHT = 150;
-constexpr lv_coord_t BAND_Y = 92;    // lower third, clear of the figures
+constexpr lv_coord_t BAND_WIDTH = 564;  // 00:00..24:00 touch the inner ring both sides
+constexpr lv_coord_t BAND_HEIGHT = 130;
+constexpr lv_coord_t BAND_Y = 108;   // lower strip, bottom clear of the ring corners
 constexpr lv_opa_t BAND_GHOST = 110;
 constexpr uint8_t BAND_SMOOTHING = 7;
 
@@ -66,16 +66,16 @@ lv_obj_t* screen_battery_create(lv_obj_t* parent) {
 
   s_edge = edge_bar_create(s_root);
 
-  lv_obj_t* caption = make_label(s_root, PUCK_FONT_BODY, PUCK_COLOUR_MUTED, -110, -84);
+  lv_obj_t* caption = make_label(s_root, PUCK_FONT_BODY, PUCK_COLOUR_MUTED, -110, -108);
   lv_label_set_text(caption, "STATE OF CHARGE");
-  s_headline = make_label(s_root, PUCK_FONT_HERO, PUCK_COLOUR_TEXT, -110, -34);
+  s_headline = make_label(s_root, PUCK_FONT_HERO, PUCK_COLOUR_TEXT, -110, -58);
   lv_label_set_text(s_headline, "--%");
-  s_stored = make_label(s_root, PUCK_FONT_BODY, PUCK_COLOUR_MUTED, -110, 8);
+  s_stored = make_label(s_root, PUCK_FONT_BODY, PUCK_COLOUR_MUTED, -110, -16);
   lv_label_set_text(s_stored, "");
-  s_pill = make_label(s_root, PUCK_FONT_LARGE, PUCK_COLOUR_BATTERY, -110, 52);
+  s_pill = make_label(s_root, PUCK_FONT_LARGE, PUCK_COLOUR_BATTERY, -110, 26);
   lv_label_set_text(s_pill, "");
 
-  s_health = make_label(s_root, PUCK_FONT_LARGE, PUCK_COLOUR_TEXT, 155, -20);
+  s_health = make_label(s_root, PUCK_FONT_LARGE, PUCK_COLOUR_TEXT, 150, -78);
   lv_label_set_text(s_health, "");
   return s_root;
 }

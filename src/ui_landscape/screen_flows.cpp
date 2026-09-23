@@ -21,9 +21,10 @@
 namespace {
 
 // Fixed rows for the two columns (offsets from the centre). Three sources on the
-// left, four sinks on the right, sharing a top and a bottom.
-constexpr lv_coord_t LEFT_ROW_Y[3] = {-100, 0, 100};
-constexpr lv_coord_t RIGHT_ROW_Y[4] = {-126, -42, 42, 126};
+// left, four sinks on the right, sharing a top and a bottom. Kept below the
+// self-sufficiency figure at the top, so no ribbon runs behind it.
+constexpr lv_coord_t LEFT_ROW_Y[3] = {-70, 0, 70};
+constexpr lv_coord_t RIGHT_ROW_Y[4] = {-92, -31, 31, 92};
 
 constexpr lv_coord_t NODE_X = 205;
 constexpr lv_coord_t NODE_WIDTH = 10;
@@ -32,7 +33,7 @@ constexpr lv_coord_t LABEL_X = 250;
 
 // The tallest a node bar may be drawn, set by the tighter (sink) column so
 // neighbours never touch.
-constexpr lv_coord_t MAX_NODE_PX = 58;
+constexpr lv_coord_t MAX_NODE_PX = 46;
 constexpr lv_coord_t MIN_FLOW_PX = 2;
 constexpr lv_coord_t SLICE_PX = 3;
 constexpr lv_opa_t RIBBON_OPA = LV_OPA_60;
@@ -214,14 +215,14 @@ lv_obj_t* screen_flows_create(lv_obj_t* parent) {
   lv_obj_center(s_canvas);
   lv_obj_add_event_cb(s_canvas, draw_ribbons, LV_EVENT_DRAW_MAIN_END, nullptr);
 
-  lv_obj_t* title = make_label(s_root, PUCK_FONT_SMALL, PUCK_COLOUR_MUTED, 0, -205);
+  lv_obj_t* title = make_label(s_root, PUCK_FONT_SMALL, PUCK_COLOUR_MUTED, 0, -208);
   lv_obj_set_style_text_letter_space(title, 3, LV_PART_MAIN);
   lv_label_set_text(title, "FLOWS  \xC2\xB7  kWh");
 
-  s_hero = make_label(s_root, PUCK_FONT_HERO, PUCK_COLOUR_TEXT, 0, -168);
+  s_hero = make_label(s_root, PUCK_FONT_HERO, PUCK_COLOUR_TEXT, 0, -171);
   lv_label_set_text(s_hero, "--");
 
-  s_caption = make_label(s_root, PUCK_FONT_BODY, PUCK_COLOUR_MUTED, 0, -132);
+  s_caption = make_label(s_root, PUCK_FONT_BODY, PUCK_COLOUR_MUTED, 0, -137);
   lv_label_set_text(s_caption, "self-sufficient");
 
   static const char* const SOURCE_NAME[SRC_COUNT] = {"SOLAR", "BATT", "GRID"};
