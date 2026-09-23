@@ -7,9 +7,10 @@ capacitive touch — and shows live power flow, battery state, solar generation 
 forecast, consumption, where the day's energy went, and what it all cost.
 
 A second board is in **early-release testing**: the Waveshare
-**ESP32-S3-Touch-AMOLED-2.41 (V2 revision)**, a 600×450 landscape AMOLED. It runs the same
+**ESP32-S3-Touch-AMOLED-2.41 (V1 revision)**, a 600×450 landscape AMOLED. It runs the same
 firmware from this same repository, built for that board, with the screens re-laid for the
-wide rectangle. It has **not yet been verified on real hardware** — see **Hardware** below.
+wide rectangle. The panel, touch and landscape UI are **confirmed on real V1 hardware** —
+see **Hardware** below.
 
 ## Three ways to get data — read this first
 
@@ -111,8 +112,9 @@ It flashes over WebSerial — nothing to download and no drivers to install. Saf
 Firefox cannot do this, and neither can anything on an iPhone or iPad.
 
 The installer asks which board you have — the **1.75″ round** or the **2.41″ landscape** —
-and each flashes its own build. **The 2.41 is early-release testing** (V2 revision only,
-not yet verified on hardware); the 1.75 is the primary board.
+and each flashes its own build. **The 2.41 is early-release testing** (V1 revision only —
+the later V2 wires the board differently and is not currently supported); the 1.75 is the
+primary board.
 
 After the first flash the Puck updates itself — each board from its own build — see
 **Firmware** below.
@@ -399,21 +401,21 @@ edge, either side of centre.
 | MCU | ESP32-S3R8, 8 MB PSRAM, 16 MB flash |
 | Also on board | AXP2101 PMIC, PCF85063 RTC, QMI8658 IMU |
 
-**2.41″ landscape — early-release testing.** The **V2 hardware revision specifically** (the
-earlier V1 wires the display, touch and I/O expander differently and is not supported —
-check which revision your board is before flashing). The firmware builds and the landscape
-UI runs in the desktop simulator, but it has **not yet been brought up on real hardware**:
-in particular the panel and touch reset lines run through the board's I/O expander, which
-still needs wiring in, and the SH8601's portrait-to-landscape rotation needs confirming on
-the glass.
+**2.41″ landscape — early-release testing.** The **V1 hardware revision specifically** (the
+later V2 routes the display and touch resets through the board's I/O expander and repurposes
+GPIO21 as the panel's tearing-effect line, so it needs its own profile and is not currently
+supported — check which revision your board is before flashing; a V1 carries no "Rev2.0"
+silkscreen). On V1 the panel (RM690B0, driven with an SH8601-compatible init sequence over a
+GPIO21 reset), the FT6336 touch and the landscape UI are **confirmed on real hardware**,
+including the software portrait-to-landscape rotation.
 
 | | |
 |---|---|
-| Board | Waveshare ESP32-S3-Touch-AMOLED-2.41, **V2 revision** |
-| Display | 600×450 landscape AMOLED, SH8601 over QSPI |
+| Board | Waveshare ESP32-S3-Touch-AMOLED-2.41, **V1 revision** |
+| Display | 600×450 landscape AMOLED, RM690B0 over QSPI (SH8601-compatible init) |
 | Touch | FT6336 (FocalTech FT5x06 family), I2C |
 | MCU | ESP32-S3R8, 8 MB PSRAM, 16 MB flash |
-| Also on board | PCF85063 RTC, QMI8658 IMU, TCA9554 I/O expander (no AXP2101 PMIC) |
+| Also on board | PCF85063 RTC, QMI8658 IMU, TCA9554 I/O expander (no AXP2101 PMIC); V1 drives the display and touch resets from GPIO directly |
 
 ## Building it yourself
 
