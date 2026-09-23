@@ -3,6 +3,8 @@
 #include <Preferences.h>
 #include <math.h>
 
+#include "ui/ui.h"  // PUCK_SCREEN_COUNT, for the screen-mask migration
+
 namespace {
 
 // Named for this project, like everything else (see the provenance rule in
@@ -25,6 +27,12 @@ constexpr const char* KEY_SWEEP = "sweep_min";
 constexpr const char* KEY_ROT_ON = "rotate_on";
 constexpr const char* KEY_SCR_VIS = "scr_vis";
 constexpr const char* KEY_SCR_ROT = "scr_rot";
+// How many screen ids existed when the two masks above were written. A screen
+// added since has its bit stored as 0 — "off" by accident, not by choice — so
+// on load those bits are switched on. Absent means the masks were written by
+// firmware with 7 screens (up to and including Load), before this key existed.
+constexpr const char* KEY_SCR_KNOWN = "scr_known";
+constexpr uint8_t SCREENS_BEFORE_KNOWN_KEY = 7;
 constexpr const char* KEY_UPDATES = "updates";
 constexpr const char* KEY_SOURCE = "source";
 constexpr const char* KEY_HOSTNAME = "hostname";
@@ -91,6 +99,14 @@ void settings_begin() {
   s_settings.rotate_enabled = prefs.getBool(KEY_ROT_ON, s_settings.rotate_enabled);
   s_settings.screens_visible = prefs.getUChar(KEY_SCR_VIS, s_settings.screens_visible);
   s_settings.screens_rotate = prefs.getUChar(KEY_SCR_ROT, s_settings.screens_rotate);
+  if (prefs.isKey(KEY_SCR_VIS)) {
+    // Screens newer than the stored masks start on, like on a fresh device.
+    const uint8_t known = prefs.getUChar(KEY_SCR_KNOWN, SCREENS_BEFORE_KNOWN_KEY);
+    for (uint8_t i = known; i < PUCK_SCREEN_COUNT; ++i) {
+      s_settings.screens_visible |= static_cast<uint8_t>(1u << i);
+      s_settings.screens_rotate |= static_cast<uint8_t>(1u << i);
+    }
+  }
   s_settings.check_updates = prefs.getBool(KEY_UPDATES, s_settings.check_updates);
 
   // Absent means the device predates this key, not that it wants the default.
@@ -576,6 +592,7 @@ bool settings_set_screens(uint8_t visible, uint8_t rotate) {
   }
   prefs.putUChar(KEY_SCR_VIS, visible);
   prefs.putUChar(KEY_SCR_ROT, rotate);
+  prefs.putUChar(KEY_SCR_KNOWN, PUCK_SCREEN_COUNT);
   prefs.end();
   s_settings.screens_visible = visible;
   s_settings.screens_rotate = rotate;

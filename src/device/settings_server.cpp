@@ -592,7 +592,7 @@ String page(const String& message, bool message_is_error) {
   // Indexed by PuckScreen id, but listed below in PUCK_SCREEN_ORDER so the page
   // reads the way the device swipes.
   static const char* const SCREEN_NAME[PUCK_SCREEN_COUNT] = {
-      "Power", "Battery", "Solar", "Flows", "Cost", "Settings", "Load"};
+      "Power", "Battery", "Solar", "Flows", "Cost", "Settings", "Load", "Grid"};
   html += "<label>Screens (applies on restart)</label>";
   html += "<table class=screens><tr><th></th><th>Show</th><th>Auto-cycle</th></tr>";
   for (PuckScreen screen : PUCK_SCREEN_ORDER) {
