@@ -275,15 +275,16 @@ lv_obj_t* screen_power_create(lv_obj_t* parent) {
   lv_obj_set_style_border_width(hub, 1, LV_PART_MAIN);
   lv_obj_set_style_border_color(hub, lv_color_hex(PUCK_COLOUR_TRACK), LV_PART_MAIN);
 
+  // PLANT above and kW below, held clear of the taller HERO value in the middle.
   lv_obj_t* plant_name = make_label(s_root, PUCK_FONT_SMALL, PUCK_COLOUR_MUTED);
   lv_label_set_text(plant_name, "PLANT");
-  lv_obj_align(plant_name, LV_ALIGN_CENTER, 0, -28);
+  lv_obj_align(plant_name, LV_ALIGN_CENTER, 0, -42);
   s_plant_value = make_label(s_root, PUCK_FONT_HERO, PUCK_COLOUR_TEXT);
   lv_label_set_text(s_plant_value, "--");
   lv_obj_align(s_plant_value, LV_ALIGN_CENTER, 0, 0);
   s_plant_status = make_label(s_root, PUCK_FONT_SMALL, PUCK_COLOUR_MUTED);
   lv_label_set_text(s_plant_status, "kW");
-  lv_obj_align(s_plant_status, LV_ALIGN_CENTER, 0, 28);
+  lv_obj_align(s_plant_status, LV_ALIGN_CENTER, 0, 42);
 
   build_leg(LEG_SOLAR, "SOLAR", PUCK_COLOUR_SOLAR, POS_SOLAR);
   build_leg(LEG_GRID, "GRID", PUCK_COLOUR_GRID, POS_GRID);
