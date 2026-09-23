@@ -41,10 +41,15 @@ enum class ModbusType : uint8_t { U16, S16, U32, S32, U64 };
 
 enum class ModbusScope : uint8_t { Plant, Inverter, AcCharger };
 
-// Which poll cycle a register belongs to. Fast is everything the power and
-// battery screens need; slow is the Today screen, which does not change fast
-// enough to be worth a request every cycle.
-enum class ModbusCadence : uint8_t { Fast, Slow };
+// Which poll cycle a register belongs to. Fast is everything the live screens
+// need, read from every device of its scope every cycle; slow is the Today
+// screen, which does not change fast enough to be worth a request every cycle.
+//
+// DcCharger is fast too, but read only from an inverter with a DC charger
+// fitted: its one register (31502) only counts towards EV there. It has its own
+// cadence so the grid figures beside it in the fast set are read from every
+// inverter, not just a charger-equipped one.
+enum class ModbusCadence : uint8_t { Fast, Slow, DcCharger };
 
 enum ModbusKey : uint8_t {
   // --- plant, fast: all inside one 94-word read ---------------------------
@@ -78,7 +83,7 @@ enum ModbusKey : uint8_t {
   MB_INV_ESS_MAX_TEMP,
   MB_INV_GRID_FREQ,        // fast: grid frequency, for the grid screen
   MB_INV_GRID_VOLTAGE,     // fast: phase A voltage, for the grid screen
-  MB_INV_DC_OUTPUT_POWER,  // fast: feeds EV, which house load is derived from
+  MB_INV_DC_OUTPUT_POWER,  // DC charger only: feeds EV, which house load is derived from
   MB_INV_PV_DAILY_GEN,
 
   // --- per AC charger -----------------------------------------------------

@@ -573,20 +573,20 @@ void test_plan() {
   }
 
   // Grid frequency (31002) and phase-A voltage (31011-12) merge into one 11-word
-  // read; the DC output at 31502 is ~500 registers on and needs its own.
+  // read, taken from every inverter. The DC output at 31502 is a separate
+  // cadence, read only from an inverter with a DC charger — folding it into the
+  // fast set is what once left frequency and voltage unread on every other one.
   count = modbus_plan(ModbusScope::Inverter, ModbusCadence::Fast, spans, 8);
-  check(count == 2, "inverter fast needs two requests");
-  if (count == 2) {
-    check(spans[0].start == 31002 && spans[0].words == 11, "inverter fast first span");
-    check(spans[1].start == 31502 && spans[1].words == 2, "inverter fast second span");
-  }
+  check(count == 1 && spans[0].start == 31002 && spans[0].words == 11, "inverter fast span");
+  count = modbus_plan(ModbusScope::Inverter, ModbusCadence::DcCharger, spans, 8);
+  check(count == 1 && spans[0].start == 31502 && spans[0].words == 2, "DC charger span");
 
   count = modbus_plan(ModbusScope::AcCharger, ModbusCadence::Fast, spans, 8);
   check(count == 1 && spans[0].start == 32003 && spans[0].words == 2, "charger span");
 
   // No span may exceed the protocol's own ceiling.
   for (int scope = 0; scope < 3; ++scope) {
-    for (int cadence = 0; cadence < 2; ++cadence) {
+    for (int cadence = 0; cadence < 3; ++cadence) {
       const size_t n = modbus_plan(static_cast<ModbusScope>(scope),
                                    static_cast<ModbusCadence>(cadence), spans, 8);
       for (size_t i = 0; i < n; ++i) {

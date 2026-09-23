@@ -300,12 +300,17 @@ FetchResult modbus_api_fetch(Snapshot* out, int* detail) {
     if (device.type == ModbusDeviceType::AcCharger) {
       result = read_scope(device.slave_id, ModbusScope::AcCharger, ModbusCadence::Fast, &values,
                           detail);
-    } else if (device.dc_charger) {
-      // Only an inverter with a DC charger fitted has anything at 31502, and
-      // only its output counts towards EV — the same detection summary.py's
-      // _ev_power does from the configured devices.
+    } else {
+      // Grid frequency and voltage, from every inverter every cycle.
       result = read_scope(device.slave_id, ModbusScope::Inverter, ModbusCadence::Fast, &values,
                           detail);
+      if (result == FetchResult::Ok && device.dc_charger) {
+        // Only an inverter with a DC charger fitted has anything at 31502, and
+        // only its output counts towards EV — the same detection summary.py's
+        // _ev_power does from the configured devices.
+        result = read_scope(device.slave_id, ModbusScope::Inverter, ModbusCadence::DcCharger,
+                            &values, detail);
+      }
     }
   }
   if (result != FetchResult::Ok) {

@@ -7,6 +7,7 @@ constexpr ModbusScope INV = ModbusScope::Inverter;
 constexpr ModbusScope ACC = ModbusScope::AcCharger;
 constexpr ModbusCadence FAST = ModbusCadence::Fast;
 constexpr ModbusCadence SLOW = ModbusCadence::Slow;
+constexpr ModbusCadence DC_CHARGER = ModbusCadence::DcCharger;
 
 // Reads a big-endian word sequence as an unsigned integer. Sigenergy puts the
 // most significant register first.
@@ -106,7 +107,7 @@ const ModbusReg MODBUS_REGS[MB_KEY_COUNT] = {
     {MB_INV_ESS_MAX_TEMP, 30620, 1, ModbusType::S16, 10, INV, SLOW},
     {MB_INV_GRID_FREQ, 31002, 1, ModbusType::U16, 100, INV, FAST},
     {MB_INV_GRID_VOLTAGE, 31011, 2, ModbusType::U32, 100, INV, FAST},
-    {MB_INV_DC_OUTPUT_POWER, 31502, 2, ModbusType::S32, 1000, INV, FAST},
+    {MB_INV_DC_OUTPUT_POWER, 31502, 2, ModbusType::S32, 1000, INV, DC_CHARGER},
     {MB_INV_PV_DAILY_GEN, 31509, 2, ModbusType::U32, 100, INV, SLOW},
 
     {MB_ACC_CHARGING_POWER, 32003, 2, ModbusType::S32, 1000, ACC, FAST},
