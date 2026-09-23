@@ -76,6 +76,8 @@ enum ModbusKey : uint8_t {
   MB_INV_ESS_DAILY_CHARGE,
   MB_INV_ESS_DAILY_DISCHARGE,
   MB_INV_ESS_MAX_TEMP,
+  MB_INV_GRID_FREQ,        // fast: grid frequency, for the grid screen
+  MB_INV_GRID_VOLTAGE,     // fast: phase A voltage, for the grid screen
   MB_INV_DC_OUTPUT_POWER,  // fast: feeds EV, which house load is derived from
   MB_INV_PV_DAILY_GEN,
 

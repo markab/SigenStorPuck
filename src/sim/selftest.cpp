@@ -572,8 +572,14 @@ void test_plan() {
     check(spans[1].start == 31509 && spans[1].words == 2, "inverter slow second span");
   }
 
+  // Grid frequency (31002) and phase-A voltage (31011-12) merge into one 11-word
+  // read; the DC output at 31502 is ~500 registers on and needs its own.
   count = modbus_plan(ModbusScope::Inverter, ModbusCadence::Fast, spans, 8);
-  check(count == 1 && spans[0].start == 31502 && spans[0].words == 2, "inverter fast span");
+  check(count == 2, "inverter fast needs two requests");
+  if (count == 2) {
+    check(spans[0].start == 31002 && spans[0].words == 11, "inverter fast first span");
+    check(spans[1].start == 31502 && spans[1].words == 2, "inverter fast second span");
+  }
 
   count = modbus_plan(ModbusScope::AcCharger, ModbusCadence::Fast, spans, 8);
   check(count == 1 && spans[0].start == 32003 && spans[0].words == 2, "charger span");

@@ -104,6 +104,8 @@ const ModbusReg MODBUS_REGS[MB_KEY_COUNT] = {
     {MB_INV_ESS_DAILY_CHARGE, 30566, 2, ModbusType::U32, 100, INV, SLOW},
     {MB_INV_ESS_DAILY_DISCHARGE, 30572, 2, ModbusType::U32, 100, INV, SLOW},
     {MB_INV_ESS_MAX_TEMP, 30620, 1, ModbusType::S16, 10, INV, SLOW},
+    {MB_INV_GRID_FREQ, 31002, 1, ModbusType::U16, 100, INV, FAST},
+    {MB_INV_GRID_VOLTAGE, 31011, 2, ModbusType::U32, 100, INV, FAST},
     {MB_INV_DC_OUTPUT_POWER, 31502, 2, ModbusType::S32, 1000, INV, FAST},
     {MB_INV_PV_DAILY_GEN, 31509, 2, ModbusType::U32, 100, INV, SLOW},
 
@@ -301,6 +303,10 @@ void modbus_to_snapshot(const ModbusValues& values, Snapshot* out) {
   built.power.grid = maybe(values, MB_PLANT_GRID_POWER);
   built.power.batt = maybe(values, MB_PLANT_ESS_POWER);
   built.power.plant = maybe(values, MB_PLANT_ACTIVE_POWER);
+  // Grid AC measurements for the grid screen. Same across inverters (one grid),
+  // so the last-inverter-wins default apply is correct.
+  built.power.grid_freq_hz = maybe(values, MB_INV_GRID_FREQ);
+  built.power.grid_voltage_v = maybe(values, MB_INV_GRID_VOLTAGE);
 
   // Zero rather than unknown when no charging kit is configured, matching
   // _ev_power: a plant with no charger genuinely draws no EV power.

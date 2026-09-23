@@ -53,6 +53,11 @@ struct Snapshot {
   struct Power {
     MaybeFloat pv;     // kW from solar
     MaybeFloat grid;   // kW, >0 importing, <0 exporting
+    // AC grid measurements for the grid screen. Modbus only — read from the
+    // inverter's running-info block (31002, 31011); /api/summary carries neither,
+    // so they stay unknown on the server source.
+    MaybeFloat grid_freq_hz;    // grid frequency, Hz
+    MaybeFloat grid_voltage_v;  // phase A voltage, V
     MaybeFloat batt;   // kW, >0 charging, <0 discharging
     MaybeFloat home;   // kW house load — derived server-side, not a register
     MaybeFloat ev;     // kW into the EV charger
