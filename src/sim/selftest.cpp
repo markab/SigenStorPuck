@@ -1271,6 +1271,7 @@ void test_day_series() {
   snprintf(json, sizeof(json),
            "{\"slot_minutes\":15,\"day_start\":%u,\"tz_offset_min\":60,"
            "\"solar_kw\":[0.0,1.5,3.0,4.5],"
+           "\"grid_kw\":[1.2,-2.0,0.8,-1.5],"
            "\"soc_pct\":[null,40.0,55.0,70.0]}",
            static_cast<unsigned>(day_start));
 
@@ -1293,6 +1294,16 @@ void test_day_series() {
   check(columns[1].known && columns[1].max_value == 1.5f, "slot 1 carries its value");
   check(columns[2].known && columns[2].max_value == 3.0f, "the part-elapsed slot is filled");
   check(!columns[3].known, "the slot that has not happened stays empty");
+
+  // Grid is signed: import positive, export negative. A negative slot must keep
+  // its sign through the ring, or the grid chart draws an export as an import.
+  HistoryColumn grid_cols[4];
+  history_reduce(HistoryBank::Live, HistorySeries::Grid, midnight_minute, midnight_minute + 60,
+                 grid_cols, 4);
+  check(grid_cols[0].known && grid_cols[0].max_value == 1.2f, "grid import slot stays positive");
+  check(grid_cols[1].known && grid_cols[1].max_value == -2.0f, "grid export slot stays negative");
+  check(grid_cols[2].known && grid_cols[2].max_value == 0.8f, "the part-elapsed grid slot is filled");
+  check(!grid_cols[3].known, "the grid slot that has not happened stays empty");
 
   // The timezone came from the payload, which is the only place the server path
   // gets a trustworthy one.

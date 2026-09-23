@@ -110,6 +110,11 @@ bool day_series_parse(HistoryBank bank, const char* json, size_t length, uint32_
   // fill from live polls as it did before.
   fill_series(bank, HistorySeries::Load, doc["load_kw"].as<JsonArrayConst>(), first_minute,
               static_cast<uint32_t>(slot_minutes), now_minute);
+  // Signed: import positive, export negative. The grid screen draws it about a
+  // zero line. Absent from a server older than 0.25.0, which leaves the grid
+  // chart to fill from live polls.
+  fill_series(bank, HistorySeries::Grid, doc["grid_kw"].as<JsonArrayConst>(), first_minute,
+              static_cast<uint32_t>(slot_minutes), now_minute);
 
   // Only today carries a forecast worth drawing ahead — a stepped-back day's
   // payload leaves the store untouched, and the solar screen refuses a forecast
