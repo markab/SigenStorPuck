@@ -18,9 +18,9 @@
 namespace {
 
 // The day's SoC, ghosted right back behind the figures.
-constexpr lv_coord_t BAND_WIDTH = PUCK_LCD_WIDTH;
-constexpr lv_coord_t BAND_HEIGHT = 220;
-constexpr lv_coord_t BAND_Y = 20;
+constexpr lv_coord_t BAND_WIDTH = 440;   // inset, so it stays inside the ring
+constexpr lv_coord_t BAND_HEIGHT = 150;
+constexpr lv_coord_t BAND_Y = 92;    // lower third, clear of the figures
 constexpr lv_opa_t BAND_GHOST = 110;
 constexpr uint8_t BAND_SMOOTHING = 7;
 
