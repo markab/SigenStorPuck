@@ -215,7 +215,9 @@ String page(const String& message, bool message_is_error) {
   const PowerStatus power = power_status();
   html += " &middot; power: ";
   if (!power.pmic_ok) {
-    html += "PMIC not detected";
+    // The 2.41 has no PMIC by design (a battery latch instead), so saying it was
+    // "not detected" there would read as a fault.
+    html += PUCK_POWER_LATCH >= 0 ? "battery latch, no PMIC" : "PMIC not detected";
   } else if (!power.battery_present) {
     html += power.usb_present ? "USB, no battery fitted" : "no battery fitted";
   } else {

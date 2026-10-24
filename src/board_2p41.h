@@ -82,9 +82,27 @@ static constexpr uint16_t PUCK_LVGL_BUFFER_LINES = 40;
 
 // ---------------------------------------------------------------- buttons ---
 
-// GPIO0 strapping pin, same as the 1.75. (The 2.41's PWR button GPIO is not
-// wired up here yet — the no-PMIC PWR-as-GPIO path is a follow-up.)
+// GPIO0 strapping pin, same as the 1.75.
 static constexpr int8_t PUCK_BUTTON_BOOT = 0;
+
+// No PMIC here, so PWR is a plain key rather than an AXP2101 interrupt. From the
+// V1 schematic (ESP32-S3-Touch-AMOLED-2.41-Schematic.pdf, the pin table beside the
+// module, cross-checked against IO21 OLED_RESET and IO3 TP_RESET):
+//
+//   IO15  Key_BAT      the PWR key, active low, 10K pull-up to 3V3 (R18)
+//   IO16  BAT_Control  power latch: high holds battery power on, low cuts it
+//   IO17  BAT_ADC      battery voltage through a 200K/100K divider (unused)
+//
+// Key1, Q2 and T1 form a latching battery switch. Pressing PWR switches the
+// battery through to the board; firmware must then drive BAT_Control high or
+// power goes the moment the key is let go — Waveshare's factory firmware does it
+// first thing (BAT_ON()), and so does power_begin(). On USB the latch has
+// nothing to cut, so "off" there is a deep sleep that PWR wakes from.
+static constexpr int8_t PUCK_BUTTON_PWR = 15;
+static constexpr int8_t PUCK_POWER_LATCH = 16;
+
+// A bare key bounces, unlike the 1.75's PWR, which the PMIC debounces.
+static constexpr uint32_t PUCK_PWR_DEBOUNCE_MS = 40;
 
 // ------------------------------------------------------------------ touch ---
 

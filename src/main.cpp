@@ -303,6 +303,11 @@ void log_boot_banner() {
 }  // namespace
 
 void setup() {
+  // Before anything else, the 1.5 s wait for USB-CDC below included: on the
+  // 2.41's battery latch, the board is only powered until this runs while PWR is
+  // held. A no-op on boards without one.
+  power_hold();
+
   Serial.begin(PUCK_SERIAL_BAUD);
   // USB-CDC takes a moment to enumerate; without this the banner is lost.
   delay(1500);

@@ -19,6 +19,11 @@ struct PowerStatus {
 };
 
 // Wire.begin() must already have been called; this joins the shared bus.
+// Takes the battery latch on boards that have one (the 2.41); a no-op elsewhere.
+// The first call in setup(), because until it runs the board is only powered
+// while PWR is physically held.
+void power_hold();
+
 void power_begin();
 
 // Cheap: reads the PMIC over I2C, so call it at a human rate rather than per

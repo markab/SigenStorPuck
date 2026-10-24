@@ -100,6 +100,13 @@ by itself.
 
 If the screen is off on a schedule, the first press of any button just wakes it up.
 
+On the **2.41″ landscape** board the buttons do the same, with one difference in what
+"power off" means. That board has no power-management chip; its PWR button is a
+battery switch. On battery, holding PWR for 5 seconds really does switch it off, and a
+press switches it back on. On USB there is nothing to switch off, so it turns the screen
+off and sleeps instead, and a press of PWR wakes it. (The third button, RST, is a
+hardware reset.)
+
 ## Installing
 
 ### 1. Flash the firmware

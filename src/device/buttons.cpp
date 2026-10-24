@@ -10,8 +10,9 @@
 
 namespace {
 
-// Long enough to ignore contact bounce on the raw GPIO, short enough not to feel
-// sticky. Only BOOT needs it — see ButtonGestureConfig::debounce_ms.
+// Long enough to ignore contact bounce on a raw GPIO, short enough not to feel
+// sticky. BOOT always needs it; PWR only where it is a raw GPIO too — see
+// PUCK_PWR_DEBOUNCE_MS and ButtonGestureConfig::debounce_ms.
 constexpr uint32_t DEBOUNCE_MS = 40;
 
 // Two seconds for the middle action, five for the one you should have to mean.
@@ -19,12 +20,13 @@ constexpr uint32_t HOLD_MS = 2000;
 constexpr uint32_t LONG_HOLD_MS = 5000;
 
 // BOOT is a bare GPIO and bounces, so a press shorter than a few tens of
-// milliseconds is contact noise. PWR is debounced by the PMIC before it ever
-// becomes an interrupt, and a minimum there would throw away exactly the taps
-// power.cpp works hardest to preserve — the ones seen whole between two polls,
-// which it can only report as lasting a single loop iteration.
+// milliseconds is contact noise. PWR depends on the board: on the 1.75 it is
+// debounced by the PMIC before it ever becomes an interrupt, and a minimum there
+// would throw away exactly the taps power.cpp works hardest to preserve — the
+// ones seen whole between two polls, which it can only report as lasting a single
+// loop iteration. On the 2.41 it is a bare key like BOOT and bounces the same.
 ButtonGestureState s_boot{{DEBOUNCE_MS, HOLD_MS, LONG_HOLD_MS}};
-ButtonGestureState s_pwr{{/*debounce_ms=*/0, HOLD_MS, LONG_HOLD_MS}};
+ButtonGestureState s_pwr{{PUCK_PWR_DEBOUNCE_MS, HOLD_MS, LONG_HOLD_MS}};
 
 // Both day steps report what they did, because on a device with no keyboard the
 // only confirmation you get is the screen.

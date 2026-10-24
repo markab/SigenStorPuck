@@ -2,8 +2,10 @@
 
 #define XPOWERS_CHIP_AXP2101
 #include <XPowersLib.h>
+#include <esp_sleep.h>
 
 #include "board_config.h"
+#include "display.h"
 
 namespace {
 
@@ -16,7 +18,29 @@ bool s_release_pending = false;
 
 }  // namespace
 
+void power_hold() {
+  // On a board with a battery latch (the 2.41), pressing PWR only switches the
+  // battery through for as long as the key is held: until this pin goes high,
+  // letting go powers the board straight back off. So it is the first thing
+  // setup() does, ahead of the panel bring-up and everything else that takes
+  // time. Harmless on USB, where the latch has nothing to switch.
+  if (PUCK_POWER_LATCH >= 0) {
+    pinMode(PUCK_POWER_LATCH, OUTPUT);
+    digitalWrite(PUCK_POWER_LATCH, HIGH);
+  }
+}
+
 void power_begin() {
+  if (PUCK_BUTTON_PWR >= 0) {
+    // No PMIC on this board: PWR is a plain active-low key (with its own external
+    // pull-up), read as a level in power_loop(). Nothing to probe for.
+    pinMode(PUCK_BUTTON_PWR, INPUT_PULLUP);
+    Serial.printf("[power] no PMIC: PWR key on GPIO%d (%s), battery latch on GPIO%d held\n",
+                  PUCK_BUTTON_PWR, digitalRead(PUCK_BUTTON_PWR) == LOW ? "down" : "up",
+                  PUCK_POWER_LATCH);
+    return;
+  }
+
   // -1 for the pins: main() already called Wire.begin(), and handing the library
   // the pins again makes it re-init a live bus, which logs an error and changes
   // nothing (the same trap as the touch driver).
@@ -84,6 +108,11 @@ PowerStatus power_status() {
 }
 
 void power_loop() {
+  if (PUCK_BUTTON_PWR >= 0) {
+    // A plain level, polled like BOOT and debounced by buttons.cpp the same way.
+    s_key_down = digitalRead(PUCK_BUTTON_PWR) == LOW;
+    return;
+  }
   if (!s_ready) {
     return;
   }
@@ -129,5 +158,28 @@ bool power_key_down() {
 void power_shutdown() {
   if (s_ready) {
     s_pmic.shutdown();
+    return;
   }
+  if (PUCK_POWER_LATCH < 0) {
+    return;
+  }
+
+  // Let go of the battery. While PWR is still held the key itself keeps the
+  // switch closed, so on battery the board dies the moment it is released.
+  digitalWrite(PUCK_POWER_LATCH, LOW);
+  while (PUCK_BUTTON_PWR >= 0 && digitalRead(PUCK_BUTTON_PWR) == LOW) {
+    delay(10);
+  }
+  delay(200);
+
+  // Still running, so USB is powering the board and the latch had nothing to cut.
+  // The nearest thing to off is a dark panel and a deep sleep that PWR wakes from
+  // — a wake is a fresh boot, which takes the latch again. Armed only once the key
+  // is up, or the wake source would fire the instant the chip went down.
+  Serial.println("[power] still powered (USB): sleeping until PWR is pressed");
+  display_set_sleep(true);
+  if (PUCK_BUTTON_PWR >= 0) {
+    esp_sleep_enable_ext0_wakeup(static_cast<gpio_num_t>(PUCK_BUTTON_PWR), 0);
+  }
+  esp_deep_sleep_start();
 }
