@@ -283,7 +283,12 @@ bool updater_enabled() {
 }
 
 void updater_request_check(bool force) {
-  if (!updater_enabled() || s_check_pending) {
+  // The automatic check (page open) is opt-in; the button is not, because
+  // pressing it is the asking. It used to bypass this by checking synchronously
+  // from the page handler instead — on the LVGL thread, and possibly alongside the
+  // poll task's own TLS session — which froze the screen for the round trip and
+  // could fail the handshake for want of a second session's heap.
+  if ((!updater_enabled() && !force) || s_check_pending) {
     return;
   }
   if (WiFi.status() != WL_CONNECTED) {
@@ -317,12 +322,6 @@ void updater_service() {
     return;
   }
   s_check_pending = false;
-  publish(perform_check());
-  s_last_check_ms = millis();
-  s_ever_checked = true;
-}
-
-void updater_check() {
   publish(perform_check());
   s_last_check_ms = millis();
   s_ever_checked = true;

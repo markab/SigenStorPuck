@@ -1055,12 +1055,12 @@ void handle_update_check() {
   // switched on, so it is honoured either way — but it no longer flips the setting
   // as a side effect. That behaviour changed a stored preference from a button
   // labelled as doing something else, and left no way to change it back.
-  if (!updater_enabled()) {
-    updater_check();  // synchronous: nothing else will do it for us
-    send_page("", false);
-    return;
-  }
+  //
+  // Queued for the poll task like every other check, never run here: this handler
+  // is on the LVGL thread. The page shows "Checking…" and refreshes itself until
+  // the result lands; the wake saves waiting out a whole poll interval for it.
   updater_request_check(/*force=*/true);
+  poller_wake();
   send_page("", false);
 }
 

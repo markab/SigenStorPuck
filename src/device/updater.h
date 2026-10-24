@@ -33,8 +33,9 @@ void updater_begin();
 // against an unreachable host.
 //
 // De-duplicated and rate-limited, so repeatedly loading or saving the page does
-// not become a burst of requests to GitHub. `force` skips the rate limit, for the
-// explicit "Check now" button.
+// not become a burst of requests to GitHub. `force` is the explicit "Check now"
+// button: it skips the rate limit, and is honoured even with automatic checks
+// switched off, since pressing it is the asking.
 //
 // The check itself runs on the poll task, at its next turn — see updater_service().
 void updater_request_check(bool force);
@@ -55,10 +56,6 @@ void updater_request_check(bool force);
 // waits for the current poll to finish, so up to one poll interval.
 void updater_service();
 
-// Fetches the release manifest and compares versions, synchronously. Blocks for
-// as long as the network takes, so never call it from a render path — use
-// updater_request_check() there.
-void updater_check();
 
 // Asks for firmware.bin to be downloaded into the spare OTA slot and booted into.
 // Only does anything when a check has found a newer version.
