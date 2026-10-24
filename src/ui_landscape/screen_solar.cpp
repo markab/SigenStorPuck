@@ -15,6 +15,7 @@
 #include "format.h"
 #include "history.h"
 #include "psram_alloc.h"
+#include "pill.h"
 #include "theme.h"
 
 namespace {
@@ -93,8 +94,7 @@ lv_obj_t* screen_solar_create(lv_obj_t* parent, uint8_t /*figures*/) {
   lv_label_set_text(s_headline, "--");
   lv_obj_t* unit = make_label(s_root, PUCK_FONT_BODY, PUCK_COLOUR_MUTED, -110, -64);
   lv_label_set_text(unit, "kWh so far");
-  s_pill = make_label(s_root, PUCK_FONT_LARGE, PUCK_COLOUR_SOLAR, -110, -24);
-  lv_label_set_text(s_pill, "");
+  s_pill = pill_create(s_root, PUCK_COLOUR_SOLAR, -110, -24);
 
   // Top-right stats: the descriptor word muted above each figure, the number
   // itself LARGE below — the word still reads as the label, matching "GENERATED"
@@ -163,7 +163,7 @@ void screen_solar_update(const Snapshot& snapshot) {
     puck_format_magnitude(snapshot.power.pv, PUCK_KW_DECIMALS, text, sizeof(text));
     char pill[32];
     snprintf(pill, sizeof(pill), "%s kW now", text);
-    lv_label_set_text(s_pill, pill);
+    pill_set_text(s_pill, pill);
     lv_obj_clear_flag(s_pill, LV_OBJ_FLAG_HIDDEN);
   } else {
     lv_obj_add_flag(s_pill, LV_OBJ_FLAG_HIDDEN);

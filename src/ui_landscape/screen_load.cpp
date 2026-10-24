@@ -18,6 +18,7 @@
 #include "chart_band.h"
 #include "edge_bar.h"
 #include "format.h"
+#include "pill.h"
 #include "theme.h"
 
 namespace {
@@ -82,8 +83,7 @@ lv_obj_t* screen_load_create(lv_obj_t* parent, bool with_breakdown) {
   lv_label_set_text(s_headline, "--");
   lv_obj_t* unit = make_label(s_root, PUCK_FONT_BODY, PUCK_COLOUR_MUTED, -110, -64);
   lv_label_set_text(unit, "kWh used");
-  s_pill = make_label(s_root, PUCK_FONT_LARGE, PUCK_COLOUR_HOME, -110, -24);
-  lv_label_set_text(s_pill, "");
+  s_pill = pill_create(s_root, PUCK_COLOUR_HOME, -110, -24);
 
   // Self-sufficiency, top-right — moved here off the flows screen. Only shown when
   // the source carries the day's flow split (server), so on Modbus/HA the quadrant
@@ -118,7 +118,7 @@ void screen_load_update(const Snapshot& snapshot) {
       draw += snapshot.power.ev.value;
     }
     snprintf(text, sizeof(text), "%.2f kW now", draw);
-    lv_label_set_text(s_pill, text);
+    pill_set_text(s_pill, text);
     lv_obj_clear_flag(s_pill, LV_OBJ_FLAG_HIDDEN);
   } else {
     lv_obj_add_flag(s_pill, LV_OBJ_FLAG_HIDDEN);

@@ -13,6 +13,7 @@
 #include "chart_band.h"
 #include "edge_bar.h"
 #include "format.h"
+#include "pill.h"
 #include "theme.h"
 
 namespace {
@@ -77,8 +78,7 @@ lv_obj_t* screen_battery_create(lv_obj_t* parent) {
   lv_label_set_text(s_headline, "--%");
   s_stored = make_label(s_root, PUCK_FONT_BODY, PUCK_COLOUR_MUTED, -110, -64);
   lv_label_set_text(s_stored, "");
-  s_pill = make_label(s_root, PUCK_FONT_LARGE, PUCK_COLOUR_BATTERY, -110, -24);
-  lv_label_set_text(s_pill, "");
+  s_pill = pill_create(s_root, PUCK_COLOUR_BATTERY, -110, -24);
 
   s_health_caption = make_label(s_root, PUCK_FONT_BODY, PUCK_COLOUR_MUTED, 150, -156);
   lv_label_set_text(s_health_caption, "HEALTH");
@@ -122,7 +122,7 @@ void screen_battery_update(const Snapshot& snapshot) {
     // No +/- sign — the word already says which way it is going.
     puck_format_magnitude(snapshot.power.batt, PUCK_KW_DECIMALS, text, sizeof(text));
     snprintf(pill, sizeof(pill), "%s kW %s", text, charging ? "charging" : "discharging");
-    lv_label_set_text(s_pill, pill);
+    pill_set_text(s_pill, pill);
     lv_obj_clear_flag(s_pill, LV_OBJ_FLAG_HIDDEN);
   } else {
     lv_obj_add_flag(s_pill, LV_OBJ_FLAG_HIDDEN);
