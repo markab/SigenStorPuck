@@ -110,7 +110,21 @@ PowerStatus power_status() {
 void power_loop() {
   if (PUCK_BUTTON_PWR >= 0) {
     // A plain level, polled like BOOT and debounced by buttons.cpp the same way.
-    s_key_down = digitalRead(PUCK_BUTTON_PWR) == LOW;
+    //
+    // Not reported until the key has been seen up once since boot. On battery the
+    // board is switched on *by* pressing PWR, so the press that powered it can
+    // still be down when this first runs — and counted as a hold it would toggle
+    // the auto-cycle at 2 s or power straight back off at 5 s. Waiting for a
+    // release also means a key that read down for good would leave PWR inert
+    // rather than shutting the device down five seconds into every boot.
+    static bool armed = false;
+    const bool down = digitalRead(PUCK_BUTTON_PWR) == LOW;
+    if (!armed) {
+      armed = !down;
+      s_key_down = false;
+      return;
+    }
+    s_key_down = down;
     return;
   }
   if (!s_ready) {
