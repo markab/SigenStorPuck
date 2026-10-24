@@ -1,4 +1,4 @@
-// The live rate in a pill: a rounded capsule tinted in the series colour with the
+// The live rate in a pill: a fully rounded box tinted in the series colour with the
 // text inside it, the same shape the round screens use for the same job. The one
 // thing on a day screen that changes minute to minute, so it should be findable
 // without reading — and set smaller than the headline above it, so it reads as a
