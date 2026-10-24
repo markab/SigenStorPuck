@@ -7,6 +7,7 @@
 #include "forecast_store.h"
 #include "format.h"
 #include "history.h"
+#include "psram_alloc.h"
 #include "solar_metric_layout.h"
 #include "theme.h"
 
@@ -53,7 +54,8 @@ constexpr lv_coord_t ROW_ONE_VALUE_Y = 70;
 constexpr lv_coord_t ROW_TWO_LABEL_Y = 116;
 constexpr lv_coord_t ROW_TWO_VALUE_Y = 142;
 
-HistoryColumn s_forecast_cols[288];
+// 288 columns for the forecast band, allocated in PSRAM by screen_solar_create().
+HistoryColumn* s_forecast_cols = nullptr;
 
 lv_obj_t* s_root = nullptr;
 lv_obj_t* s_forecast_band = nullptr;
@@ -155,6 +157,7 @@ lv_obj_t* screen_solar_create(lv_obj_t* parent, uint8_t figures) {
   // Created before the actual band so it draws behind it. Fed from forecast_store
   // (the whole day, future included), not the history ring — see forecast_store.h.
   // Same geometry and bezel clip as the actual, just fainter.
+  s_forecast_cols = static_cast<HistoryColumn*>(psram_alloc(288 * sizeof(HistoryColumn)));
   s_forecast_band = chart_band_create(s_root, HistorySeries::Pv, PUCK_COLOUR_SOLAR);
   if (s_forecast_band != nullptr) {
     lv_obj_set_size(s_forecast_band, BAND_WIDTH, BAND_HEIGHT);
@@ -257,7 +260,7 @@ void screen_solar_update(const Snapshot& snapshot) {
     uint32_t to = 0;
     float peak = 0.0f;
     const size_t n = chart_band_column_count(s_forecast_band);
-    if (n > 0 && snapshot.valid && snapshot.solar.configured &&
+    if (n > 0 && s_forecast_cols != nullptr && snapshot.valid && snapshot.solar.configured &&
         history_window(history_view(), &from, &to) &&
         forecast_store_columns(from, to, s_forecast_cols, n, &peak) && peak > 0.0f) {
       chart_band_set_columns(s_forecast_band, s_forecast_cols, n, 0.0f, peak);

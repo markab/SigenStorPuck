@@ -3,6 +3,7 @@
 #include <math.h>
 
 #include "board_config.h"
+#include "psram_alloc.h"
 #include "theme.h"
 #include "ui_perf.h"
 
@@ -77,7 +78,10 @@ struct Band {
   // buffer slice the object intersects, and with a 40-line buffer a ~90 px band
   // is three slices. Reducing 1440 samples three times per redraw to draw the
   // same picture would be pure waste.
-  HistoryColumn column[MAX_COLUMNS];
+  //
+  // MAX_COLUMNS of them, allocated by chart_band_create() in PSRAM: six bands'
+  // worth was 20 KB of internal RAM as an array, which a TLS handshake needs more.
+  HistoryColumn* column = nullptr;
   size_t columns = 0;
   float drawn_min = 0.0f;
   float drawn_max = 0.0f;
@@ -383,9 +387,13 @@ void smooth_columns(Band* band) {
   if (half < 1 || band->columns == 0) {
     return;
   }
-  // Static rather than on the stack: this runs on the UI task, one band at a
-  // time, and 208 columns is 2.5 KB that has no business on a task stack.
-  static HistoryColumn source[MAX_COLUMNS];
+  // Not on the stack: this runs on the UI task, one band at a time, and 288
+  // columns is 3.4 KB that has no business on a task stack — nor in internal RAM.
+  static HistoryColumn* const source =
+      static_cast<HistoryColumn*>(psram_alloc(MAX_COLUMNS * sizeof(HistoryColumn)));
+  if (source == nullptr) {
+    return;  // unsmoothed is still a correct curve
+  }
   for (size_t c = 0; c < band->columns; ++c) {
     source[c] = band->column[c];
   }
@@ -434,6 +442,12 @@ lv_obj_t* chart_band_create(lv_obj_t* parent, HistorySeries series, uint32_t col
   lv_obj_clear_flag(obj, LV_OBJ_FLAG_CLICKABLE);
 
   *band = Band{};
+  band->column = static_cast<HistoryColumn*>(psram_alloc(MAX_COLUMNS * sizeof(HistoryColumn)));
+  if (band->column == nullptr) {
+    LV_LOG_WARN("no memory for a chart band");
+    lv_obj_del(obj);
+    return nullptr;
+  }
   band->used = true;
   band->obj = obj;
   band->series = series;

@@ -226,6 +226,13 @@ String page(const String& message, bool message_is_error) {
     }
     html += power.charging ? ", charging" : (power.usb_present ? ", on USB" : ", on battery");
   }
+  // Internal RAM, which is what every HTTPS request spends: a TLS handshake needs
+  // tens of kilobytes of it in one piece, so the largest block is the number that
+  // decides whether the next poll or update check can connect at all. Shown here
+  // rather than only in a failure message, so a squeeze is visible before it bites.
+  html += " &middot; memory: ";
+  html += String(ESP.getFreeHeap() / 1024) + " KB free, largest block ";
+  html += String(ESP.getMaxAllocHeap() / 1024) + " KB";
   html += "</p>";
 
   if (message.length() > 0) {

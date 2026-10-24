@@ -2,7 +2,10 @@
 
 #include <atomic>
 #include <mutex>
+#include <stdlib.h>
 #include <string.h>
+
+#include "psram_alloc.h"
 
 namespace {
 
@@ -12,8 +15,10 @@ constexpr int16_t EMPTY = INT16_MIN;
 
 constexpr size_t SERIES_COUNT = static_cast<size_t>(HistorySeries::Count);
 
+// HISTORY_CAPACITY_MINUTES samples, attached by attach_storage() from one block
+// in PSRAM rather than held here as an array — see that function.
 struct Ring {
-  int16_t sample[HISTORY_CAPACITY_MINUTES];
+  int16_t* sample = nullptr;
 };
 
 // One bank per day being held. The ring indexes by minute modulo its bounded
@@ -69,7 +74,43 @@ std::recursive_mutex s_history_lock;
 // through every band.
 HistoryBank s_view = HistoryBank::Live;
 
+// Every ring's samples, in one block, attached on first use.
+//
+// 3 KB a series, four series, two banks: 24 KB. As a static array it was the
+// largest single thing in internal RAM, and internal RAM is what a TLS handshake
+// needs in one piece — on the 2.41 the update check was failing for want of it.
+// Only the CPU touches these, so PSRAM costs nothing that matters.
+//
+// Locks for itself because one caller (history_revision) reaches bank_of()
+// without the lock; recursive, so the callers that already hold it are fine.
+void attach_storage() {
+  static std::atomic<bool> attached{false};
+  if (attached.load(std::memory_order_acquire)) {
+    return;
+  }
+  const std::lock_guard<std::recursive_mutex> guard(s_history_lock);
+  if (attached.load(std::memory_order_relaxed)) {
+    return;
+  }
+  constexpr size_t banks = static_cast<size_t>(HistoryBank::Count);
+  constexpr size_t samples = banks * SERIES_COUNT * HISTORY_CAPACITY_MINUTES;
+  int16_t* block = static_cast<int16_t*>(psram_alloc(samples * sizeof(int16_t)));
+  if (block == nullptr) {
+    abort();  // 24 KB at boot; nothing after this could run without it anyway
+  }
+  for (size_t i = 0; i < samples; ++i) {
+    block[i] = EMPTY;
+  }
+  for (size_t b = 0; b < banks; ++b) {
+    for (size_t s = 0; s < SERIES_COUNT; ++s) {
+      s_bank[b].ring[s].sample = block + (b * SERIES_COUNT + s) * HISTORY_CAPACITY_MINUTES;
+    }
+  }
+  attached.store(true, std::memory_order_release);
+}
+
 Bank& bank_of(HistoryBank which) {
+  attach_storage();
   const size_t index = static_cast<size_t>(which);
   return s_bank[index < static_cast<size_t>(HistoryBank::Count) ? index : 0];
 }
