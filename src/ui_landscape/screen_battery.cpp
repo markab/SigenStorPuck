@@ -28,6 +28,7 @@ constexpr uint8_t BAND_SMOOTHING = 7;
 lv_obj_t* s_root = nullptr;
 lv_obj_t* s_band = nullptr;
 lv_obj_t* s_edge = nullptr;
+lv_obj_t* s_caption = nullptr;
 lv_obj_t* s_headline = nullptr;
 lv_obj_t* s_stored = nullptr;
 lv_obj_t* s_pill = nullptr;
@@ -72,8 +73,10 @@ lv_obj_t* screen_battery_create(lv_obj_t* parent) {
 
   // Same top-quadrant layout as the solar screen: the left column's caption top
   // line and the right column's first caption both sit at -156.
-  lv_obj_t* caption = make_label(s_root, PUCK_FONT_BODY, PUCK_COLOUR_MUTED, -110, -156);
-  lv_label_set_text(caption, "STATE OF CHARGE");
+  // The caption says what the battery is doing — CHARGING, DISCHARGING, or
+  // STATE OF CHARGE when it is resting — so the pill below can just say "now".
+  s_caption = make_label(s_root, PUCK_FONT_BODY, PUCK_COLOUR_MUTED, -110, -156);
+  lv_label_set_text(s_caption, "STATE OF CHARGE");
   s_headline = make_label(s_root, PUCK_FONT_HERO, PUCK_COLOUR_TEXT, -110, -106);
   lv_label_set_text(s_headline, "--%");
   s_stored = make_label(s_root, PUCK_FONT_BODY, PUCK_COLOUR_MUTED, -110, -64);
@@ -85,7 +88,7 @@ lv_obj_t* screen_battery_create(lv_obj_t* parent) {
   s_health = make_label(s_root, PUCK_FONT_LARGE, PUCK_COLOUR_TEXT, 150, -122);
   lv_label_set_text(s_health, "");
   s_temp_caption = make_label(s_root, PUCK_FONT_BODY, PUCK_COLOUR_MUTED, 150, -82);
-  lv_label_set_text(s_temp_caption, "TEMPERATURE");
+  lv_label_set_text(s_temp_caption, "TEMP");
   s_temp = make_label(s_root, PUCK_FONT_LARGE, PUCK_COLOUR_TEXT, 150, -48);
   lv_label_set_text(s_temp, "");
   return s_root;
@@ -115,13 +118,19 @@ void screen_battery_update(const Snapshot& snapshot) {
     edge_bar_set(s_edge, 0.0f, PUCK_COLOUR_BATTERY);
   }
 
-  if (s_live && snapshot.valid && snapshot.power.batt.known &&
-      fabsf(snapshot.power.batt.value) > 0.0f) {
-    const bool charging = snapshot.power.batt.value > 0.0f;
+  // Which way the battery is going, said once, in the caption. Live only: the
+  // direction is a right-now reading the server cannot date, so a past day keeps
+  // the plain caption — the same reason the pill is hidden there.
+  const bool moving = s_live && snapshot.valid && snapshot.power.batt.known &&
+                      fabsf(snapshot.power.batt.value) > 0.0f;
+  const bool charging = moving && snapshot.power.batt.value > 0.0f;
+  lv_label_set_text(s_caption, !moving ? "STATE OF CHARGE" : (charging ? "CHARGING" : "DISCHARGING"));
+
+  if (moving) {
     char pill[32];
-    // No +/- sign — the word already says which way it is going.
+    // No sign and no direction word: the caption above has already said which way.
     puck_format_magnitude(snapshot.power.batt, PUCK_KW_DECIMALS, text, sizeof(text));
-    snprintf(pill, sizeof(pill), "%s kW %s", text, charging ? "charging" : "discharging");
+    snprintf(pill, sizeof(pill), "%s kW now", text);
     pill_set_text(s_pill, pill);
     lv_obj_clear_flag(s_pill, LV_OBJ_FLAG_HIDDEN);
   } else {
