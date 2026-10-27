@@ -126,6 +126,11 @@ static constexpr int16_t PUCK_SAFE_SQUARE = 410;
 // How old a reading may get before the screen calls it stale. The server's poll
 // interval defaults to 5 s, so this allows several missed cycles before
 // complaining (PLAN.md §A4).
+// Draw the day charts' outline as one anti-aliased line (chart_band.cpp) rather
+// than a 2 px block per column. Off: at this AMOLED's density the blocks already
+// read as a curve, and the line costs more draw time than the panel can spare.
+static constexpr bool PUCK_CHART_SMOOTH_EDGE = false;
+
 static constexpr uint32_t PUCK_STALE_AFTER_S = 30;
 
 // Decimal places on live kW figures. The payload carries two.

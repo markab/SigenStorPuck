@@ -153,6 +153,11 @@ static constexpr uint32_t PUCK_SERIAL_BAUD = 115200;
 // any shared round-UI overlay. The landscape screen-set carries its own geometry.
 static constexpr int16_t PUCK_SAFE_SQUARE = 450;
 
+// Draw the day charts' outline as one anti-aliased line (chart_band.cpp) rather
+// than a 2 px block per column. Off: at this AMOLED's density the blocks already
+// read as a curve, and the line costs more draw time than the panel can spare.
+static constexpr bool PUCK_CHART_SMOOTH_EDGE = false;
+
 static constexpr uint32_t PUCK_STALE_AFTER_S = 30;
 static constexpr int PUCK_KW_DECIMALS = 2;
 static constexpr int PUCK_MAX_DAYS_BACK = 7;
