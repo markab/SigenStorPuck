@@ -15,10 +15,11 @@ namespace {
 constexpr lv_coord_t COLUMN_PX = 2;
 
 // Enough for a band spanning the whole panel, not just the safe square: a
-// bezel-clipped band is drawn edge to edge and lets the glass cut the ends. The
-// 2.41's landscape band is 564 px wide (282 columns at COLUMN_PX), so this must
-// clear that or a wide band stops short of its right edge.
-constexpr size_t MAX_COLUMNS = 288;  // a full-width landscape band at COLUMN_PX
+// bezel-clipped band is drawn edge to edge and lets the glass cut the ends. Taken
+// from the board's width rather than fixed, because a fixed cap was sized for one
+// board and silently cut short a band on a wider one: it stops at the last column
+// rather than failing. The arrays it sizes are in PSRAM (chart_band_create()).
+constexpr size_t MAX_COLUMNS = (PUCK_LCD_WIDTH + COLUMN_PX - 1) / COLUMN_PX;
 
 // Three weights, which is what makes this an envelope rather than a silhouette:
 // a faint wash under the curve, the column's own min-to-max spread picked out a
@@ -50,7 +51,8 @@ constexpr lv_coord_t CENTRE_Y = PUCK_LCD_HEIGHT / 2;
 
 // Enough for every band alive at once: battery (1), solar (2, actual + forecast),
 // load (1) and, on the landscape UI, grid (1). Each carries a MAX_COLUMNS reduce
-// cache, ~3.4 KB, so the pool is sized to what the screens actually build.
+// cache (12 bytes a column: ~3.6 KB on the 2.41), so the pool is sized to what
+// the screens actually build.
 constexpr size_t MAX_BANDS = 6;
 
 struct Band {
