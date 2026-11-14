@@ -20,8 +20,8 @@ set -euo pipefail
 LVGL_TAG="v8.4.0"
 TTF_URL="https://raw.githubusercontent.com/lvgl/lvgl/${LVGL_TAG}/scripts/built_in_font/Montserrat-Medium.ttf"
 
-# Printable ASCII, plus pound sign, degree sign and middle dot.
-RANGE="0x20-0x7E,0xA3,0xB0,0xB7"
+# Printable ASCII, plus pound sign, degree sign, middle dot and en dash.
+RANGE="0x20-0x7E,0xA3,0xB0,0xB7,0x2013"
 
 # 4 bits per pixel matches LVGL's own built-in Montserrat antialiasing.
 BPP=4
