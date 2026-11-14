@@ -13,9 +13,12 @@
 #include <stdio.h>
 #include <string.h>
 
+#include <string>
+
 #include "button_gesture.h"
 #include "day_series.h"
 #include "display_rotation.h"
+#include "events.h"
 #include "forecast_store.h"
 #include "history.h"
 #include "history_backfill_retry.h"
@@ -1735,6 +1738,306 @@ void test_screen_window() {
   check(screen_local_minute(MIDNIGHT_UTC + 14 * 3600, 660) == 60, "wrapping forward past midnight");
 }
 
+// --- grid events ------------------------------------------------------------
+
+// One /api/events event, every field present, with the overrides spliced in
+// after the defaults (ArduinoJson keeps the last of a repeated key).
+std::string event_json(const char* overrides) {
+  std::string text =
+      "{\"kind\":\"saving\",\"start\":1794591000,\"end\":1794594600,\"state\":\"done\","
+      "\"import_kwh\":0.12,\"export_kwh\":4.2,\"cut_kwh\":3.8,\"points\":1520,"
+      "\"points_estimated\":true,\"cap_kwh\":16.0,\"direction\":\"export\","
+      "\"earned_gbp\":1.26,\"price_p\":30.0,\"soc_start\":78,\"soc_end\":41";
+  if (overrides != nullptr && overrides[0] != '\0') {
+    text += ",";
+    text += overrides;
+  }
+  text += "}";
+  return text;
+}
+
+bool parse_events(const std::string& json, EventList* out) {
+  return events_parse(json.c_str(), json.size(), out);
+}
+
+void test_events() {
+  printf("grid events\n");
+
+  // A full payload: every field read, nothing invented.
+  {
+    const std::string json = "{\"now\":1794678480,\"current\":" +
+                             event_json("\"kind\":\"axle\",\"state\":\"live\"") +
+                             ",\"past\":[" + event_json("") + "]}";
+    EventList list;
+    check(parse_events(json, &list), "full payload parses");
+    check(list.valid && list.now == 1794678480u, "now read");
+    check(list.has_current && list.current.kind == EventKind::Axle &&
+              list.current.state == EventState::Live,
+          "current kind and state read");
+    check(list.past_count == 1, "one past event");
+    const GridEvent& e = list.past[0];
+    check(e.kind == EventKind::Saving && e.state == EventState::Done, "past kind and state");
+    check(e.start == 1794591000u && e.has_end && e.end == 1794594600u, "window read");
+    check(e.direction == EventDirection::Export, "direction read");
+    check(e.import_kwh.known && e.export_kwh.known && e.cut_kwh.known && e.cap_kwh.known &&
+              e.earned_gbp.known && e.price_p.known && e.soc_start.known && e.soc_end.known,
+          "every figure known");
+    check_near(e.cut_kwh.value, 3.8f, "cut kWh");
+    check_near(e.earned_gbp.value, 1.26f, "earned");
+    check_near(e.soc_end.value, 41.0f, "soc at the end");
+    check(e.points.known && e.points.value == 1520 && e.points_estimated, "points and estimate");
+  }
+
+  // Nulls stay unknown — never zero, and a null end is not 1970.
+  {
+    const std::string json =
+        "{\"now\":1794678480,\"current\":null,\"past\":[" +
+        event_json("\"kind\":\"axle\",\"end\":null,\"import_kwh\":null,\"export_kwh\":null,"
+                   "\"cut_kwh\":null,\"points\":null,\"points_estimated\":false,"
+                   "\"cap_kwh\":null,\"direction\":null,\"earned_gbp\":null,"
+                   "\"price_p\":null,\"soc_start\":null,\"soc_end\":null") +
+        "]}";
+    EventList list;
+    check(parse_events(json, &list), "all-null event parses");
+    check(!list.has_current, "current: null means no current event");
+    const GridEvent& e = list.past[0];
+    check(!e.has_end && e.end == 0u, "end: null is unknown, not the epoch");
+    check(!e.import_kwh.known && !e.export_kwh.known && !e.cut_kwh.known && !e.cap_kwh.known &&
+              !e.earned_gbp.known && !e.price_p.known && !e.soc_start.known &&
+              !e.soc_end.known && !e.points.known,
+          "null figures stay unknown");
+    check(e.direction == EventDirection::Unknown, "null direction is unknown");
+    check(events_renderable(e), "an event with no end can still be drawn");
+
+    char when[48];
+    events_format_when(e, 1794678480u, 0, when, sizeof(when));
+    check(strcmp(when, "Yesterday 17:30") == 0, "no end: the window is the start alone");
+    // Live with no end: no countdown, and it is not ended by the clock.
+    GridEvent live = e;
+    live.state = EventState::Live;
+    live.start = 1794677400u;
+    char status[48];
+    events_format_status(live, 1794677400u + 7200u, status, sizeof(status));
+    check(strcmp(status, "Live") == 0, "live with no end says Live, no minutes");
+    check(events_state_at(live, 1794677400u + 90000u) == EventState::Live,
+          "no end never times out locally");
+
+    EventFigure figures[2];
+    const size_t count = events_figures(e, figures, 2);
+    check(count == 2 && strcmp(figures[0].value, "-- kWh") == 0 &&
+              strcmp(figures[1].value, "\xC2\xA3--") == 0,
+          "unknown axle figures render as dashes");
+  }
+
+  // Strings this firmware does not know parse as Unknown and are skipped.
+  {
+    const std::string json =
+        "{\"now\":1794678480,\"current\":" +
+        event_json("\"kind\":\"power_cut\",\"state\":\"live\"") + ",\"past\":[" +
+        event_json("\"state\":\"cancelled\"") + "," +
+        event_json("\"kind\":\"happy_hour\",\"direction\":\"sideways\"") + "]}";
+    EventList list;
+    check(parse_events(json, &list), "unknown kind/state strings still parse");
+    check(list.has_current && list.current.kind == EventKind::Unknown, "unknown kind kept");
+    check(list.past[0].state == EventState::Unknown, "unknown state kept");
+    check(list.past[1].direction == EventDirection::Unknown, "unknown direction kept");
+    check(!events_renderable(list.current) && !events_renderable(list.past[0]),
+          "unknown kind or state is not drawn");
+    check(events_featured(list) == &list.past[1],
+          "featured skips what cannot be drawn");
+    check(strcmp(events_title(list.current), "") == 0, "unknown kind has no title");
+  }
+
+  // Empty lists and the featured fallback.
+  {
+    EventList list;
+    check(parse_events("{\"now\":1794678480,\"current\":null,\"past\":[]}", &list),
+          "empty lists parse");
+    check(list.valid && !list.has_current && list.past_count == 0, "nothing in them");
+    check(events_featured(list) == nullptr, "nothing featured");
+    check(parse_events("{\"now\":1794678480}", &list) && list.past_count == 0,
+          "absent lists are empty");
+    EventList never;
+    check(events_featured(never) == nullptr, "an unparsed list features nothing");
+
+    const std::string past_only =
+        "{\"now\":1794678480,\"current\":null,\"past\":[" + event_json("") + "," +
+        event_json("\"kind\":\"axle\"") + "]}";
+    check(parse_events(past_only, &list), "past-only payload parses");
+    check(events_featured(list) == &list.past[0], "no current: the newest past is featured");
+  }
+
+  // More past events than the struct holds: truncated, newest kept.
+  {
+    std::string json = "{\"now\":1794678480,\"current\":null,\"past\":[";
+    for (int i = 0; i < 11; ++i) {
+      char overrides[48];
+      snprintf(overrides, sizeof(overrides), "\"start\":%d", 1794000000 - i * 86400);
+      json += (i == 0 ? "" : ",") + event_json(overrides);
+    }
+    json += "]}";
+    EventList list;
+    check(parse_events(json, &list), "long list parses");
+    check(list.past_count == EVENTS_MAX_PAST, "truncated to EVENTS_MAX_PAST");
+    check(list.past[0].start == 1794000000u &&
+              list.past[EVENTS_MAX_PAST - 1].start ==
+                  1794000000u - (EVENTS_MAX_PAST - 1) * 86400u,
+          "the newest are the ones kept, in order");
+  }
+
+  // Malformed payloads are rejected and leave the last good list alone.
+  {
+    EventList list;
+    parse_events("{\"now\":1794678480,\"current\":null,\"past\":[" + event_json("") + "]}",
+                 &list);
+    check(!parse_events("{\"now\":1794678480,\"past\":[", &list), "truncated JSON rejected");
+    check(!parse_events("[1,2,3]", &list), "a top-level array rejected");
+    check(!parse_events("{\"current\":null,\"past\":[]}", &list), "a missing now rejected");
+    check(!parse_events("", &list), "empty body rejected");
+    check(list.valid && list.past_count == 1, "a rejected payload leaves the list untouched");
+  }
+
+  // The server's own test example: an upcoming happy hour, a done axle export.
+  {
+    const char* json =
+        "{\"now\":1794650400,\"current\":{\"kind\":\"happy_hour\",\"start\":1794747600,"
+        "\"end\":1794751200,\"state\":\"upcoming\",\"import_kwh\":null,\"export_kwh\":null,"
+        "\"cut_kwh\":null,\"points\":null,\"points_estimated\":false,\"cap_kwh\":16.0,"
+        "\"direction\":null,\"earned_gbp\":null,\"price_p\":null,\"soc_start\":null,"
+        "\"soc_end\":null},\"past\":[{\"kind\":\"axle\",\"start\":1794502800,"
+        "\"end\":1794506400,\"state\":\"done\",\"import_kwh\":0.0,\"export_kwh\":4.2,"
+        "\"cut_kwh\":null,\"points\":null,\"points_estimated\":false,\"cap_kwh\":null,"
+        "\"direction\":\"export\",\"earned_gbp\":1.26,\"price_p\":30.0,\"soc_start\":null,"
+        "\"soc_end\":null}]}";
+    EventList list;
+    check(events_parse(json, strlen(json), &list), "server example parses");
+    char text[48];
+    events_format_when(list.current, list.now, 0, text, sizeof(text));
+    check(strcmp(text, "Tomorrow 13:00\xE2\x80\x93" "14:00") == 0, "upcoming tomorrow");
+    events_format_status(list.current, list.now, text, sizeof(text));
+    check(strcmp(text, "In 27 h") == 0, "a day ahead in hours");
+    EventFigure figures[2];
+    check(events_figures(list.current, figures, 2) == 1 &&
+              strcmp(figures[0].value, "-- of 16 kWh") == 0,
+          "upcoming happy hour shows its cap");
+    check(events_figures(list.past[0], figures, 2) == 2 &&
+              strcmp(figures[0].value, "4.2 kWh") == 0 &&
+              strcmp(figures[0].caption, "EXPORTED") == 0 &&
+              strcmp(figures[1].value, "\xC2\xA3" "1.26") == 0,
+          "axle export and earnings");
+    check(strcmp(events_title(list.past[0]), "AXLE EXPORT") == 0, "axle export title");
+  }
+
+  // Wording against the clock, local time from a UTC instant.
+  {
+    GridEvent e;
+    e.kind = EventKind::Saving;
+    e.state = EventState::Live;
+    e.start = 1794677400u;  // 2026-11-14 17:30 UTC, a Saturday
+    e.end = 1794681000u;    // 18:30
+    e.has_end = true;
+    char text[48];
+    events_format_status(e, 1794678480u, text, sizeof(text));  // 17:48
+    check(strcmp(text, "Live \xC2\xB7 42 min left") == 0, "live countdown");
+    events_format_when(e, 1794678480u, 0, text, sizeof(text));
+    check(strcmp(text, "Tonight 17:30\xE2\x80\x93" "18:30") == 0, "tonight in winter");
+    // In BST the same instants are an hour later, and still tonight.
+    events_format_when(e, 1794678480u, 60, text, sizeof(text));
+    check(strcmp(text, "Tonight 18:30\xE2\x80\x93" "19:30") == 0, "the offset moves the clock");
+    // 23:30 UTC on the 14th is already the 15th eleven hours east.
+    GridEvent late = e;
+    late.start = 1794677400u + 6 * 3600u;
+    late.has_end = false;
+    events_format_when(late, 1794678480u, 660, text, sizeof(text));
+    check(strcmp(text, "Today 10:30") == 0, "the local day, not the UTC one, decides Today");
+    events_format_when(late, 1794678480u, 0, text, sizeof(text));
+    check(strcmp(text, "Tonight 23:30") == 0, "the same instant is tonight in UTC");
+    events_format_when(late, 1794678480u - 86400u, 0, text, sizeof(text));
+    check(strcmp(text, "Tomorrow 23:30") == 0, "a day ahead is tomorrow");
+    events_format_when(late, 1794678480u + 3u * 86400u, 0, text, sizeof(text));
+    check(strcmp(text, "Sat 14 Nov 23:30") == 0, "further away is a date");
+
+    check(events_state_at(e, 1794681000u) == EventState::Done, "live ends at its end");
+    GridEvent upcoming = e;
+    upcoming.state = EventState::Upcoming;
+    check(events_state_at(upcoming, 1794677300u) == EventState::Upcoming, "upcoming before");
+    check(events_state_at(upcoming, 1794677400u) == EventState::Live, "upcoming goes live");
+    events_format_status(upcoming, 1794677400u - 8100u, text, sizeof(text));
+    check(strcmp(text, "In 2 h 15 min") == 0, "hours and minutes ahead");
+    events_format_status(upcoming, 1794677400u - 30u, text, sizeof(text));
+    check(strcmp(text, "Starting") == 0, "under a minute is starting");
+    events_format_status(upcoming, 1794677400u - 5u * 86400u, text, sizeof(text));
+    check(strcmp(text, "In 5 days") == 0, "days ahead");
+
+    // A deferred session can be current: it says so whatever the clock says.
+    GridEvent deferred = e;
+    deferred.state = EventState::Deferred;
+    deferred.cut_kwh = {true, 0.6f};
+    events_format_status(deferred, 1794678480u, text, sizeof(text));
+    check(strcmp(text, "Deferred") == 0, "deferred stays deferred while live");
+    EventFigure figures[2];
+    check(events_figures(deferred, figures, 2) == 1 && strcmp(figures[0].value, "0.6 kWh") == 0,
+          "deferred shows the cut and no points");
+
+    GridEvent saving = e;
+    saving.state = EventState::Done;
+    saving.cut_kwh = {true, 3.8f};
+    saving.points = {true, 1520};
+    saving.points_estimated = true;
+    check(events_figures(saving, figures, 2) == 2 &&
+              strcmp(figures[1].value, "~1,520 pts") == 0 &&
+              strcmp(figures[1].caption, "ESTIMATED") == 0,
+          "estimated points are marked");
+    saving.points_estimated = false;
+    saving.points = {true, 250};
+    events_figures(saving, figures, 2);
+    check(strcmp(figures[1].value, "250 pts") == 0 && strcmp(figures[1].caption, "AWARDED") == 0,
+          "awarded points are not");
+
+    GridEvent happy;
+    happy.kind = EventKind::HappyHour;
+    happy.import_kwh = {true, 11.2f};
+    happy.cap_kwh = {true, 16.0f};
+    events_figures(happy, figures, 2);
+    check(strcmp(figures[0].value, "11.2 of 16 kWh") == 0, "happy hour against its cap");
+  }
+
+  // The fixture the simulators draw, when run from the repo root.
+  {
+    FILE* file = fopen("test/fixtures/events.json", "rb");
+    if (file != nullptr) {
+      std::string json;
+      char buffer[512];
+      size_t read = 0;
+      while ((read = fread(buffer, 1, sizeof(buffer), file)) > 0) {
+        json.append(buffer, read);
+      }
+      fclose(file);
+      EventList list;
+      check(parse_events(json, &list), "events.json parses");
+      check(list.has_current && list.current.kind == EventKind::Axle &&
+                list.current.state == EventState::Live,
+            "events.json: a live axle event is current");
+      check(list.past_count == 6, "events.json: six past events");
+      bool every_one_drawn = true;
+      bool one_without_end = false;
+      for (uint8_t i = 0; i < list.past_count; ++i) {
+        every_one_drawn = every_one_drawn && events_renderable(list.past[i]);
+        one_without_end = one_without_end || !list.past[i].has_end;
+      }
+      check(every_one_drawn, "events.json: every past event can be drawn");
+      check(one_without_end, "events.json: one event has no end time");
+    }
+  }
+
+  // The offset the events screen borrows from the charts.
+  {
+    int32_t tz = 12345;
+    history_set_timezone(HistoryBank::Day, 60);
+    check(history_timezone(HistoryBank::Day, &tz) && tz == 60, "history hands back its offset");
+  }
+}
+
 }  // namespace
 
 int run_selftest() {
@@ -1761,6 +2064,7 @@ int run_selftest() {
   test_button_gestures();
   test_solar_forecast();
   test_screen_window();
+  test_events();
   printf("\n%d checks, %d failed\n", s_checks, s_failures);
   return s_failures == 0 ? 0 : 1;
 }

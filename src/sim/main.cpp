@@ -61,6 +61,12 @@ std::vector<std::string> discover_fixtures(const std::string& directory) {
   }
   while (const dirent* entry = readdir(dir)) {
     const std::string name = entry->d_name;
+    // Summary fixtures are numbered (01_normal.json ...). Anything else in the
+    // directory is another endpoint's payload — events.json is /api/events —
+    // and would otherwise be drawn as a summary with every figure unknown.
+    if (name.empty() || name[0] < '0' || name[0] > '9') {
+      continue;
+    }
     if (name.size() > 5 && name.compare(name.size() - 5, 5, ".json") == 0) {
       found.push_back(directory + "/" + name);
     }

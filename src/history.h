@@ -114,6 +114,13 @@ void history_reduce(HistoryBank which, HistorySeries series, uint32_t from_minut
 // hand, as the simulator does.
 void history_set_timezone(HistoryBank which, int32_t minutes_east);
 
+// The offset the bank's day is anchored to, when one has been set: from the
+// server's day series, the snapshot's own `tz`, or the native forecast. False
+// (and `minutes_east` untouched) until then. For anything else that has to turn
+// the UTC device clock into local time the same way the charts do — the events
+// screen's "Tonight 17:30".
+bool history_timezone(HistoryBank which, int32_t* minutes_east);
+
 // Supplies an authoritative local-day boundary when the source knows it. Home
 // Assistant renders both local midnights using its timezone database, which is
 // more accurate than reconstructing midnight from the current UTC offset on a

@@ -316,6 +316,16 @@ void history_set_timezone(HistoryBank which, int32_t minutes_east) {
   bank.tz_known = true;
 }
 
+bool history_timezone(HistoryBank which, int32_t* minutes_east) {
+  const std::lock_guard<std::recursive_mutex> guard(s_history_lock);
+  const Bank& bank = bank_of(which);
+  if (!bank.tz_known || minutes_east == nullptr) {
+    return false;
+  }
+  *minutes_east = bank.tz_minutes;
+  return true;
+}
+
 void history_set_day_window(HistoryBank which, uint32_t from_minute,
                             uint32_t to_minute) {
   const std::lock_guard<std::recursive_mutex> guard(s_history_lock);
