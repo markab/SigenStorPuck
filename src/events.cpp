@@ -349,6 +349,40 @@ size_t events_figures(const GridEvent& event, EventFigure* out, size_t max) {
   }
   char value[24];
   size_t count = 0;
+
+  // Before it starts every outcome is unknown, and a row of dashes would only
+  // say so at length. A booked event shows what is known ahead instead, if
+  // anything: the allowance, the price, points already estimated for a joined
+  // session.
+  if (event.state == EventState::Upcoming) {
+    switch (event.kind) {
+      case EventKind::HappyHour:
+        if (event.cap_kwh.known) {
+          snprintf(value, sizeof(value), "%g kWh", event.cap_kwh.value);
+          set_figure(&out[count++], value, "FREE UP TO");
+        }
+        break;
+      case EventKind::Axle:
+        if (event.price_p.known) {
+          snprintf(value, sizeof(value), "%.1fp/kWh", event.price_p.value);
+          set_figure(&out[count++], value, "PRICE");
+        }
+        break;
+      case EventKind::Saving:
+        if (event.points.known) {
+          char grouped[16];
+          format_grouped(event.points.value, grouped, sizeof(grouped));
+          snprintf(value, sizeof(value), "%s%s pts", event.points_estimated ? "~" : "",
+                   grouped);
+          set_figure(&out[count++], value, event.points_estimated ? "ESTIMATED" : "POINTS");
+        }
+        break;
+      default:
+        break;
+    }
+    return count;
+  }
+
   switch (event.kind) {
     case EventKind::Saving: {
       format_kwh(event.cut_kwh, value, sizeof(value));

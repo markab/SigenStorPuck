@@ -1920,8 +1920,18 @@ void test_events() {
     check(strcmp(text, "In 27 h") == 0, "a day ahead in hours");
     EventFigure figures[2];
     check(events_figures(list.current, figures, 2) == 1 &&
-              strcmp(figures[0].value, "-- of 16 kWh") == 0,
+              strcmp(figures[0].value, "16 kWh") == 0 &&
+              strcmp(figures[0].caption, "FREE UP TO") == 0,
           "upcoming happy hour shows its cap");
+    GridEvent booked = list.current;
+    booked.kind = EventKind::Saving;
+    check(events_figures(booked, figures, 2) == 0, "a booked session has no figures yet");
+    GridEvent running = list.current;
+    running.state = EventState::Live;
+    running.import_kwh = {true, 4.2f};
+    check(events_figures(running, figures, 2) == 1 &&
+              strcmp(figures[0].value, "4.2 of 16 kWh") == 0,
+          "a live happy hour counts against its cap");
     check(events_figures(list.past[0], figures, 2) == 2 &&
               strcmp(figures[0].value, "4.2 kWh") == 0 &&
               strcmp(figures[0].caption, "EXPORTED") == 0 &&

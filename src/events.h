@@ -147,5 +147,8 @@ struct EventFigure {
 //   happy hour   "11.2 of 16 kWh" ("IMPORTED"), or "11.2 kWh" with no cap
 //   free import  kWh imported ("IMPORTED")
 //   axle         kWh exported or imported, and "£1.26" ("EARNED")
+// A booked (upcoming) event has no outcome yet, so it shows only what is known
+// ahead, and may show nothing: a happy hour's cap ("16 kWh", "FREE UP TO"), an
+// Axle event's price ("30.0p/kWh", "PRICE"), a joined session's estimated points.
 // Returns how many were written to `out` (which must hold `max`).
 size_t events_figures(const GridEvent& event, EventFigure* out, size_t max);
