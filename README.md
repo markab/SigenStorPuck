@@ -4,7 +4,8 @@ A round touchscreen status display for a Sigenergy SigenStor solar and battery s
 
 It runs on a Waveshare **ESP32-S3-Touch-AMOLED-1.75** — a 466×466 round AMOLED with
 capacitive touch — and shows live power flow, battery state, solar generation against
-forecast, consumption, where the day's energy went, and what it all cost.
+forecast, consumption, where the day's energy went, what it all cost, and the grid
+events you take part in.
 
 A second board is in **early-release testing**: the Waveshare
 **ESP32-S3-Touch-AMOLED-2.41 (V1 revision)**, a 600×450 landscape AMOLED. It runs the same
@@ -22,7 +23,7 @@ reads your inverter or gateway directly over your own network. This remains the 
 for a new installation.
 
 **SigenStorDisplay Server.** A separate companion application that manages and logs a
-Sigenergy plant, which the Puck can then read from. It unlocks the Flows and Cost
+Sigenergy plant, which the Puck can then read from. It unlocks the Flows, Cost and Events
 screens, stepping back through past days, and complete daily charts.
 **SigenStorDisplay has not been released yet.** The Puck already has full support for it
 built in and ready for when it is, but until then those parts are unavailable.
@@ -44,6 +45,7 @@ entity IDs are assumed.
 | **Load** screen | ◐ headline and live draw only | ● | ◐ headline and live draw only |
 | **Flows** screen | — | ● | — |
 | **Cost** screen | — | ● | — |
+| **Events** screen | — | ● from SigenStorDisplay 0.45.0 | — |
 | **Settings** screen | ● | ● | ● |
 | Solar forecast | ● calculated on the Puck | ● from the server | ● disabled, Puck, or HA entities |
 | Today's charts | ◐ from when the Puck was switched on | ● the whole day, and after a restart | ◐ restored from HA Recorder when available; otherwise from boot |
@@ -52,8 +54,8 @@ entity IDs are assumed.
 
 ● full · ◐ partial · — not available
 
-On Modbus and Home Assistant the Flows and Cost screens are removed altogether rather
-than left showing dashes, so you get five screens instead of seven.
+On Modbus and Home Assistant the Flows, Cost and Events screens are removed altogether
+rather than left showing dashes, so you get six screens instead of nine.
 
 ## The screens
 
@@ -72,8 +74,8 @@ Which screens appear at all is up to you — see **Screens** under Settings.
 | **Solar** — generation so far today, with the ring showing progress against the day's forecast. Then the forecast total, how much is still to come, how you are doing against it, and the expected peak. A figure that isn't known yet shows `--` and keeps its place; with Home Assistant forecast entities, a figure you haven't mapped is left off.<br><br>*Works on all three sources.* Home Assistant can use no forecast, calculate one on the Puck, or map HA forecast entities. | **Load** — everything used today, with what is being drawn right now.<br><br>*Partial on Modbus and HA.* The headline total, live figure and locally recorded curve work. The four source-breakdown figures need a **SigenStorDisplay Server**. |
 | <img src="docs/img/flows.png" width="300" alt="Energy flows"> | <img src="docs/img/cost.png" width="300" alt="Cost"> |
 | **Flows** — where today's energy came from and where it went. Sources down the left, destinations down the right, one ribbon per path. The ring is how self-sufficient you have been.<br><br>**SigenStorDisplay Server Only.** | **Cost** — what you have saved today, the unit rate you are paying right now, and the next few tariff slots coloured against it.<br><br>**SigenStorDisplay Server Only.** |
-| <img src="docs/img/settings.png" width="300" alt="Settings"> | |
-| **Settings** — always the last screen. Scan the code with your phone, or type either address into a browser, to reach the settings page.<br><br>*Works on all three sources.* | |
+| <img src="docs/img/events.png" width="300" alt="Events"> | <img src="docs/img/settings.png" width="300" alt="Settings"> |
+| **Events** — the grid event that matters most right now: an Octopus Saving Session, a weekend Happy Hour, another free-import period, or an Axle event. The one on now, else the next one booked, else the last one to finish: when it is, how long is left or until it starts, and what it came to — energy cut and points for a saving session (`~` marks points not yet confirmed), how much of a Happy Hour's allowance you used, what was imported, or what an Axle event exported and paid.<br><br>**SigenStorDisplay Server Only**, version 0.45.0 or later. An older server shows "No events". | **Settings** — always the last screen. Scan the code with your phone, or type either address into a browser, to reach the settings page.<br><br>*Works on all three sources.* |
 
 Behind the solar, load and battery screens is that day's own curve, drawn faintly so it
 does not compete with the figures. In Home Assistant mode the Puck starts one optional,
@@ -234,7 +236,7 @@ Most changes take effect straight away; the ones needing a restart are marked �
 
 <table>
 <tr><th width="32%">Option</th><th>What it does</th></tr>
-<tr><td><strong>Plant over Modbus (LAN only)</strong> ↻</td><td><strong>The default.</strong> Read your inverter or gateway directly. Removes the Flows and Cost screens, which need data only a server has.</td></tr>
+<tr><td><strong>Plant over Modbus (LAN only)</strong> ↻</td><td><strong>The default.</strong> Read your inverter or gateway directly. Removes the Flows, Cost and Events screens, which need data only a server has.</td></tr>
 <tr><td><strong>SigenStor Display server</strong> ↻</td><td>Read from a <strong>SigenStorDisplay Server</strong>. Not yet available.</td></tr>
 <tr><td><strong>Home Assistant</strong> ↻</td><td>Read generic, explicitly mapped energy entities through Home Assistant's REST API. The Puck does not contact the plant over Modbus in this mode.</td></tr>
 </table>
@@ -340,7 +342,7 @@ mapped is left off the Solar screen from the next restart.
 <tr><td><strong>Orientation</strong> ↻</td><td>Quarter turns, <code>0</code> to <code>3</code>, for mounting the Puck whichever way round suits.</td></tr>
 <tr><td><strong>Auto-cycle every</strong></td><td>Seconds between automatically moving to the next screen. <code>0</code> turns it off. Also switchable by holding PWR for 2 seconds.</td></tr>
 <tr><td><strong>Sweep every</strong></td><td>Minutes between a brightness band sweeping across the screen. This evens out wear on the panel, which matters on an AMOLED showing much the same picture all day. <code>0</code> turns it off.</td></tr>
-<tr><td><strong>Screens</strong> ↻</td><td>A tick per screen for whether it appears at all, and a second for whether the auto-cycle stops on it. Power and Settings are always shown, so their boxes are fixed. On Modbus and Home Assistant, Flows and Cost are struck through and cannot be ticked.</td></tr>
+<tr><td><strong>Screens</strong> ↻</td><td>A tick per screen for whether it appears at all, and a second for whether the auto-cycle stops on it. Power and Settings are always shown, so their boxes are fixed. On Modbus and Home Assistant, Flows, Cost and Events are struck through and cannot be ticked.</td></tr>
 </table>
 
 ### Firmware
