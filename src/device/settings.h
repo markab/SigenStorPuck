@@ -123,8 +123,11 @@ struct Settings {
   // Both default to everything. The settings screen's visibility bit is ignored
   // — it is the only route back to this page from the device itself, so hiding
   // it would strand anyone who did not already know the address.
-  uint8_t screens_visible = 0xFF;
-  uint8_t screens_rotate = 0xFF;
+  //
+  // Sixteen bits (PuckScreenMask) since the ninth screen; settings.cpp reads the
+  // eight-bit masks older firmware stored.
+  uint16_t screens_visible = 0xFFFF;
+  uint16_t screens_rotate = 0xFFFF;
 
   // --- native PV forecast (docs/PLAN.md §D4) --------------------------------
   //
@@ -228,7 +231,7 @@ bool settings_set_rotate_enabled(bool enabled);
 // Which screens exist and which auto-cycle, as PuckScreen bit masks. Takes
 // effect on the next boot, like `source` and `orientation`: the tileview's tiles
 // are built once.
-bool settings_set_screens(uint8_t visible, uint8_t rotate);
+bool settings_set_screens(uint16_t visible, uint16_t rotate);
 
 bool settings_set_check_updates(bool enabled);
 

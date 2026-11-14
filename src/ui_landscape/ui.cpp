@@ -33,7 +33,7 @@ namespace {
 // is what makes this a contained change.
 constexpr int MAX_SCREENS = PUCK_SCREEN_COUNT;
 int s_screen_count = 0;
-uint8_t s_rotate_mask = 0xFF;
+PuckScreenMask s_rotate_mask = 0xFFFF;
 
 // Tile index -> which screen it holds. Built once, and the only thing that knows
 // the mapping: with screens switchable, position no longer implies identity.
@@ -323,9 +323,9 @@ void on_tile_scroll_end(lv_event_t* /*event*/) {
 lv_obj_t* ui_create(lv_obj_t* parent, const UiConfig& config) {
   // The settings screen is built whatever its bit says: it carries the QR code
   // and the address of this page, and is the only way back to it from the glass.
-  uint8_t wanted = config.visible | (1u << PUCK_SCREEN_SETTINGS);
+  PuckScreenMask wanted = config.visible | (1u << PUCK_SCREEN_SETTINGS);
   if (!config.with_detailed_screens) {
-    wanted &= static_cast<uint8_t>(~PUCK_DETAILED_SCREENS);
+    wanted &= static_cast<PuckScreenMask>(~PUCK_DETAILED_SCREENS);
   }
   // Screen 1 is the device's reason to exist and the one every failure mode
   // falls back to. Leaving nothing but the settings screen would look broken.

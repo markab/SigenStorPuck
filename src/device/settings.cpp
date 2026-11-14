@@ -25,14 +25,27 @@ constexpr const char* KEY_FINE = "fine_deg10";
 constexpr const char* KEY_ROTATE = "rotate_s";
 constexpr const char* KEY_SWEEP = "sweep_min";
 constexpr const char* KEY_ROT_ON = "rotate_on";
+// The screen masks as firmware up to 0.15.x stored them: one byte each, which
+// held eight screens and no more. Still written (the low byte) so a device taken
+// back to older firmware keeps its choices, and read when the 16-bit keys below
+// are absent or out of date.
 constexpr const char* KEY_SCR_VIS = "scr_vis";
 constexpr const char* KEY_SCR_ROT = "scr_rot";
-// How many screen ids existed when the two masks above were written. A screen
-// added since has its bit stored as 0 — "off" by accident, not by choice — so
-// on load those bits are switched on. Absent means the masks were written by
-// firmware with 7 screens (up to and including Load), before this key existed.
+// The same masks at 16 bits (PuckScreenMask), from 0.16.0's ninth screen on.
+// New keys rather than the old ones rewritten wider: NVS types its entries, and
+// a getUShort() on a key written by putUChar() does not read it.
+constexpr const char* KEY_SCR_VIS16 = "scr_vis16";
+constexpr const char* KEY_SCR_ROT16 = "scr_rot16";
+// How many screen ids existed when the masks were written. A screen added since
+// has its bit stored as 0 — "off" by accident, not by choice — so on load those
+// bits are switched on. Absent means the masks were written by firmware with 7
+// screens (up to and including Load), before this key existed.
 constexpr const char* KEY_SCR_KNOWN = "scr_known";
 constexpr uint8_t SCREENS_BEFORE_KNOWN_KEY = 7;
+// The first screen count saved alongside the 16-bit keys. A smaller scr_known
+// means older firmware saved last — after a downgrade and back — so its
+// eight-bit masks are the newer choice and the 16-bit ones are stale.
+constexpr uint8_t SCREENS_WITH_WIDE_MASKS = 9;
 constexpr const char* KEY_UPDATES = "updates";
 constexpr const char* KEY_SOURCE = "source";
 constexpr const char* KEY_HOSTNAME = "hostname";
@@ -97,14 +110,25 @@ void settings_begin() {
   s_settings.rotate_s = prefs.getUInt(KEY_ROTATE, s_settings.rotate_s);
   s_settings.sweep_min = prefs.getUInt(KEY_SWEEP, s_settings.sweep_min);
   s_settings.rotate_enabled = prefs.getBool(KEY_ROT_ON, s_settings.rotate_enabled);
-  s_settings.screens_visible = prefs.getUChar(KEY_SCR_VIS, s_settings.screens_visible);
-  s_settings.screens_rotate = prefs.getUChar(KEY_SCR_ROT, s_settings.screens_rotate);
-  if (prefs.isKey(KEY_SCR_VIS)) {
-    // Screens newer than the stored masks start on, like on a fresh device.
+  {
     const uint8_t known = prefs.getUChar(KEY_SCR_KNOWN, SCREENS_BEFORE_KNOWN_KEY);
-    for (uint8_t i = known; i < PUCK_SCREEN_COUNT; ++i) {
-      s_settings.screens_visible |= static_cast<uint8_t>(1u << i);
-      s_settings.screens_rotate |= static_cast<uint8_t>(1u << i);
+    bool stored = true;
+    if (prefs.isKey(KEY_SCR_VIS16) && known >= SCREENS_WITH_WIDE_MASKS) {
+      s_settings.screens_visible = prefs.getUShort(KEY_SCR_VIS16, s_settings.screens_visible);
+      s_settings.screens_rotate = prefs.getUShort(KEY_SCR_ROT16, s_settings.screens_rotate);
+    } else if (prefs.isKey(KEY_SCR_VIS)) {
+      // Eight bits from older firmware: screens 0-7 as saved, nothing above.
+      s_settings.screens_visible = prefs.getUChar(KEY_SCR_VIS, 0xFF);
+      s_settings.screens_rotate = prefs.getUChar(KEY_SCR_ROT, 0xFF);
+    } else {
+      stored = false;  // never saved: the all-on defaults stand
+    }
+    if (stored) {
+      // Screens newer than the stored masks start on, like on a fresh device.
+      for (uint8_t i = known; i < PUCK_SCREEN_COUNT; ++i) {
+        s_settings.screens_visible |= static_cast<uint16_t>(1u << i);
+        s_settings.screens_rotate |= static_cast<uint16_t>(1u << i);
+      }
     }
   }
   s_settings.check_updates = prefs.getBool(KEY_UPDATES, s_settings.check_updates);
@@ -585,13 +609,16 @@ bool settings_set_rotate_enabled(bool enabled) {
   return true;
 }
 
-bool settings_set_screens(uint8_t visible, uint8_t rotate) {
+bool settings_set_screens(uint16_t visible, uint16_t rotate) {
   Preferences prefs;
   if (!prefs.begin(NAMESPACE, /*readOnly=*/false)) {
     return false;
   }
-  prefs.putUChar(KEY_SCR_VIS, visible);
-  prefs.putUChar(KEY_SCR_ROT, rotate);
+  prefs.putUShort(KEY_SCR_VIS16, visible);
+  prefs.putUShort(KEY_SCR_ROT16, rotate);
+  // The low byte for older firmware, should the device ever go back to it.
+  prefs.putUChar(KEY_SCR_VIS, static_cast<uint8_t>(visible & 0xFF));
+  prefs.putUChar(KEY_SCR_ROT, static_cast<uint8_t>(rotate & 0xFF));
   prefs.putUChar(KEY_SCR_KNOWN, PUCK_SCREEN_COUNT);
   prefs.end();
   s_settings.screens_visible = visible;

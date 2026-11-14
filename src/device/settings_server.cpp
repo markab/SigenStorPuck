@@ -1028,8 +1028,8 @@ void handle_display() {
   // An unchecked box sends nothing at all, so the masks are rebuilt from what did
   // arrive rather than edited. A disabled box sends nothing either, which is why
   // the two always-on screens are forced back in here as well as in ui_create().
-  uint8_t visible = (1u << PUCK_SCREEN_POWER) | (1u << PUCK_SCREEN_SETTINGS);
-  uint8_t rotate = 0;
+  uint16_t visible = (1u << PUCK_SCREEN_POWER) | (1u << PUCK_SCREEN_SETTINGS);
+  uint16_t rotate = 0;
   for (uint8_t i = 0; i < PUCK_SCREEN_COUNT; ++i) {
     if (s_server.hasArg(("scr" + String(i)).c_str())) {
       visible |= (1u << i);
