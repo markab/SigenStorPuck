@@ -601,16 +601,18 @@ String page(const String& message, bool message_is_error) {
   // Indexed by PuckScreen id, but listed below in PUCK_SCREEN_ORDER so the page
   // reads the way the device swipes.
   static const char* const SCREEN_NAME[PUCK_SCREEN_COUNT] = {
-      "Power", "Battery", "Solar", "Flows", "Cost", "Settings", "Load", "Grid"};
+      "Power", "Battery", "Solar", "Flows", "Cost", "Settings", "Load", "Grid", "Events"};
   html += "<label>Screens (applies on restart)</label>";
   html += "<table class=screens><tr><th></th><th>Show</th><th>Auto-cycle</th></tr>";
   for (PuckScreen screen : PUCK_SCREEN_ORDER) {
     const uint8_t i = static_cast<uint8_t>(screen);
     const bool needs_detail = (PUCK_DETAILED_SCREENS & (1u << i)) != 0;
+    const bool needs_events = (PUCK_EVENTS_SCREENS & (1u << i)) != 0;
     // A screen the source cannot fill is shown struck through rather than hidden,
     // so the list is the same shape whichever source is configured and nobody
-    // wonders where two of them went.
-    const bool unavailable = needs_detail && !capabilities.detailed_flows;
+    // wonders where three of them went.
+    const bool unavailable = (needs_detail && !capabilities.detailed_flows) ||
+                             (needs_events && !capabilities.events);
     html += "<tr><td>";
     html += unavailable ? "<s>" : "";
     html += SCREEN_NAME[i];

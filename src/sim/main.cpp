@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "board_config.h"
+#include "events.h"
 #include "forecast_store.h"
 #include "history.h"
 #include "sim_backend.h"
@@ -49,6 +50,13 @@ bool s_with_detailed_screens = true;
 // it answers "is the parse wrong or the layout wrong?" immediately.
 lv_obj_t* s_debug_root = nullptr;
 bool s_show_debug = false;
+
+// test/fixtures/events.json, the /api/events payload every fixture shares. The
+// device fetches it every few minutes; here it is loaded once, and 'e' (and the
+// screenshot pass) steps the featured event through each one in the file so
+// every kind's layout can be seen.
+EventList s_events;
+int s_events_variant = 0;
 
 lv_obj_t* s_heading = nullptr;
 lv_obj_t* s_body = nullptr;
@@ -369,6 +377,57 @@ void synthesise_history(const Snapshot& snapshot) {
   }
 }
 
+// Variant 0 is the file as it is: its current event featured. 1..past_count
+// feature each past event in turn (current dropped), then one with nothing at
+// all — the "No events" state — and one upcoming, booked event.
+int events_variant_count() {
+  return s_events.valid ? s_events.past_count + 3 : 1;
+}
+
+void show_events_variant(int variant) {
+  s_events_variant = variant;
+  if (!s_events.valid) {
+    ui_update_events(s_events);
+    return;
+  }
+  EventList list = s_events;
+  if (variant >= 1 && variant <= s_events.past_count) {
+    list.has_current = false;
+    list.past[0] = s_events.past[variant - 1];
+    list.past_count = 1;
+  } else if (variant == s_events.past_count + 1) {
+    list.has_current = false;
+    list.past_count = 0;
+  } else if (variant == s_events.past_count + 2) {
+    // The newest past event, booked again for tomorrow evening.
+    list.past_count = 0;
+    list.current = s_events.past[0];
+    list.current.state = EventState::Upcoming;
+    list.current.start = (s_events.now / 1800) * 1800 + 24 * 3600;
+    list.current.end = list.current.start + 3600;
+    list.current.has_end = true;
+    list.current.cut_kwh = MaybeFloat();
+    list.current.points = MaybeInt();
+    list.current.points_estimated = false;
+  }
+  ui_update_events(list);
+}
+
+void load_events(const std::string& directory) {
+  std::string json;
+  const std::string path = directory + "/events.json";
+  if (!read_file(path, &json)) {
+    printf("[sim] no %s: the events screen stays empty\n", path.c_str());
+    return;
+  }
+  if (!events_parse(json.c_str(), json.size(), &s_events)) {
+    printf("[sim] %s did not parse\n", path.c_str());
+    return;
+  }
+  printf("[sim] events: %s current, %u past\n", s_events.has_current ? "one" : "no",
+         static_cast<unsigned>(s_events.past_count));
+}
+
 void show_current_fixture() {
   const std::string& path = s_fixture_paths[s_current];
   const std::string name = base_name(path);
@@ -440,7 +499,7 @@ void build_debug_view() {
   lv_obj_set_style_text_align(hint, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
   lv_label_set_text(hint,
                     "n/p fixture   [ ] screen   , . tilt   - = day\n"
-                    "r auto-cycle   o overlay   d dump   esc quit");
+                    "r auto-cycle   o overlay   e event   d dump   esc quit");
   lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -34);
 }
 
@@ -453,6 +512,8 @@ void build_views() {
 
   UiConfig config;
   config.with_detailed_screens = s_with_detailed_screens;
+  // --modbus previews a source without events too.
+  config.with_events_screen = s_with_detailed_screens;
   ui_create(screen, config);
 
   // A stand-in for what net_hostname()/net_ip() return on the device, so the
@@ -506,6 +567,10 @@ void handle_key(int key) {
   const size_t count = s_fixture_paths.size();
   if (key == 'o') {
     cycle_overlay();
+    return;
+  }
+  if (key == 'e') {
+    show_events_variant((s_events_variant + 1) % events_variant_count());
     return;
   }
   if (key == 'd') {
@@ -605,6 +670,28 @@ int run_screenshot_pass(const std::string& output_directory) {
         ++failures;
       }
     }
+  }
+
+  // The events screen draws one event, so each fixture above showed the same
+  // one. Capture it once per variant instead: every kind, the "No events" state
+  // and a booked event, which is the check that each one fits the screen.
+  for (int screen = 0; screen < ui_screen_count(); ++screen) {
+    if (ui_screen_at(screen) != PUCK_SCREEN_EVENTS) {
+      continue;
+    }
+    ui_show_screen(screen);
+    for (int variant = 0; variant < events_variant_count(); ++variant) {
+      show_events_variant(variant);
+      lv_refr_now(nullptr);
+      char path[512];
+      snprintf(path, sizeof(path), "%s/events_%d.bmp", output_directory.c_str(), variant);
+      if (sim_backend_save_bmp(path)) {
+        printf("[sim] wrote %s\n", path);
+      } else {
+        ++failures;
+      }
+    }
+    show_events_variant(0);
   }
 
   // The overlays are not screens, but they are full-screen layouts with a QR
@@ -754,6 +841,8 @@ int main(int argc, char** argv) {
   }
 
   build_views();
+  load_events(directory);
+  show_events_variant(0);
   if (s_startup_tilt != 0) {
     ui_set_fine_rotation(s_startup_tilt);
   }

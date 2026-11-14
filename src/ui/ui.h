@@ -9,6 +9,7 @@
 
 #include <lvgl.h>
 
+#include "events.h"
 #include "snapshot.h"
 #include "solar_metric_layout.h"
 
@@ -33,6 +34,10 @@ enum PuckScreen : uint8_t {
   // chart, plus live frequency and voltage. Swiped after load; see the order.
   // Built on both boards.
   PUCK_SCREEN_GRID,
+  // Appended in 0.16.0: grid events — saving sessions, happy hours, free import
+  // and Axle — from /api/events. The ninth id, which is what widened the masks
+  // to PuckScreenMask. Swiped after cost; see the order.
+  PUCK_SCREEN_EVENTS,
   PUCK_SCREEN_COUNT,
 };
 
@@ -40,8 +45,9 @@ enum PuckScreen : uint8_t {
 // Settings stays last: it is the way back to the settings page, and a route out
 // belongs at the end.
 static constexpr PuckScreen PUCK_SCREEN_ORDER[PUCK_SCREEN_COUNT] = {
-    PUCK_SCREEN_POWER, PUCK_SCREEN_BATTERY, PUCK_SCREEN_SOLAR, PUCK_SCREEN_LOAD,
-    PUCK_SCREEN_GRID,  PUCK_SCREEN_FLOWS,   PUCK_SCREEN_COST,  PUCK_SCREEN_SETTINGS,
+    PUCK_SCREEN_POWER, PUCK_SCREEN_BATTERY, PUCK_SCREEN_SOLAR,  PUCK_SCREEN_LOAD,
+    PUCK_SCREEN_GRID,  PUCK_SCREEN_FLOWS,   PUCK_SCREEN_COST,   PUCK_SCREEN_EVENTS,
+    PUCK_SCREEN_SETTINGS,
 };
 
 // One bit per PuckScreen id. Sixteen bits since the ninth screen: the eight-bit
@@ -61,10 +67,17 @@ static constexpr PuckScreenMask PUCK_LANDSCAPE_ONLY_SCREENS = 0;
 static constexpr PuckScreenMask PUCK_DETAILED_SCREENS =
     (1u << PUCK_SCREEN_FLOWS) | (1u << PUCK_SCREEN_COST);
 
+// Screens that need the source's `events` capability: only a SigenStor Display
+// server records grid events.
+static constexpr PuckScreenMask PUCK_EVENTS_SCREENS = (1u << PUCK_SCREEN_EVENTS);
+
 struct UiConfig {
   // False when the selected source lacks detailed flows and tariff/cost, which
   // removes those screens whatever the stored masks say.
   bool with_detailed_screens = true;
+  // False when the source has no grid events (SourceCapabilities::events), which
+  // removes the events screen whatever the stored masks say.
+  bool with_events_screen = true;
   // One bit per PuckScreen. The settings screen is built regardless of its bit:
   // it is the only route back to the settings page from the device itself.
   PuckScreenMask visible = 0xFFFF;
@@ -87,6 +100,14 @@ lv_obj_t* ui_create(lv_obj_t* parent, const UiConfig& config);
 // the poll loop later without any screen changing, and §D2's Modbus path
 // already does.
 void ui_update(const Snapshot& snapshot);
+
+// The household's grid events, whenever the stored list changes — including to
+// an invalid list, which the events screen shows as "No events". Not part of
+// ui_update(): the list arrives every few minutes on its own endpoint, not with
+// each reading. The screen counts down on LVGL's clock between calls, from the
+// list's own `now`, and turns that UTC time into local time with the offset the
+// day charts use (history_timezone()).
+void ui_update_events(const EventList& events);
 
 // The past day being viewed, when one is loaded. Screen 1 ignores it entirely —
 // it is the live screen and stays live — and the day-oriented screens use it in

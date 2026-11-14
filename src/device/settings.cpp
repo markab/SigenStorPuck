@@ -610,6 +610,8 @@ bool settings_set_rotate_enabled(bool enabled) {
 }
 
 bool settings_set_screens(uint16_t visible, uint16_t rotate) {
+  static_assert(PUCK_SCREEN_COUNT >= SCREENS_WITH_WIDE_MASKS,
+                "scr_known must mark the 16-bit masks as current");
   Preferences prefs;
   if (!prefs.begin(NAMESPACE, /*readOnly=*/false)) {
     return false;

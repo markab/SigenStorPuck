@@ -9,6 +9,8 @@
 #include <Wire.h>
 #include <lvgl.h>
 
+#include <new>
+
 #include "board_config.h"
 #include "device/buttons.h"
 #include "device/net.h"
@@ -18,6 +20,7 @@
 #include "device/settings_server.h"
 #include "device/updater.h"
 #include "display.h"
+#include "psram_alloc.h"
 #include "screen_window.h"
 #include "snapshot.h"
 #include "touch.h"
@@ -275,6 +278,24 @@ void refresh_ui() {
     ui_update(snapshot);
   }
 
+  // Grid events change every few minutes at most, so they are copied out and
+  // handed over only when the poller's list does. Static rather than on this
+  // stack, and in PSRAM: the list is ~0.8 KB of CPU-only data.
+  static EventList* events = nullptr;
+  static uint32_t seen_events_generation = 0;
+  if (events == nullptr) {
+    void* block = psram_alloc(sizeof(EventList));
+    events = block != nullptr ? new (block) EventList() : nullptr;
+  }
+  if (events != nullptr) {
+    uint32_t events_generation = 0;
+    poller_events(events, &events_generation);
+    if (first || events_generation != seen_events_generation) {
+      seen_events_generation = events_generation;
+      ui_update_events(*events);
+    }
+  }
+
   seen_snapshot_generation = snapshot_generation;
   seen_day_generation = day_generation;
   seen_day_offset = day_offset;
@@ -341,6 +362,7 @@ void setup() {
   const SourceCapabilities source_capabilities =
       data_source_capabilities(settings_get().source);
   ui_config.with_detailed_screens = source_capabilities.detailed_flows;
+  ui_config.with_events_screen = source_capabilities.events;
   ui_config.visible = settings_get().screens_visible;
   ui_config.rotate = settings_get().screens_rotate;
   {
