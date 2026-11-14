@@ -19,6 +19,8 @@ constexpr const char* SUMMARY_PATH = "/api/summary";
 // than a line. ~3.5 KB, fetched every few minutes rather than every poll.
 constexpr const char* DAY_SERIES_PATH = "/api/day/series?slot_minutes=5";
 constexpr const char* SUMMARY_PATH_DATED = "/api/summary?date=";
+// The event on now or next plus EVENTS_FETCH_LIMIT finished ones: a couple of KB.
+constexpr const char* EVENTS_PATH = "/api/events?limit=";
 
 // Identifies the device in the server's logs. Version included so an old device
 // misbehaving in the field can be recognised from the access log alone.
@@ -225,6 +227,22 @@ FetchResult sigen_api_fetch_day(HistoryBank bank, const String& date, int* statu
     return result;
   }
   if (!day_series_parse(bank, body.c_str(), body.length(), static_cast<uint32_t>(now / 60))) {
+    return FetchResult::BadPayload;
+  }
+  return FetchResult::Ok;
+}
+
+FetchResult sigen_api_fetch_events(EventList* out, int* status_code) {
+  if (out == nullptr) {
+    return FetchResult::BadPayload;
+  }
+  const String path = String(EVENTS_PATH) + String(static_cast<unsigned>(EVENTS_FETCH_LIMIT));
+  String body;
+  const FetchResult result = fetch_path(path.c_str(), &body, status_code);
+  if (result != FetchResult::Ok) {
+    return result;
+  }
+  if (!events_parse(body.c_str(), body.length(), out)) {
     return FetchResult::BadPayload;
   }
   return FetchResult::Ok;

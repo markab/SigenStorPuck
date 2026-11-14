@@ -20,6 +20,10 @@ struct SourceCapabilities {
   bool forecast = false;
   bool tariff_cost = false;
   bool detailed_flows = false;
+  // Grid events (saving sessions, happy hours, Axle) from GET /api/events.
+  // Only a SigenStor Display server records them; a plant and Home Assistant
+  // have no such thing to report.
+  bool events = false;
 };
 
 // Unknown stored values retain the pre-HA fallback to Server. This is separate

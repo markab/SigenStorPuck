@@ -14,7 +14,10 @@
 #include "updater.h"
 #include "ui/ui.h"
 
+#include <new>
 #include <time.h>
+
+#include "psram_alloc.h"
 
 namespace {
 
@@ -43,6 +46,12 @@ constexpr uint32_t BACKOFF_CEILING_MS = 60000;
 // that a reboot's empty chart fills promptly.
 constexpr uint32_t DAY_REFRESH_MS = 5 * 60 * 1000;
 
+// Grid events change a few times a week, and a booked one is known hours ahead;
+// the screen counts down between fetches on its own clock. Also the retry
+// interval after a failure, including the 404 of a server too old to have the
+// endpoint, so that case costs one request every five minutes and no more.
+constexpr uint32_t EVENTS_REFRESH_MS = 5 * 60 * 1000;
+
 SemaphoreHandle_t s_lock = nullptr;
 Snapshot s_snapshot;
 PollStatus s_status;
@@ -50,6 +59,17 @@ int32_t s_tz_offset_min = 0;
 uint32_t s_snapshot_generation = 0;
 uint32_t s_day_generation = 0;
 volatile bool s_wake = false;
+
+// The last good event list, under s_lock, and the poll task's own parse target.
+// Both in PSRAM: ~0.8 KB each of CPU-only data, and internal RAM is what a TLS
+// handshake needs (psram_alloc.h).
+EventList* s_events = nullptr;
+EventList* s_events_scratch = nullptr;
+uint32_t s_events_generation = 0;
+uint32_t s_last_events_ms = 0;
+// The last outcome logged, so a server that 404s or is down logs once per change
+// rather than every five minutes.
+int s_events_logged_status = -1;
 
 // Task-local in practice — only poll_task touches these — but kept here with the
 // rest of the task's state rather than as statics buried in the loop.
@@ -356,6 +376,56 @@ void poll_task(void* /*argument*/) {
       }
     }
 
+    // Grid events, on their own slow cadence and in the same gap between
+    // fetches, so this TLS session never overlaps another either. Like the day
+    // series this is not the reading, so a failure here never counts against
+    // PollStatus — and a 404 is not a failure at all, only a server older than
+    // 0.45.0 telling us it has no events to give.
+    if (capabilities.events && s_events != nullptr && s_events_scratch != nullptr) {
+      const uint32_t now = millis();
+      const bool due = s_last_events_ms == 0 || now - s_last_events_ms >= EVENTS_REFRESH_MS;
+      if (due && status.ever_succeeded) {
+        s_last_events_ms = now;
+        int events_status = 0;
+        const FetchResult events = sigen_api_fetch_events(s_events_scratch, &events_status);
+        const bool unsupported =
+            events == FetchResult::HttpError && events_status == 404;
+        if (events == FetchResult::Ok) {
+          if (xSemaphoreTake(s_lock, portMAX_DELAY) == pdTRUE) {
+            *s_events = *s_events_scratch;
+            ++s_events_generation;
+            xSemaphoreGive(s_lock);
+          }
+        } else if (unsupported) {
+          // Nothing to show rather than a list the server no longer stands by.
+          if (xSemaphoreTake(s_lock, portMAX_DELAY) == pdTRUE) {
+            if (s_events->valid) {
+              *s_events = EventList();
+              ++s_events_generation;
+            }
+            xSemaphoreGive(s_lock);
+          }
+        }
+        // Any other failure keeps the last good list: a booked session does not
+        // stop being booked because one request timed out.
+        const int logged = events == FetchResult::Ok ? 200 : events_status;
+        if (logged != s_events_logged_status) {
+          s_events_logged_status = logged;
+          if (unsupported) {
+            Serial.println("[poll] events: the server has no /api/events (needs "
+                           "SigenStor Display 0.45.0) — the events screen stays empty");
+          } else if (events != FetchResult::Ok) {
+            Serial.printf("[poll] events unavailable: %s (http %d)\n",
+                          fetch_result_name(events), events_status);
+          } else {
+            Serial.printf("[poll] events: %s current, %u past\n",
+                          s_events_scratch->has_current ? "one" : "no",
+                          static_cast<unsigned>(s_events_scratch->past_count));
+          }
+        }
+      }
+    }
+
     // Between fetches, with this task's own client already closed, so an update
     // check never overlaps a poll's TLS session. That overlap is what exhausted
     // the heap and made the check report a refused connection.
@@ -400,6 +470,18 @@ void poller_begin() {
   }
   s_lock = xSemaphoreCreateMutex();
   const DataSource source = settings_get().source;
+  if (data_source_capabilities(source).events) {
+    void* list = psram_alloc(sizeof(EventList));
+    void* scratch = psram_alloc(sizeof(EventList));
+    if (list != nullptr && scratch != nullptr) {
+      s_events = new (list) EventList();
+      s_events_scratch = new (scratch) EventList();
+    } else {
+      // Nothing to do but go without: the events screen shows "No events".
+      free(list);
+      free(scratch);
+    }
+  }
   xTaskCreatePinnedToCore(poll_task, "puck_poll", TASK_STACK_BYTES, nullptr, TASK_PRIORITY,
                           nullptr, TASK_CORE);
   Serial.printf("[poll] task started on core %d, source %s, stack %u\n",
@@ -434,6 +516,30 @@ bool poller_snapshot(Snapshot* out, uint32_t* generation) {
     xSemaphoreGive(s_lock);
   }
   return have;
+}
+
+bool poller_events(EventList* out, uint32_t* generation) {
+  if (out == nullptr) {
+    return false;
+  }
+  if (s_lock == nullptr) {
+    *out = EventList();
+    return false;
+  }
+  bool valid = false;
+  if (xSemaphoreTake(s_lock, portMAX_DELAY) == pdTRUE) {
+    if (generation != nullptr) {
+      *generation = s_events_generation;
+    }
+    if (s_events != nullptr) {
+      *out = *s_events;
+      valid = s_events->valid;
+    } else {
+      *out = EventList();
+    }
+    xSemaphoreGive(s_lock);
+  }
+  return valid;
 }
 
 PollStatus poller_status() {

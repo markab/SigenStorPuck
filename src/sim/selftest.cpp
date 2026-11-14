@@ -126,6 +126,8 @@ void test_data_sources() {
             !ha.historical_days && !ha.full_day_series && !ha.detailed_flows &&
             !ha.tariff_cost,
         "HA capabilities include optional today backfill but not past days or detail");
+  check(server.events && !modbus.events && !ha.events,
+        "only the server source has grid events");
 
   check(static_cast<uint8_t>(SolarForecastSource::Disabled) == 0,
         "disabled forecast source persists as 0");

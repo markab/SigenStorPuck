@@ -9,6 +9,7 @@
 
 #include <Arduino.h>
 
+#include "events.h"
 #include "sigen_api.h"
 #include "snapshot.h"
 
@@ -36,6 +37,14 @@ bool poller_snapshot(Snapshot* out, uint32_t* generation = nullptr);
 // — the caller keeps showing live rather than a day it has not got yet. Its
 // optional generation changes when a dated snapshot is published or cleared.
 bool poller_day_snapshot(Snapshot* out, uint32_t* generation = nullptr);
+
+// The household's grid events, refetched every few minutes on sources whose
+// capabilities include them (the server). Always copies a list into `out` —
+// an invalid one when there is nothing: never fetched yet, a source without
+// events, or a server too old to have the endpoint — and returns its `valid`.
+// `generation` changes whenever the stored list does, so the UI redraws only
+// then.
+bool poller_events(EventList* out, uint32_t* generation = nullptr);
 
 PollStatus poller_status();
 

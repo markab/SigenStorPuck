@@ -49,6 +49,7 @@ SourceCapabilities data_source_capabilities(DataSource source) {
       capabilities.forecast = true;
       capabilities.tariff_cost = true;
       capabilities.detailed_flows = true;
+      capabilities.events = true;
       break;
     case DataSource::Modbus:
       capabilities.forecast = true;

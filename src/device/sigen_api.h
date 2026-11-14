@@ -4,6 +4,7 @@
 
 #include <Arduino.h>
 
+#include "events.h"
 #include "fetch_result.h"
 #include "history.h"
 #include "snapshot.h"
@@ -32,3 +33,11 @@ FetchResult sigen_api_fetch_day(HistoryBank bank, const String& date, int* statu
 // `alarms` are built from live registers and are always now, whatever date is
 // asked for — the server has no history of them to serve.
 FetchResult sigen_api_fetch_dated(const String& date, Snapshot* out, int* status_code);
+
+// The household's grid events: what is on now or next, and the most recent
+// finished ones (GET /api/events, SigenStor Display 0.45.0+).
+//
+// A server older than that answers 404, which comes back as HttpError with
+// `status_code` 404 — the caller treats that as "no events support", not as a
+// failure. On any failure `out` is left untouched.
+FetchResult sigen_api_fetch_events(EventList* out, int* status_code);
