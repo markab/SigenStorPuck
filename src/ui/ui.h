@@ -38,6 +38,11 @@ enum PuckScreen : uint8_t {
   // and Axle — from /api/events. The ninth id, which is what widened the masks
   // to PuckScreenMask. Swiped after cost; see the order.
   PUCK_SCREEN_EVENTS,
+  // Appended for SigenStorPanel: temperature, humidity and battery from an
+  // EnViOT Display server's sensors. Only the 10.1" panel builds it; no Puck
+  // does (PUCK_PANEL_ONLY_SCREENS). The id is reserved here so the panel's
+  // masks and the Puck's never disagree about what bit 9 means.
+  PUCK_SCREEN_ENVIRONMENT,
   PUCK_SCREEN_COUNT,
 };
 
@@ -47,7 +52,7 @@ enum PuckScreen : uint8_t {
 static constexpr PuckScreen PUCK_SCREEN_ORDER[PUCK_SCREEN_COUNT] = {
     PUCK_SCREEN_POWER, PUCK_SCREEN_BATTERY, PUCK_SCREEN_SOLAR,  PUCK_SCREEN_LOAD,
     PUCK_SCREEN_GRID,  PUCK_SCREEN_FLOWS,   PUCK_SCREEN_COST,   PUCK_SCREEN_EVENTS,
-    PUCK_SCREEN_SETTINGS,
+    PUCK_SCREEN_ENVIRONMENT, PUCK_SCREEN_SETTINGS,
 };
 
 // One bit per PuckScreen id. Sixteen bits since the ninth screen: the eight-bit
@@ -60,6 +65,10 @@ static_assert(PUCK_SCREEN_COUNT <= 16, "PuckScreenMask has run out of bits");
 // its wanted set. None at present — both boards build every screen — but the
 // mechanism stays for a future landscape-only screen.
 static constexpr PuckScreenMask PUCK_LANDSCAPE_ONLY_SCREENS = 0;
+
+// Screens only SigenStorPanel builds. Every Puck UI masks these out of its wanted
+// set, and the Puck's settings page leaves them off its list.
+static constexpr PuckScreenMask PUCK_PANEL_ONLY_SCREENS = (1u << PUCK_SCREEN_ENVIRONMENT);
 
 // Screens that require detailed source capabilities: cost needs tariff tables
 // and flows needs a source-to-sink decomposition, neither of which Modbus or
@@ -78,6 +87,9 @@ struct UiConfig {
   // False when the source has no grid events (SourceCapabilities::events), which
   // removes the events screen whatever the stored masks say.
   bool with_events_screen = true;
+  // True when an EnViOT Display server is set up, which only SigenStorPanel can
+  // do. The Puck leaves it false and drops PUCK_PANEL_ONLY_SCREENS regardless.
+  bool with_environment_screen = false;
   // One bit per PuckScreen. The settings screen is built regardless of its bit:
   // it is the only route back to the settings page from the device itself.
   PuckScreenMask visible = 0xFFFF;

@@ -375,6 +375,8 @@ lv_obj_t* ui_create(lv_obj_t* parent, const UiConfig& config) {
   // drop them whatever the stored mask says — otherwise their tile would exist
   // with nothing drawn on it.
   wanted &= static_cast<PuckScreenMask>(~PUCK_LANDSCAPE_ONLY_SCREENS);
+  // Nor does any Puck build the panel's screens.
+  wanted &= static_cast<PuckScreenMask>(~PUCK_PANEL_ONLY_SCREENS);
   // Screen 1 is the device's reason to exist and the one every failure mode
   // falls back to. Leaving nothing but the settings screen would look broken.
   wanted |= (1u << PUCK_SCREEN_POWER);

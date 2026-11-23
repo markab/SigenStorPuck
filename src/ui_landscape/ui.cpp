@@ -378,6 +378,8 @@ lv_obj_t* ui_create(lv_obj_t* parent, const UiConfig& config) {
   if (!config.with_events_screen) {
     wanted &= static_cast<PuckScreenMask>(~PUCK_EVENTS_SCREENS);
   }
+  // The panel's screens are not built on a Puck.
+  wanted &= static_cast<PuckScreenMask>(~PUCK_PANEL_ONLY_SCREENS);
   // Screen 1 is the device's reason to exist and the one every failure mode
   // falls back to. Leaving nothing but the settings screen would look broken.
   wanted |= (1u << PUCK_SCREEN_POWER);

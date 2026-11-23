@@ -601,11 +601,15 @@ String page(const String& message, bool message_is_error) {
   // Indexed by PuckScreen id, but listed below in PUCK_SCREEN_ORDER so the page
   // reads the way the device swipes.
   static const char* const SCREEN_NAME[PUCK_SCREEN_COUNT] = {
-      "Power", "Battery", "Solar", "Flows", "Cost", "Settings", "Load", "Grid", "Events"};
+      "Power", "Battery", "Solar", "Flows", "Cost", "Settings", "Load", "Grid", "Events",
+      "Environment"};
   html += "<label>Screens (applies on restart)</label>";
   html += "<table class=screens><tr><th></th><th>Show</th><th>Auto-cycle</th></tr>";
   for (PuckScreen screen : PUCK_SCREEN_ORDER) {
     const uint8_t i = static_cast<uint8_t>(screen);
+    if (PUCK_PANEL_ONLY_SCREENS & (1u << i)) {
+      continue;  // a Puck never builds it, so there is nothing to choose
+    }
     const bool needs_detail = (PUCK_DETAILED_SCREENS & (1u << i)) != 0;
     const bool needs_events = (PUCK_EVENTS_SCREENS & (1u << i)) != 0;
     // A screen the source cannot fill is shown struck through rather than hidden,
@@ -1040,6 +1044,11 @@ void handle_display() {
       rotate |= (1u << i);
     }
   }
+  // The panel-only screens are not on this page, so their bits are kept as they
+  // were rather than cleared: clearing them would count as a change and ask for a
+  // restart on every save.
+  visible |= settings_get().screens_visible & PUCK_PANEL_ONLY_SCREENS;
+  rotate |= settings_get().screens_rotate & PUCK_PANEL_ONLY_SCREENS;
   const bool screens_changed = visible != settings_get().screens_visible ||
                                rotate != settings_get().screens_rotate;
   if (screens_changed) {
