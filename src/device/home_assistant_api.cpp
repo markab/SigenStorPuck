@@ -115,6 +115,10 @@ FetchResult home_assistant_api_fetch(Snapshot* out, int* status_code,
   const Settings& settings = settings_get();
   const String base_url = settings.ha_base_url;
   const String token = settings.ha_token;
+  HaParseOptions options;
+  options.ev_is_dc = ha_ev_is_dc(
+      settings.ha_ev_kind,
+      settings.ha_entities[static_cast<size_t>(HaEntity::EvPower)].c_str());
   const bool include_forecast = solar_forecast_uses_home_assistant(
       DataSource::HomeAssistant, settings.ha_solar_forecast_source);
   String entities[HA_ENTITY_COUNT];
@@ -199,7 +203,7 @@ FetchResult home_assistant_api_fetch(Snapshot* out, int* status_code,
   http.end();
   Snapshot parsed;
   HaParseInfo info;
-  if (!ha_payload_parse(body.c_str(), body.length(), &parsed, &info)) {
+  if (!ha_payload_parse(body.c_str(), body.length(), &parsed, &info, &options)) {
     return FetchResult::BadPayload;
   }
   if (parse_info != nullptr) {

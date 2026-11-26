@@ -16,6 +16,7 @@ constexpr const char* KEY_TOKEN = "token";
 constexpr const char* KEY_HA_URL = "ha_url";
 constexpr const char* KEY_HA_TOKEN = "ha_token";
 constexpr const char* KEY_HA_SOLAR_SOURCE = "ha_sol_src";
+constexpr const char* KEY_HA_EV_KIND = "ha_ev_kind";
 constexpr const char* KEY_POLL = "poll_s";
 constexpr const char* KEY_BRIGHTNESS = "bright";
 constexpr const char* KEY_DIM = "dim_s";
@@ -100,6 +101,13 @@ void settings_begin() {
   if (prefs.isKey(KEY_HA_SOLAR_SOURCE)) {
     s_settings.ha_solar_forecast_source =
         solar_forecast_source_from_stored(prefs.getUChar(KEY_HA_SOLAR_SOURCE, 0));
+  }
+  {
+    // An unknown stored value — from a newer firmware — reads as Auto.
+    const uint8_t ev_kind = prefs.getUChar(KEY_HA_EV_KIND, 0);
+    s_settings.ha_ev_kind = ev_kind <= static_cast<uint8_t>(HaEvKind::Dc)
+                                ? static_cast<HaEvKind>(ev_kind)
+                                : HaEvKind::Auto;
   }
   s_settings.poll_interval_s = prefs.getUInt(KEY_POLL, s_settings.poll_interval_s);
   s_settings.brightness = prefs.getUChar(KEY_BRIGHTNESS, s_settings.brightness);
@@ -230,7 +238,7 @@ bool settings_set_server(const String& base_url, const String& token) {
 
 bool settings_set_home_assistant(const String& base_url, const String& token,
                                  const String* entities, size_t count,
-                                 SolarForecastSource forecast_source) {
+                                 SolarForecastSource forecast_source, HaEvKind ev_kind) {
   if (base_url.isEmpty() || entities == nullptr || count != HA_ENTITY_COUNT) {
     return false;
   }
@@ -249,6 +257,7 @@ bool settings_set_home_assistant(const String& base_url, const String& token,
     ok = prefs.putString(KEY_HA_TOKEN, token) > 0 && ok;
   }
   ok = prefs.putUChar(KEY_HA_SOLAR_SOURCE, static_cast<uint8_t>(forecast_source)) > 0 && ok;
+  ok = prefs.putUChar(KEY_HA_EV_KIND, static_cast<uint8_t>(ev_kind)) > 0 && ok;
   for (size_t i = 0; i < count; ++i) {
     if (entities[i].isEmpty()) {
       if (prefs.isKey(HA_ENTITIES[i].nvs_key)) {
@@ -271,6 +280,7 @@ bool settings_set_home_assistant(const String& base_url, const String& token,
     s_settings.ha_entities[i] = entities[i];
   }
   s_settings.ha_solar_forecast_source = forecast_source;
+  s_settings.ha_ev_kind = ev_kind;
   size_t mapped = 0;
   for (const String& entity : s_settings.ha_entities) {
     mapped += entity.isEmpty() ? 0 : 1;

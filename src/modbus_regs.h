@@ -83,7 +83,7 @@ enum ModbusKey : uint8_t {
   MB_INV_ESS_MAX_TEMP,
   MB_INV_GRID_FREQ,        // fast: grid frequency, for the grid screen
   MB_INV_GRID_VOLTAGE,     // fast: phase A voltage, for the grid screen
-  MB_INV_DC_OUTPUT_POWER,  // DC charger only: feeds EV, which house load is derived from
+  MB_INV_DC_OUTPUT_POWER,  // DC charger only: feeds EV, and the losses balance
   MB_INV_PV_DAILY_GEN,
 
   // --- per AC charger -----------------------------------------------------
@@ -137,8 +137,14 @@ struct ModbusValues {
   bool known[MB_KEY_COUNT] = {};
   float value[MB_KEY_COUNT] = {};
 
-  float ev_kw = 0.0f;
-  bool ev_any = false;
+  // The two kinds of charger are kept apart because they sit on opposite sides
+  // of the plant's AC terminals: an AC charger is house wiring and comes off
+  // home, a DC charger leaves the DC bus and counts against the losses balance
+  // instead (power_balance.h). The EV leg on screen shows their sum.
+  float ev_ac_kw = 0.0f;  // MB_ACC_CHARGING_POWER, summed across AC chargers
+  bool ev_ac_any = false;
+  float ev_dc_kw = 0.0f;  // MB_INV_DC_OUTPUT_POWER, summed across inverters
+  bool ev_dc_any = false;
 
   float temp_sum = 0.0f;
   int temp_count = 0;
@@ -181,8 +187,11 @@ void modbus_day_totals(ModbusDayBaseline* baseline, uint32_t local_day, float to
 
 // Turns a cycle's readings into the Snapshot the screens already understand.
 //
-// `home` and `eta_min` are the only derived figures, and both mirror
-// summary.py's _power_block and _eta_minutes exactly. In particular house load
-// subtracts EV, because EV is reported as its own leg — getting that wrong
-// silently inflates the house figure and nothing on screen would look wrong.
+// `home`, `losses` and `eta_min` are the only derived figures, and they mirror
+// summary.py's _power_block (0.47.3 onwards) and _eta_minutes exactly. House
+// load is measured on the AC side — grid + plant less an AC charger — so the
+// system's own losses are no longer counted as house; see power_balance.h. EV
+// still comes out of it because EV is reported as its own leg: getting that
+// wrong silently inflates the house figure and nothing on screen would look
+// wrong.
 void modbus_to_snapshot(const ModbusValues& values, Snapshot* out);

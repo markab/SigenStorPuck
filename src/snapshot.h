@@ -67,6 +67,13 @@ struct Snapshot {
     // derived here from pv - batt, which would disagree with the register
     // whenever losses, a DC charger or a second inverter are in play.
     MaybeFloat plant;
+    // kW the system itself is losing: conversion, standby, battery heating.
+    // Measured after Sigenergy's Solar figure, so it is exactly what makes the
+    // power screen balance: solar + grid in + battery out = home + EV + battery
+    // in + export + losses. Sent by the server from 0.47.3; derived from the
+    // plant's own power on Modbus and HA (power_balance.h). Unknown on an older
+    // server, and never to be read as zero.
+    MaybeFloat losses;
     // Kept separate because false means on-grid, not "the entity/register was
     // unavailable". Existing renderers can continue treating unknown as false.
     bool off_grid_known = false;
@@ -93,6 +100,7 @@ struct Snapshot {
     MaybeFloat load;
     MaybeFloat charge;
     MaybeFloat discharge;
+    MaybeFloat losses;  // kWh, server 0.47.3+; the day total of power.losses
 
     // The day's source->sink split, as the server's Sankey decomposes it.
     //
@@ -125,6 +133,17 @@ struct Snapshot {
       MaybeFloat solar_ev;
       MaybeFloat grid_ev;
       MaybeFloat batt_ev;
+
+      // What each source lost on the way, from server 0.47.3. With them the
+      // source columns close again:
+      //   solar     = solar_load + solar_batt + solar_grid + solar_losses
+      //   import    = grid_load + grid_batt + grid_losses
+      //   discharge = batt_load + batt_grid + batt_losses
+      // Absent from an older server, whose *_load still carried the losses —
+      // which is how the flows screen tells which layout to draw.
+      MaybeFloat solar_losses;
+      MaybeFloat grid_losses;
+      MaybeFloat batt_losses;
     };
     Flows flows;
   };

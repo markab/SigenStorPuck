@@ -1,5 +1,7 @@
 #include "home_assistant.h"
 
+#include "power_balance.h"
+
 #include <ArduinoJson.h>
 #include <ctype.h>
 #include <errno.h>
@@ -214,6 +216,18 @@ HaValueStatus ha_normalise_state(const char* state, HaUnit unit, HaValueKind kin
   return HaValueStatus::Available;
 }
 
+bool ha_ev_is_dc(HaEvKind kind, const char* entity_id) {
+  switch (kind) {
+    case HaEvKind::Ac:
+      return false;
+    case HaEvKind::Dc:
+      return true;
+    case HaEvKind::Auto:
+    default:
+      return entity_id != nullptr && strstr(entity_id, "dc_charger") != nullptr;
+  }
+}
+
 bool ha_entity_id_valid(const char* entity_id) {
   if (entity_id == nullptr || entity_id[0] == '\0' || strlen(entity_id) > HA_ENTITY_ID_MAX) {
     return false;
@@ -283,7 +297,8 @@ bool ha_template_build(const char* const entity_ids[HA_ENTITY_COUNT], char* out,
   return true;
 }
 
-bool ha_payload_parse(const char* json, size_t length, Snapshot* out, HaParseInfo* info) {
+bool ha_payload_parse(const char* json, size_t length, Snapshot* out, HaParseInfo* info,
+                      const HaParseOptions* options) {
   if (json == nullptr || out == nullptr) {
     return false;
   }
@@ -337,15 +352,18 @@ bool ha_payload_parse(const char* json, size_t length, Snapshot* out, HaParseInf
   parse_boolean(root, HaEntity::OffGrid, &built.power.off_grid_known,
                 &built.power.off_grid, &parsed_info);
 
-  if (!home_configured && built.power.pv.known && built.power.grid.known &&
-      built.power.batt.known && built.power.ev.known) {
-    built.power.home.known = true;
-    built.power.home.value = built.power.pv.value - built.power.batt.value +
-                             built.power.grid.value - built.power.ev.value;
-    if (built.power.home.value < 0.0f) {
-      built.power.home.value = 0.0f;
-    }
+  // The EV is one entity of one kind; the other kind is genuinely absent.
+  const bool ev_is_dc = options == nullptr || options->ev_is_dc;
+  MaybeFloat no_charger;
+  no_charger.known = true;
+  const MaybeFloat& ev_ac = ev_is_dc ? no_charger : built.power.ev;
+  const MaybeFloat& ev_dc = ev_is_dc ? built.power.ev : no_charger;
+  const PowerBalance balance = power_balance(built.power.pv, built.power.batt, built.power.grid,
+                                             built.power.plant, ev_ac, ev_dc);
+  if (!home_configured) {
+    built.power.home = balance.home;
   }
+  built.power.losses = balance.losses;
 
   built.battery.soc_pct = parse_number(root, HaEntity::BatterySoc, &parsed_info);
   built.battery.soh_pct = parse_number(root, HaEntity::BatterySoh, &parsed_info);

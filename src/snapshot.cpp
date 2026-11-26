@@ -63,6 +63,7 @@ bool snapshot_parse(const char* json, size_t length, Snapshot* out) {
   parsed.power.home = maybe_float(power["home"]);
   parsed.power.ev = maybe_float(power["ev"]);
   parsed.power.plant = maybe_float(power["plant"]);
+  parsed.power.losses = maybe_float(power["losses"]);
   parsed.power.off_grid_known = !power["off_grid"].isNull();
   parsed.power.off_grid = power["off_grid"] | false;
   // Absent from a server older than 0.26.0, which leaves the grid screen's
@@ -87,6 +88,7 @@ bool snapshot_parse(const char* json, size_t length, Snapshot* out) {
     parsed.today.load = maybe_float(today["load"]);
     parsed.today.charge = maybe_float(today["charge"]);
     parsed.today.discharge = maybe_float(today["discharge"]);
+    parsed.today.losses = maybe_float(today["losses"]);
 
     JsonVariantConst flows = today["flows"];
     parsed.today.flows.solar_load = maybe_float(flows["solar_load"]);
@@ -99,6 +101,10 @@ bool snapshot_parse(const char* json, size_t length, Snapshot* out) {
     parsed.today.flows.solar_ev = maybe_float(flows["solar_ev"]);
     parsed.today.flows.grid_ev = maybe_float(flows["grid_ev"]);
     parsed.today.flows.batt_ev = maybe_float(flows["batt_ev"]);
+    // Absent before server 0.47.3; see Snapshot::Today::Flows.
+    parsed.today.flows.solar_losses = maybe_float(flows["solar_losses"]);
+    parsed.today.flows.grid_losses = maybe_float(flows["grid_losses"]);
+    parsed.today.flows.batt_losses = maybe_float(flows["batt_losses"]);
   }
 
   // Absent entirely from a server older than 0.15.0, which leaves configured

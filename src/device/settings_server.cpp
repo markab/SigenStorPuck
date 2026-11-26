@@ -430,6 +430,25 @@ String page(const String& message, bool message_is_error) {
     html += "' placeholder='";
     html += escape_html(entity.placeholder);
     html += "'>";
+    if (i == static_cast<size_t>(HaEntity::HomePower)) {
+      html += "<p class=hint>Optional. Leave blank and the Puck works house load out on the "
+              "AC side, from grid and plant power, as SigenStor Display does. A mapped "
+              "consumed-power sensor is used as it is, and may count the system's own losses "
+              "(conversion, standby, battery heating) as house load.</p>";
+    } else if (i == static_cast<size_t>(HaEntity::EvPower)) {
+      const HaEvKind ev_kind = settings.ha_ev_kind;
+      html += "<label class=opt><input type=radio name=haevkind value=auto";
+      html += ev_kind == HaEvKind::Auto ? " checked" : "";
+      html += "> Auto (DC if the entity ID contains dc_charger)</label>";
+      html += "<label class=opt><input type=radio name=haevkind value=ac";
+      html += ev_kind == HaEvKind::Ac ? " checked" : "";
+      html += "> AC charger</label>";
+      html += "<label class=opt><input type=radio name=haevkind value=dc";
+      html += ev_kind == HaEvKind::Dc ? " checked" : "";
+      html += "> DC charger</label>";
+      html += "<p class=hint>An AC charger is on the house wiring, so it comes off house "
+              "load. A DC charger is fed before the inverter's AC side, so it does not.</p>";
+    }
   }
   html += "<button type=submit>Save</button></form>";
   html += "<form method=post action=/ha-test><button class=secondary type=submit>";
@@ -868,6 +887,14 @@ void handle_home_assistant() {
     return;
   }
 
+  HaEvKind ev_kind = HaEvKind::Auto;
+  const String ev_kind_choice = s_server.arg("haevkind");
+  if (ev_kind_choice == "ac") {
+    ev_kind = HaEvKind::Ac;
+  } else if (ev_kind_choice == "dc") {
+    ev_kind = HaEvKind::Dc;
+  }
+
   String entities[HA_ENTITY_COUNT];
   size_t mapped = 0;
   for (size_t i = 0; i < HA_ENTITY_COUNT; ++i) {
@@ -890,7 +917,7 @@ void handle_home_assistant() {
     return;
   }
   if (!settings_set_home_assistant(String(parsed.base), token, entities, HA_ENTITY_COUNT,
-                                   forecast_source)) {
+                                   forecast_source, ev_kind)) {
     send_page("Could not store the Home Assistant settings.", true);
     return;
   }

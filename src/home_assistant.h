@@ -79,6 +79,25 @@ struct HaParseInfo {
   HaUnit units[HA_ENTITY_COUNT] = {};
 };
 
+// Which side of the plant the mapped EV charger sits on. It decides where the
+// EV comes off: an AC charger is house wiring, so house load is less the AC
+// charger; a DC charger leaves the DC bus and counts in the losses balance
+// instead (power_balance.h). Stored in NVS as its value, so append only.
+enum class HaEvKind : uint8_t {
+  Auto = 0,  // from the entity ID: "dc_charger" in it means DC, otherwise AC
+  Ac = 1,
+  Dc = 2,
+};
+
+// Resolves Auto against the mapped EV entity. The default mapping,
+// sensor.sigen_inverter_dc_charger_output_power, comes out DC.
+bool ha_ev_is_dc(HaEvKind kind, const char* entity_id);
+
+// Inputs to the parse that come from settings rather than from the payload.
+struct HaParseOptions {
+  bool ev_is_dc = true;  // matches the default EV mapping
+};
+
 bool ha_entity_id_valid(const char* entity_id);
 
 HaUnit ha_unit_from_text(const char* unit);
@@ -94,8 +113,12 @@ bool ha_template_build(const char* const entity_ids[HA_ENTITY_COUNT], char* out,
 // Parses the compact JSON rendered by the /api/template request. A malformed
 // document returns false and leaves *out untouched. Individual bad states remain
 // unknown and are counted in info, allowing a partial response to stay useful.
+//
+// With no "Home/load power" mapped, house load is worked out on the AC side
+// from the plant entity, and losses whenever their inputs are known; see
+// power_balance.h. A mapped home entity is used as it is.
 bool ha_payload_parse(const char* json, size_t length, Snapshot* out,
-                      HaParseInfo* info = nullptr);
+                      HaParseInfo* info = nullptr, const HaParseOptions* options = nullptr);
 
 // Maps REST status codes without requiring a live Home Assistant in tests.
 enum class HaHttpStatus : uint8_t { Ok, Unauthorised, HttpError };

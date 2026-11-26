@@ -1,5 +1,7 @@
 #include "modbus_regs.h"
 
+#include "power_balance.h"
+
 namespace {
 
 constexpr ModbusScope PLANT = ModbusScope::Plant;
@@ -206,9 +208,12 @@ void modbus_apply(ModbusValues* values, ModbusScope scope, uint16_t span_start,
     // plant with two inverters reports one plant and the sum of both.
     switch (reg.key) {
       case MB_ACC_CHARGING_POWER:
+        values->ev_ac_kw += decoded;
+        values->ev_ac_any = true;
+        break;
       case MB_INV_DC_OUTPUT_POWER:
-        values->ev_kw += decoded;
-        values->ev_any = true;
+        values->ev_dc_kw += decoded;
+        values->ev_dc_any = true;
         break;
       case MB_INV_ESS_MAX_TEMP:
         // Averaged rather than summed, matching summary.py's _avg_inverter.
@@ -311,8 +316,14 @@ void modbus_to_snapshot(const ModbusValues& values, Snapshot* out) {
 
   // Zero rather than unknown when no charging kit is configured, matching
   // _ev_power: a plant with no charger genuinely draws no EV power.
+  MaybeFloat ev_ac;
+  ev_ac.known = true;
+  ev_ac.value = values.ev_ac_any ? values.ev_ac_kw : 0.0f;
+  MaybeFloat ev_dc;
+  ev_dc.known = true;
+  ev_dc.value = values.ev_dc_any ? values.ev_dc_kw : 0.0f;
   built.power.ev.known = true;
-  built.power.ev.value = values.ev_any ? values.ev_kw : 0.0f;
+  built.power.ev.value = ev_ac.value + ev_dc.value;
 
   // 0 = on grid, 1 or 2 = off grid. Unread is not "off grid".
   if (values.known[MB_PLANT_ON_OFF_GRID]) {
@@ -320,17 +331,11 @@ void modbus_to_snapshot(const ModbusValues& values, Snapshot* out) {
     built.power.off_grid = values.value[MB_PLANT_ON_OFF_GRID] != 0.0f;
   }
 
-  // House load, derived exactly as the server derives it: EV comes out because
-  // it is reported as its own leg, and the result is floored at zero.
-  if (built.power.pv.known && built.power.grid.known && built.power.batt.known) {
-    float home = built.power.pv.value - built.power.batt.value + built.power.grid.value -
-                 built.power.ev.value;
-    if (home < 0.0f) {
-      home = 0.0f;
-    }
-    built.power.home.known = true;
-    built.power.home.value = home;
-  }
+  // House load and losses, derived exactly as the server derives them.
+  const PowerBalance balance = power_balance(built.power.pv, built.power.batt, built.power.grid,
+                                             built.power.plant, ev_ac, ev_dc);
+  built.power.home = balance.home;
+  built.power.losses = balance.losses;
 
   built.battery.soc_pct = maybe(values, MB_PLANT_ESS_SOC);
   built.battery.soh_pct = maybe(values, MB_PLANT_ESS_SOH);

@@ -26,6 +26,7 @@
 #include "home_assistant_history.h"
 #include "data_source.h"
 #include "modbus_regs.h"
+#include "power_balance.h"
 #include "screen_window.h"
 #include "solar_forecast.h"
 #include "solar_metric_layout.h"
@@ -644,10 +645,12 @@ void test_snapshot() {
   Snapshot snapshot;
   modbus_to_snapshot(values, &snapshot);
 
-  // home = pv - batt + grid - ev = 3.42 - 1.2 + (-1.1) - 0 = 1.12, which is the
-  // figure 01_normal.json carries for the same inputs.
+  // No plant power (30031) read, so this is the fallback: home = pv - batt +
+  // grid - ev = 3.42 - 1.2 + (-1.1) - 0 = 1.12. The AC-side formula needs the
+  // plant's own power, and losses cannot be known without it.
   check(snapshot.power.home.known, "home derived");
-  check_near(snapshot.power.home.value, 1.12f, "home matches the server's formula");
+  check_near(snapshot.power.home.value, 1.12f, "home falls back to the DC-side formula");
+  check(!snapshot.power.losses.known, "losses unknown without plant power");
   check(snapshot.power.ev.known && snapshot.power.ev.value == 0.0f, "no charger means 0 kW EV");
 
   // EV must come out of the house figure, or a charging car is counted twice.
@@ -683,6 +686,231 @@ void test_snapshot() {
   modbus_to_snapshot(empty, &snapshot);
   check(!snapshot.today.present, "no day block without any daily register");
   check(!snapshot.power.home.known, "home unknown when its inputs are");
+}
+
+// The five cases the AC-side house load and losses must get right, matching
+// SigenStorDisplay 0.47.3's summary.py. kW throughout; a NAN plant is unread.
+struct BalanceCase {
+  const char* name;
+  float grid, batt, plant, pv, ev_ac, ev_dc;
+  float home;
+  float losses;  // NAN: unknown
+};
+constexpr BalanceCase BALANCE_CASES[] = {
+    {"grid charging", 9.09f, 8.20f, -8.60f, 0.0f, 0.0f, 0.0f, 0.49f, 0.40f},
+    {"idle standby", 0.075f, 0.0f, -0.075f, 0.0f, 0.0f, 0.0f, 0.0f, 0.075f},
+    {"AC charger, battery idle", 7.60f, 0.0f, -0.08f, 0.0f, 7.0f, 0.0f, 0.52f, 0.08f},
+    {"DC charger on solar", -2.0f, 0.0f, 2.8f, 10.0f, 0.0f, 7.0f, 0.80f, 0.20f},
+    {"plant unknown (fallback)", -1.1f, 1.2f, NAN, 3.42f, 0.0f, 0.0f, 1.12f, NAN},
+};
+
+MaybeFloat known_kw(float value) {
+  MaybeFloat out;
+  if (!isnan(value)) {
+    out.known = true;
+    out.value = value;
+  }
+  return out;
+}
+
+// One S32 register at gain 1000, as a kW figure, big-endian word order.
+void s32_kw_words(float kw, uint16_t words[2]) {
+  const int32_t raw = static_cast<int32_t>(lroundf(kw * 1000.0f));
+  const uint32_t bits = static_cast<uint32_t>(raw);
+  words[0] = static_cast<uint16_t>(bits >> 16);
+  words[1] = static_cast<uint16_t>(bits & 0xFFFF);
+}
+
+void check_balance(const Snapshot& snapshot, const BalanceCase& c, const char* path) {
+  char what[96];
+  snprintf(what, sizeof(what), "%s, %s: home", path, c.name);
+  check(snapshot.power.home.known, what);
+  check_near(snapshot.power.home.value, c.home, what);
+  snprintf(what, sizeof(what), "%s, %s: losses", path, c.name);
+  if (isnan(c.losses)) {
+    check(!snapshot.power.losses.known, what);
+  } else {
+    check(snapshot.power.losses.known, what);
+    check_near(snapshot.power.losses.value, c.losses, what);
+  }
+  snprintf(what, sizeof(what), "%s, %s: EV shows both chargers", path, c.name);
+  check(snapshot.power.ev.known, what);
+  check_near(snapshot.power.ev.value, c.ev_ac + c.ev_dc, what);
+}
+
+void test_power_balance() {
+  printf("power balance\n");
+
+  for (const BalanceCase& c : BALANCE_CASES) {
+    const PowerBalance balance =
+        power_balance(known_kw(c.pv), known_kw(c.batt), known_kw(c.grid), known_kw(c.plant),
+                      known_kw(c.ev_ac), known_kw(c.ev_dc));
+    char what[96];
+    snprintf(what, sizeof(what), "balance, %s: home", c.name);
+    check(balance.home.known, what);
+    check_near(balance.home.value, c.home, what);
+    snprintf(what, sizeof(what), "balance, %s: losses", c.name);
+    check(isnan(c.losses) ? !balance.losses.known
+                          : balance.losses.known && fabsf(balance.losses.value - c.losses) < 0.005f,
+          what);
+  }
+
+  // Through the Modbus decoder: the AC charger is 32003, the DC charger 31502.
+  for (const BalanceCase& c : BALANCE_CASES) {
+    ModbusValues values;
+    uint16_t words[2];
+    s32_kw_words(c.grid, words);
+    modbus_apply(&values, ModbusScope::Plant, 30005, words, 2);
+    s32_kw_words(c.batt, words);
+    modbus_apply(&values, ModbusScope::Plant, 30037, words, 2);
+    s32_kw_words(c.pv, words);
+    modbus_apply(&values, ModbusScope::Plant, 30035, words, 2);
+    if (!isnan(c.plant)) {
+      s32_kw_words(c.plant, words);
+      modbus_apply(&values, ModbusScope::Plant, 30031, words, 2);
+    }
+    if (c.ev_ac > 0.0f) {
+      s32_kw_words(c.ev_ac, words);
+      modbus_apply(&values, ModbusScope::AcCharger, 32003, words, 2);
+    }
+    if (c.ev_dc > 0.0f) {
+      s32_kw_words(c.ev_dc, words);
+      modbus_apply(&values, ModbusScope::Inverter, 31502, words, 2);
+    }
+    Snapshot snapshot;
+    modbus_to_snapshot(values, &snapshot);
+    check_balance(snapshot, c, "modbus");
+  }
+
+  // Through the HA parser, with no home entity mapped so it is derived. The EV
+  // is one entity; the case says which kind it is.
+  for (const BalanceCase& c : BALANCE_CASES) {
+    const bool dc = c.ev_dc > 0.0f;
+    char json[512];
+    char plant[64] = "";
+    if (!isnan(c.plant)) {
+      snprintf(plant, sizeof(plant), "\"xp\":{\"s\":\"%.3f\",\"u\":\"kW\"},", c.plant);
+    }
+    snprintf(json, sizeof(json),
+             "{\"v\":1,\"ts\":1788970000,"
+             "\"pp\":{\"s\":\"%.3f\",\"u\":\"kW\"},"
+             "\"gp\":{\"s\":\"%.3f\",\"u\":\"kW\"},"
+             "\"bp\":{\"s\":\"%.3f\",\"u\":\"kW\"},"
+             "%s"
+             "\"ep\":{\"s\":\"%.3f\",\"u\":\"kW\"}}",
+             c.pv, c.grid, c.batt, plant, dc ? c.ev_dc : c.ev_ac);
+    HaParseOptions options;
+    options.ev_is_dc = dc;
+    Snapshot snapshot;
+    check(ha_payload_parse(json, strlen(json), &snapshot, nullptr, &options),
+          "HA balance payload parses");
+    check_balance(snapshot, c, "home assistant");
+  }
+
+  // The same AC-charger reading taken as DC: it no longer comes off home, and
+  // instead it is not a loss. Getting the kind wrong is visible, not silent.
+  {
+    const char* json =
+        "{\"v\":1,\"ts\":1788970000,"
+        "\"pp\":{\"s\":\"0\",\"u\":\"kW\"},\"gp\":{\"s\":\"7.6\",\"u\":\"kW\"},"
+        "\"bp\":{\"s\":\"0\",\"u\":\"kW\"},\"xp\":{\"s\":\"-0.08\",\"u\":\"kW\"},"
+        "\"ep\":{\"s\":\"7\",\"u\":\"kW\"}}";
+    HaParseOptions as_dc;
+    as_dc.ev_is_dc = true;
+    Snapshot snapshot;
+    ha_payload_parse(json, strlen(json), &snapshot, nullptr, &as_dc);
+    check_near(snapshot.power.home.value, 7.52f, "an AC charger read as DC stays in home");
+  }
+
+  // A mapped home entity is used as it is, but losses are still derived.
+  {
+    const char* json =
+        "{\"v\":1,\"ts\":1788970000,"
+        "\"pp\":{\"s\":\"0\",\"u\":\"kW\"},\"gp\":{\"s\":\"9.09\",\"u\":\"kW\"},"
+        "\"bp\":{\"s\":\"8.2\",\"u\":\"kW\"},\"xp\":{\"s\":\"-8.6\",\"u\":\"kW\"},"
+        "\"hp\":{\"s\":\"0.89\",\"u\":\"kW\"}}";
+    Snapshot snapshot;
+    ha_payload_parse(json, strlen(json), &snapshot);
+    check_near(snapshot.power.home.value, 0.89f, "mapped HA home entity used as it is");
+    check_near(snapshot.power.losses.value, 0.40f, "losses derived beside a mapped home");
+  }
+
+  // Auto reads the entity ID; the default mapping is the DC charger.
+  check(ha_ev_is_dc(HaEvKind::Auto, "sensor.sigen_inverter_dc_charger_output_power"),
+        "auto: the default dc_charger entity is DC");
+  check(!ha_ev_is_dc(HaEvKind::Auto, "sensor.wallbox_charging_power"),
+        "auto: any other entity is AC");
+  check(!ha_ev_is_dc(HaEvKind::Auto, nullptr), "auto: no entity is AC");
+  check(!ha_ev_is_dc(HaEvKind::Ac, "sensor.sigen_inverter_dc_charger_output_power"),
+        "forced AC overrides the entity ID");
+  check(ha_ev_is_dc(HaEvKind::Dc, "sensor.wallbox_charging_power"),
+        "forced DC overrides the entity ID");
+}
+
+// Server 0.47.3 sends the losses; an older one does not, and they stay unknown.
+void test_server_losses() {
+  printf("server losses\n");
+  const char* payload =
+      "{\"v\":1,\"ts\":1788970000,\"ok\":true,"
+      "\"power\":{\"grid\":9.09,\"plant\":-8.6,\"home\":0.49,\"losses\":0.4},"
+      "\"today\":{\"solar\":12.4,\"losses\":0.8,\"flows\":{"
+      "\"solar_losses\":0.2,\"grid_losses\":0.2,\"batt_losses\":0.4}}}";
+  Snapshot snapshot;
+  check(snapshot_parse(payload, strlen(payload), &snapshot), "payload with losses parses");
+  check(snapshot.power.losses.known, "power.losses read");
+  check_near(snapshot.power.losses.value, 0.4f, "power.losses unchanged");
+  check_near(snapshot.today.losses.value, 0.8f, "today.losses unchanged");
+  check_near(snapshot.today.flows.solar_losses.value, 0.2f, "solar_losses unchanged");
+  check_near(snapshot.today.flows.grid_losses.value, 0.2f, "grid_losses unchanged");
+  check_near(snapshot.today.flows.batt_losses.value, 0.4f, "batt_losses unchanged");
+
+  const char* older =
+      "{\"v\":1,\"ts\":1788970000,\"ok\":true,\"power\":{\"grid\":-1.1},"
+      "\"today\":{\"solar\":12.4,\"flows\":{\"solar_load\":4.2}}}";
+  Snapshot old_snapshot;
+  check(snapshot_parse(older, strlen(older), &old_snapshot), "pre-0.47.3 payload parses");
+  check(!old_snapshot.power.losses.known && !old_snapshot.today.losses.known &&
+            !old_snapshot.today.flows.solar_losses.known &&
+            !old_snapshot.today.flows.grid_losses.known &&
+            !old_snapshot.today.flows.batt_losses.known,
+        "an older server leaves every losses field unknown, not zero");
+
+  // The fixtures that carry losses must hold the server's identities, or the
+  // flows screen is being checked against a day that could not happen.
+  const char* const with_losses[] = {"02_evening_discharge.json", "04_ev_charging.json",
+                                     "10_grid_charging.json", "11_grid_charging_10kw.json"};
+  for (const char* name : with_losses) {
+    std::string path = std::string("test/fixtures/") + name;
+    FILE* file = fopen(path.c_str(), "rb");
+    if (file == nullptr) {
+      continue;  // not run from the repo root
+    }
+    std::string json;
+    char buffer[512];
+    size_t read = 0;
+    while ((read = fread(buffer, 1, sizeof(buffer), file)) > 0) {
+      json.append(buffer, read);
+    }
+    fclose(file);
+    Snapshot fixture;
+    char what[96];
+    snprintf(what, sizeof(what), "%s parses", name);
+    check(snapshot_parse(json.c_str(), json.size(), &fixture), what);
+    const Snapshot::Today& t = fixture.today;
+    const Snapshot::Today::Flows& f = t.flows;
+    snprintf(what, sizeof(what), "%s: solar column closes", name);
+    check_near(f.solar_load.value + f.solar_batt.value + f.solar_grid.value + f.solar_losses.value,
+               t.solar.value, what);
+    snprintf(what, sizeof(what), "%s: import column closes", name);
+    check_near(f.grid_load.value + f.grid_batt.value + f.grid_losses.value, t.imported.value,
+               what);
+    snprintf(what, sizeof(what), "%s: discharge column closes", name);
+    check_near(f.batt_load.value + f.batt_grid.value + f.batt_losses.value, t.discharge.value,
+               what);
+    snprintf(what, sizeof(what), "%s: live losses balance", name);
+    check_near(fixture.power.pv.value - fixture.power.batt.value - fixture.power.plant.value,
+               fixture.power.losses.value, what);
+  }
 }
 
 void test_day_baseline() {
@@ -2067,6 +2295,8 @@ int run_selftest() {
   test_decode();
   test_plan();
   test_snapshot();
+  test_power_balance();
+  test_server_losses();
   test_day_baseline();
   test_history();
   test_home_assistant_history();
