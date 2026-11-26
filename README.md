@@ -69,11 +69,11 @@ Which screens appear at all is up to you — see **Screens** under Settings.
 | | |
 |:--:|:--:|
 | <img src="docs/img/power.png" width="300" alt="Power flow"> | <img src="docs/img/battery.png" width="300" alt="Battery"> |
-| **Power** — what is happening right now. Solar at the top, then clockwise: battery, home, EV, grid, around the plant in the middle. Dots run along each leg in the direction the power is going, faster when there is more of it. The ring is your state of charge.<br><br>*Works on all three sources when the corresponding values are available.* | **Battery** — charge level around the bezel, capacity in kWh, and how long until it is full or empty. Below that: charged and discharged today, battery health, and temperature.<br><br>*Works on all three sources. On Modbus, temperature and the daily totals need an inverter added under Plant; on HA, each figure needs its mapping.* |
+| **Power** — what is happening right now. Solar at the top, then clockwise: battery, home, EV, grid, around the plant in the middle, which shows its own power and, below it, what the system is losing in conversion and standby. Dots run along each leg in the direction the power is going, faster when there is more of it. The ring is your state of charge.<br><br>*Works on all three sources when the corresponding values are available.* | **Battery** — charge level around the bezel, capacity in kWh, and how long until it is full or empty. Below that: charged and discharged today, battery health, and temperature.<br><br>*Works on all three sources. On Modbus, temperature and the daily totals need an inverter added under Plant; on HA, each figure needs its mapping.* |
 | <img src="docs/img/solar.png" width="300" alt="Solar"> | <img src="docs/img/load.png" width="300" alt="Load"> |
 | **Solar** — generation so far today, with the ring showing progress against the day's forecast. Then the forecast total, how much is still to come, how you are doing against it, and the expected peak. A figure that isn't known yet shows `--` and keeps its place; with Home Assistant forecast entities, a figure you haven't mapped is left off.<br><br>*Works on all three sources.* Home Assistant can use no forecast, calculate one on the Puck, or map HA forecast entities. | **Load** — everything used today, with what is being drawn right now.<br><br>*Partial on Modbus and HA.* The headline total, live figure and locally recorded curve work. The four source-breakdown figures need a **SigenStorDisplay Server**. |
 | <img src="docs/img/flows.png" width="300" alt="Energy flows"> | <img src="docs/img/cost.png" width="300" alt="Cost"> |
-| **Flows** — where today's energy came from and where it went. Sources down the left, destinations down the right, one ribbon per path. The ring is how self-sufficient you have been.<br><br>**SigenStorDisplay Server Only.** | **Cost** — what you have saved today, the unit rate you are paying right now, and the next few tariff slots coloured against it.<br><br>**SigenStorDisplay Server Only.** |
+| **Flows** — where today's energy came from and where it went. Sources down the left, destinations down the right, one ribbon per path, including what the system itself lost on the way (SigenStor Display 0.47.3 onwards). The ring is how self-sufficient you have been.<br><br>**SigenStorDisplay Server Only.** | **Cost** — what you have saved today, the unit rate you are paying right now, and the next few tariff slots coloured against it.<br><br>**SigenStorDisplay Server Only.** |
 | <img src="docs/img/events.png" width="300" alt="Events"> | <img src="docs/img/settings.png" width="300" alt="Settings"> |
 | **Events** — the grid event that matters most right now: an Octopus Saving Session, a weekend Happy Hour, another free-import period, or an Axle event. The one on now, else the next one booked, else the last one to finish: when it is, how long is left or until it starts, and what it came to — energy cut and points for a saving session (`~` marks points not yet confirmed), how much of a Happy Hour's allowance you used, what was imported, or what an Axle event exported and paid.<br><br>**SigenStorDisplay Server Only**, version 0.45.0 or later. An older server shows "No events". | **Settings** — always the last screen. Scan the code with your phone, or type either address into a browser, to reach the settings page.<br><br>*Works on all three sources.* |
 
@@ -277,9 +277,9 @@ provides it. SOC and today's totals enable their corresponding figures.
 | PV power | Solar generation, positive, in W or kW |
 | Grid power | Positive importing, negative exporting, in W or kW |
 | Battery power | Positive charging, negative discharging, in W or kW |
-| Home/load power | Positive consumption, in W or kW; preferred over derivation |
-| EV power | Positive charging draw, in W or kW |
-| Plant/system power | Integration's total active plant power, in W or kW |
+| Home/load power | Positive consumption, in W or kW; used as-is when mapped (see below) |
+| EV power | Positive charging draw, in W or kW, with whether the charger is AC or DC |
+| Plant/system power | Integration's total active plant power, in W or kW: negative while the plant takes AC in |
 | Off-grid state | `on`/`true`/`1`/`off_grid`, or the corresponding false value |
 | Battery SOC / SOH | Percentage with HA unit `%` |
 | Battery capacity | Wh or kWh |
@@ -288,11 +288,24 @@ provides it. SOC and today's totals enable their corresponding figures.
 | Solar forecast | Today's total and remaining energy in Wh or kWh, actual-vs-forecast in `%`, and peak power in W or kW |
 
 Every mapping can be overridden or cleared individually. If home/load power is not
-mapped, the Puck derives it only when PV, grid, battery, and EV are all known:
-`home = max(0, PV - battery + grid - EV)`. Leaving the optional EV mapping blank
-explicitly means there is no separate EV leg and uses zero in that equation. Mapping an
-EV entity whose current state is unavailable does **not** turn it into zero and prevents
-the derivation until it recovers.
+mapped, the Puck works it out on the AC side, as SigenStor Display does:
+`home = max(0, grid + plant - AC charger)`. That leaves the system's own losses
+(conversion, standby, battery heating) out of the house figure, and shows them under
+PLANT on the Power screen instead: `losses = PV - battery - plant - DC charger`.
+Without a plant mapping, the Puck falls back to `home = max(0, PV - battery + grid - EV)`,
+which counts the losses as house load, and the losses are not shown.
+
+A mapped home/load sensor is used as it is. Sigen's own consumed-power sensor may count
+the losses as house load; leave it blank to have the Puck do the AC-side sum.
+
+Whether the EV charger is **AC** or **DC** matters, because only an AC charger is on the
+house wiring. **Auto**, the default, treats an entity ID containing `dc_charger` as DC
+(the default mapping is the inverter's DC charger) and anything else as AC.
+
+Leaving the optional EV mapping blank explicitly means there is no separate EV leg and
+uses zero in those equations. Mapping an EV entity whose current state is unavailable
+does **not** turn it into zero, and prevents the derivations that need it until it
+recovers.
 
 HA values keep the `Snapshot` units used by every existing screen: kW, kWh, %, and °C.
 `W` is converted to `kW`, and `Wh` to `kWh`. Missing units, unsupported units, `unknown`,
