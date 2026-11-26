@@ -2,11 +2,17 @@ name: build
 
 # Every push and pull request gets built, so breakage is caught without hardware.
 # A v* tag additionally cuts a release with the flashable artifacts attached.
+#
+# workflow_dispatch is for redeploying Pages when its deploy fails on a GitHub
+# hiccup: re-running only the failed job leaves the first attempt's artifact in
+# the run, and the deploy then refuses two. `gh workflow run build --ref main`
+# starts a clean run instead.
 on:
   push:
     branches: [main]
     tags: ['v*']
   pull_request:
+  workflow_dispatch:
 
 jobs:
   build:
