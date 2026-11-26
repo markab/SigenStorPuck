@@ -444,6 +444,9 @@ bool ha_payload_parse(const char* json, size_t length, Snapshot* out, HaParseInf
     built.power.home = balance.home;
   }
   built.power.losses = balance.losses;
+  // Solar is the strings where they were read, so the Solar node, its flow line,
+  // Generating/Idle and the day chart all agree with the losses beside them.
+  built.power.pv = balance.solar;
 
   built.battery.soc_pct = parse_number(root, HaEntity::BatterySoc, &parsed_info);
   built.battery.soh_pct = parse_number(root, HaEntity::BatterySoh, &parsed_info);

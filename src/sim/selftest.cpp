@@ -697,38 +697,51 @@ void test_snapshot() {
   check(!snapshot.power.home.known, "home unknown when its inputs are");
 }
 
-// The cases the AC-side house load and the system's total losses must get right,
-// matching SigenStorDisplay 0.47.6's summary.py. kW throughout; a NAN plant is
-// unread. `strings` says how many PV strings reported (0: no string data, so the
-// losses fall back to the plant's PV figure), with each one's volts and amps.
+// The cases the AC-side house load, Solar and the system's total losses must get
+// right, matching SigenStorDisplay 0.47.7's summary.py. kW throughout; a NAN
+// plant is unread. `strings` says how many PV strings reported (0: no string
+// data, so Solar and the losses fall back to the plant's PV figure), with each
+// one's volts and amps. Solar + battery out = plant + loss in every case.
 struct BalanceCase {
   const char* name;
   float grid, batt, plant, pv, ev_ac, ev_dc;
   int strings;
   float volts[2];
   float amps[2];
+  float solar;
   float home;
   float losses;  // NAN: unknown
 };
+
 constexpr BalanceCase BALANCE_CASES[] = {
-    // The owner's screen: battery out 0.87, Solar figure 0.07, plant out 0.93.
-    // The Solar figure already has the losses taken out, so only the strings'
-    // 0.2476 kW shows the 0.19 kW actually lost.
+    // The owner's first screen: battery out 0.87, Solar figure 0.07, plant out
+    // 0.93. The Solar figure already has the losses taken out, so only the
+    // strings' 0.2476 kW shows the 0.19 kW actually lost.
     {"sun and battery", 0.0f, -0.87f, 0.93f, 0.07f, 0.0f, 0.0f,
-     2, {348.0f, 205.0f}, {0.47f, 0.41f}, 0.93f, 0.19f},
+     2, {348.0f, 205.0f}, {0.47f, 0.41f}, 0.2476f, 0.93f, 0.19f},
+    // The second: weak sun, the register reads nothing while the strings
+    // deliver 0.105 kW, and 0.87 in against 0.78 + 0.19 out did not add up.
+    {"weak sun", -0.02f, -0.87f, 0.78f, 0.0f, 0.0f, 0.0f,
+     2, {310.0f, 217.0f}, {0.20f, 0.20f}, 0.1054f, 0.76f, 0.1954f},
+    {"night", 0.0f, -0.80f, 0.65f, 0.0f, 0.0f, 0.0f,
+     2, {0.0f, 0.0f}, {0.0f, 0.0f}, 0.0f, 0.65f, 0.15f},
+    // Sensor error the other way: never less than Sigenergy's own figure.
+    {"strings below register", 0.0f, 0.0f, 2.9f, 3.0f, 0.0f, 0.0f,
+     1, {500.0f, 0.0f}, {5.90f, 0.0f}, 3.0f, 2.9f, 0.10f},
     {"sun and battery, no string data", 0.0f, -0.87f, 0.93f, 0.07f, 0.0f, 0.0f,
-     0, {}, {}, 0.93f, 0.01f},
+     0, {}, {}, 0.07f, 0.93f, 0.01f},
     {"grid charging", 9.09f, 8.20f, -8.60f, 0.0f, 0.0f, 0.0f,
-     2, {0.0f, 0.0f}, {0.0f, 0.0f}, 0.49f, 0.40f},
+     2, {0.0f, 0.0f}, {0.0f, 0.0f}, 0.0f, 0.49f, 0.40f},
     {"idle standby", 0.075f, 0.0f, -0.075f, 0.0f, 0.0f, 0.0f,
-     2, {0.0f, 0.0f}, {0.0f, 0.0f}, 0.0f, 0.075f},
+     2, {0.0f, 0.0f}, {0.0f, 0.0f}, 0.0f, 0.0f, 0.075f},
     {"AC charger, battery idle", 7.60f, 0.0f, -0.08f, 0.0f, 7.0f, 0.0f,
-     0, {}, {}, 0.52f, 0.08f},
+     0, {}, {}, 0.0f, 0.52f, 0.08f},
     // Strings 2 x 420 V x 12.5 A = 10.5 kW against a Solar figure of 10.0.
     {"DC charger on solar", -2.0f, 0.0f, 2.8f, 10.0f, 0.0f, 7.0f,
-     2, {420.0f, 420.0f}, {12.5f, 12.5f}, 0.80f, 0.70f},
+     2, {420.0f, 420.0f}, {12.5f, 12.5f}, 10.5f, 0.80f, 0.70f},
+    // No plant figure: home keeps the register, pv - batt + grid - ev.
     {"plant unknown (fallback)", -1.1f, 1.2f, NAN, 3.42f, 0.0f, 0.0f,
-     0, {}, {}, 1.12f, NAN},
+     0, {}, {}, 3.42f, 1.12f, NAN},
 };
 
 MaybeFloat known_kw(float value) {
@@ -768,6 +781,9 @@ void string_words(float volts, float amps, uint16_t* pair) {
 
 void check_balance(const Snapshot& snapshot, const BalanceCase& c, const char* path) {
   char what[112];
+  snprintf(what, sizeof(what), "%s, %s: solar", path, c.name);
+  check(snapshot.power.pv.known, what);
+  check_near(snapshot.power.pv.value, c.solar, what);
   snprintf(what, sizeof(what), "%s, %s: home", path, c.name);
   check(snapshot.power.home.known, what);
   check_near(snapshot.power.home.value, c.home, what);
@@ -828,6 +844,8 @@ void test_power_balance() {
         power_balance(known_kw(c.pv), known_kw(c.batt), known_kw(c.grid), known_kw(c.plant),
                       known_kw(c.ev_ac), known_kw(c.ev_dc), strings_kw(c));
     char what[112];
+    snprintf(what, sizeof(what), "balance, %s: solar", c.name);
+    check(balance.solar.known && fabsf(balance.solar.value - c.solar) < 0.005f, what);
     snprintf(what, sizeof(what), "balance, %s: home", c.name);
     check(balance.home.known, what);
     check_near(balance.home.value, c.home, what);

@@ -251,7 +251,7 @@ Most changes take effect straight away; the ones needing a restart are marked �
 <tr><td><strong>Port</strong></td><td><code>502</code> unless you have changed it on the plant.</td></tr>
 <tr><td><strong>Plant address</strong></td><td><code>247</code> unless you have changed it.</td></tr>
 <tr><td><strong>Slave ID</strong></td><td>The address of one device inside the plant, as shown in the Sigen app. <code>0</code> means the slot is unused. Four slots are available; all are optional.</td></tr>
-<tr><td><strong>Type</strong></td><td><em>Inverter</em> or <em>Charger</em>. Adding an inverter gives you battery temperature, the daily totals and its PV strings, which the loss under PLANT is measured against; adding a charger gives you EV power.</td></tr>
+<tr><td><strong>Type</strong></td><td><em>Inverter</em> or <em>Charger</em>. Adding an inverter gives you battery temperature, the daily totals and its PV strings, which Solar and the loss under PLANT are measured from; adding a charger gives you EV power.</td></tr>
 <tr><td><strong>DC charger</strong></td><td>Tick if that inverter has a vehicle charger built into it, so its DC output counts as EV power.</td></tr>
 </table>
 
@@ -285,7 +285,7 @@ provides it. SOC and today's totals enable their corresponding figures.
 | Battery capacity | Wh or kWh |
 | Battery temperature | °C (`°C`, `C`, or `degC`) |
 | Today's six energy totals | PV generation, load, import, export, battery charge and discharge, each in Wh or kWh |
-| PV1–PV4 voltage and current | Optional: each string's voltage in V or mV and current in A or mA, for the loss under PLANT |
+| PV1–PV4 voltage and current | Optional: each string's voltage in V or mV and current in A or mA, for Solar and the loss under PLANT |
 | Solar forecast | Today's total and remaining energy in Wh or kWh, actual-vs-forecast in `%`, and peak power in W or kW |
 
 Every mapping can be overridden or cleared individually. If home/load power is not
@@ -293,10 +293,12 @@ mapped, the Puck works it out on the AC side, as SigenStor Display does:
 `home = max(0, grid + plant - AC charger)`. That leaves the system's own losses
 (conversion, standby, battery heating) out of the house figure, and shows them under
 PLANT on the Power screen instead, as the system's total loss:
-`losses = strings - battery - plant - DC charger`, where *strings* is voltage × current
-summed over the mapped PV strings. Map them if you can: without them the Puck uses PV
-power in their place, and that figure is already net of nearly every loss while the sun
-is up, so the loss shown misses most of what happens in daylight. A string pair counts
+`losses = solar - battery - plant - DC charger`. *Solar* is what the panels delivered:
+voltage × current summed over the mapped PV strings, or PV power if that is higher, and
+it is also the figure the Solar node shows, so Solar plus battery out equals plant plus
+loss on screen. Map the strings if you can: without them the Puck uses PV power alone,
+and that figure is already net of nearly every loss while the sun is up — in weak sun it
+reads nothing at all — so the loss shown misses most of what happens in daylight. A string pair counts
 only when both halves are mapped, and if any mapped string is unavailable the Puck falls
 back rather than show a total short by a string.
 Without a plant mapping, the Puck falls back to `home = max(0, PV - battery + grid - EV)`,

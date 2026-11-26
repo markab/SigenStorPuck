@@ -343,6 +343,9 @@ void modbus_to_snapshot(const ModbusValues& values, Snapshot* out) {
                                              built.power.plant, ev_ac, ev_dc, strings);
   built.power.home = balance.home;
   built.power.losses = balance.losses;
+  // Solar is the strings where they were read, so the Solar node, its flow line,
+  // Generating/Idle and the day chart all agree with the losses beside them.
+  built.power.pv = balance.solar;
 
   built.battery.soc_pct = maybe(values, MB_PLANT_ESS_SOC);
   built.battery.soh_pct = maybe(values, MB_PLANT_ESS_SOH);

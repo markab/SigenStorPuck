@@ -10,15 +10,22 @@
 // 0.4 kW of phantom "house" on a grid-charging night. The house load measured
 // at the AC terminals is instead:
 //
+//   solar  = max(strings, pv)
 //   home   = grid + plant - ev_ac
-//   losses = strings - batt - plant - ev_dc
+//   losses = solar - batt - plant - ev_dc
 //
 // `strings` is the power at the inverters' PV inputs, V x I summed over every
 // string. The plant's own PV figure (`pv`, 30035) cannot stand in for it while
 // the sun is up: it is what is left once the battery and the AC output are
 // accounted for, already net of nearly every loss (standby, the battery's
-// conversion, the solar conversion), so with it the losses read ~0 all day. It is
-// only the fallback where string data is missing, as in SigenStorDisplay 0.47.6.
+// conversion, the solar conversion), so with it the losses read ~0 all day, and
+// in weak sun it reads nothing at all while the strings deliver 0.1 kW.
+//
+// So Solar is what the panels delivered, the strings, as in SigenStorDisplay
+// 0.47.7 — and the same figure goes into the losses, so the power screen adds
+// up: Solar + battery out = plant + loss. The max is for sensor error in low
+// light: never show less than Sigenergy's own figure. Without string data `pv`
+// stands in for both.
 //
 // `plant` (30031) is negative while the inverter takes AC in. An AC charger is
 // on the house wiring, so it comes off home; a DC charger leaves the DC bus
@@ -32,6 +39,7 @@
 #include "snapshot.h"
 
 struct PowerBalance {
+  MaybeFloat solar;   // kW the panels delivered; what the Solar node shows
   MaybeFloat home;    // kW, floored at zero
   MaybeFloat losses;  // kW, the system's total; not floored: a small negative is
                       // sensor noise, and a floor would hide a sign error
@@ -40,10 +48,11 @@ struct PowerBalance {
 // Every input in kW. `ev_ac` and `ev_dc` must be known (zero when no charger of
 // that kind exists) for any figure that uses them to come out known.
 //
-// With `plant` unknown, home falls back to the old DC-side formula so a source
-// that cannot read the plant's power still gets a house figure, and losses is
-// unknown. With `strings` unknown — no string data, or a read that failed this
-// cycle, never zero — losses falls back to `pv`, and misses most daytime loss.
+// With `plant` unknown, home falls back to the old DC-side formula — on `pv`,
+// the register, as the server's does — so a source that cannot read the plant's
+// power still gets a house figure, and losses is unknown. With `strings` unknown
+// — no string data, or a read that failed this cycle, never zero — solar is `pv`
+// and losses misses most daytime loss.
 PowerBalance power_balance(const MaybeFloat& pv, const MaybeFloat& batt, const MaybeFloat& grid,
                            const MaybeFloat& plant, const MaybeFloat& ev_ac,
                            const MaybeFloat& ev_dc, const MaybeFloat& strings = MaybeFloat{});
