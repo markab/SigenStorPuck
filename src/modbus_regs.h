@@ -146,6 +146,15 @@ struct ModbusValues {
   float ev_dc_kw = 0.0f;  // MB_INV_DC_OUTPUT_POWER, summed across inverters
   bool ev_dc_any = false;
 
+  // The power at every inverter's PV inputs, V x I summed over its strings: the
+  // DC input the losses are measured against (power_balance.h). Known only when
+  // every inverter asked this cycle answered with at least one string — one that
+  // failed, or reported none, makes the whole figure unknown rather than short,
+  // because a strings figure missing an inverter would read as a loss.
+  float strings_kw = 0.0f;
+  bool strings_any = false;
+  bool strings_failed = false;
+
   float temp_sum = 0.0f;
   int temp_count = 0;
 
@@ -195,3 +204,36 @@ void modbus_day_totals(ModbusDayBaseline* baseline, uint32_t local_day, float to
 // wrong silently inflates the house figure and nothing on screen would look
 // wrong.
 void modbus_to_snapshot(const ModbusValues& values, Snapshot* out);
+
+// --- PV strings --------------------------------------------------------------
+//
+// Read apart from the register table because how much there is to read depends
+// on the inverter: absent strings answer IllegalAddress, so only the ones the
+// inverter says it has are asked for. Each inverter's string block is two reads
+// at most:
+//
+//   head  31025..31034  string count, MPPT count, then PV1-4 voltage/current
+//   tail  31042..       PV5-16 voltage/current, only when the count is above 4
+//
+// Voltage is S16 / 10 V, current S16 / 100 A, as in SigenStorDisplay's
+// hybrid_inverter.py.
+static constexpr uint16_t MB_PV_HEAD_START = 31025;
+static constexpr uint16_t MB_PV_HEAD_WORDS = 10;
+static constexpr uint16_t MB_PV_TAIL_START = 31042;
+static constexpr uint16_t MB_PV_MAX_STRINGS = 16;
+
+// The string count from a head read, clamped to MB_PV_MAX_STRINGS. Zero when
+// the head is short.
+uint16_t modbus_pv_string_count(const uint16_t* head, size_t head_words);
+
+// The tail read a head's count calls for. False when PV1-4 already cover it.
+bool modbus_pv_tail_span(uint16_t string_count, ModbusSpan* out);
+
+// Folds one inverter's string reads into the accumulator. `tail` may be null
+// when the count is 4 or fewer. An inverter that reports no strings, or whose
+// reads do not cover its count, counts as a failure for the cycle.
+void modbus_apply_strings(ModbusValues* values, const uint16_t* head, size_t head_words,
+                          const uint16_t* tail, size_t tail_words);
+
+// Marks this cycle's strings unknown: a read failed, or was skipped.
+void modbus_strings_failed(ModbusValues* values);

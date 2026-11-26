@@ -23,6 +23,19 @@ enum class HaEntity : uint8_t {
   TodayGridExport,
   TodayBatteryCharge,
   TodayBatteryDischarge,
+  // PV string voltage and current, for the strings' own power (V x I) that the
+  // losses under PLANT are measured against; see power_balance.h. Optional, and
+  // here rather than after the forecast block because everything from
+  // ForecastToday on is treated as forecast-only. NVS keys are by name, so the
+  // forecast entities moving along does not disturb a stored mapping.
+  Pv1Voltage,
+  Pv1Current,
+  Pv2Voltage,
+  Pv2Current,
+  Pv3Voltage,
+  Pv3Current,
+  Pv4Voltage,
+  Pv4Current,
   ForecastToday,
   ForecastRemaining,
   ForecastPercentage,
@@ -30,7 +43,7 @@ enum class HaEntity : uint8_t {
   Count,
 };
 
-enum class HaValueKind : uint8_t { Power, Energy, Percent, Temperature, Boolean };
+enum class HaValueKind : uint8_t { Power, Energy, Percent, Temperature, Boolean, Voltage, Current };
 
 // Units are captured from the live template response and reused for Recorder
 // history. The history request deliberately uses `no_attributes`, so it cannot
@@ -44,6 +57,10 @@ enum class HaUnit : uint8_t {
   KilowattHours,
   Percent,
   Celsius,
+  Volts,
+  Millivolts,
+  Amps,
+  Milliamps,
 };
 
 enum class HaValueStatus : uint8_t {
@@ -65,6 +82,8 @@ struct HaEntityDescriptor {
 static constexpr size_t HA_ENTITY_COUNT = static_cast<size_t>(HaEntity::Count);
 static constexpr size_t HA_FORECAST_ENTITY_FIRST =
     static_cast<size_t>(HaEntity::ForecastToday);
+// PV1..PV4: as many string pairs as the HA mappings carry.
+static constexpr size_t HA_PV_STRINGS = 4;
 static constexpr size_t HA_ENTITY_ID_MAX = 96;
 extern const HaEntityDescriptor HA_ENTITIES[HA_ENTITY_COUNT];
 
@@ -104,7 +123,10 @@ HaUnit ha_unit_from_text(const char* unit);
 HaValueStatus ha_normalise_state(const char* state, HaUnit unit, HaValueKind kind,
                                  MaybeFloat* out);
 
-static constexpr size_t HA_TEMPLATE_MAX = 6144;
+// Each mapped entity costs 85 characters plus its key and its ID twice, and an ID
+// may be 96: all 29 at the limit come to 8,310 with the prefix. Allocated only
+// while the request is built, and freed before the TLS handshake.
+static constexpr size_t HA_TEMPLATE_MAX = 9216;
 // Builds the Jinja template posted to Home Assistant. Only configured entities
 // are referenced, so HA does no all-state download and the response stays small.
 bool ha_template_build(const char* const entity_ids[HA_ENTITY_COUNT], char* out,

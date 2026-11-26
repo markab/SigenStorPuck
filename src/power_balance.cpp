@@ -2,7 +2,7 @@
 
 PowerBalance power_balance(const MaybeFloat& pv, const MaybeFloat& batt, const MaybeFloat& grid,
                            const MaybeFloat& plant, const MaybeFloat& ev_ac,
-                           const MaybeFloat& ev_dc) {
+                           const MaybeFloat& ev_dc, const MaybeFloat& strings) {
   PowerBalance out;
 
   if (grid.known && plant.known && ev_ac.known) {
@@ -17,9 +17,10 @@ PowerBalance power_balance(const MaybeFloat& pv, const MaybeFloat& batt, const M
     out.home.value = home > 0.0f ? home : 0.0f;
   }
 
-  if (pv.known && batt.known && plant.known && ev_dc.known) {
+  const MaybeFloat& dc_in = strings.known ? strings : pv;
+  if (dc_in.known && batt.known && plant.known && ev_dc.known) {
     out.losses.known = true;
-    out.losses.value = pv.value - batt.value - plant.value - ev_dc.value;
+    out.losses.value = dc_in.value - batt.value - plant.value - ev_dc.value;
   }
 
   return out;

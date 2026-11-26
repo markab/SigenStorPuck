@@ -211,8 +211,9 @@ void test_home_assistant_settings_metadata() {
   const char* expected_form_order[HA_ENTITY_COUNT] = {
       "ha_pp",  "ha_gp",  "ha_bp",  "ha_hp",  "ha_ep",  "ha_xp",
       "ha_og",  "ha_soc", "ha_soh", "ha_cap", "ha_tmp", "ha_dpv",
-      "ha_dld", "ha_dim", "ha_dex", "ha_dch", "ha_dds", "ha_sft",
-      "ha_sfr", "ha_sfp", "ha_sfk",
+      "ha_dld", "ha_dim", "ha_dex", "ha_dch", "ha_dds", "ha_s1v",
+      "ha_s1c", "ha_s2v", "ha_s2c", "ha_s3v", "ha_s3c", "ha_s4v",
+      "ha_s4c", "ha_sft", "ha_sfr", "ha_sfp", "ha_sfk",
   };
   const char* expected_placeholders[HA_ENTITY_COUNT] = {
       "sensor.sigen_plant_pv_power",
@@ -232,6 +233,14 @@ void test_home_assistant_settings_metadata() {
       "sensor.sigen_plant_daily_grid_export_energy",
       "sensor.sigen_plant_daily_battery_charge_energy",
       "sensor.sigen_plant_daily_battery_discharge_energy",
+      "sensor.sigen_inverter_pv1_voltage",
+      "sensor.sigen_inverter_pv1_current",
+      "sensor.sigen_inverter_pv2_voltage",
+      "sensor.sigen_inverter_pv2_current",
+      "sensor.sigen_inverter_pv3_voltage",
+      "sensor.sigen_inverter_pv3_current",
+      "sensor.sigen_inverter_pv4_voltage",
+      "sensor.sigen_inverter_pv4_current",
       "sensor.example_solar_forecast_today",
       "sensor.example_solar_forecast_remaining",
       "sensor.example_solar_forecast_percentage",
@@ -688,20 +697,38 @@ void test_snapshot() {
   check(!snapshot.power.home.known, "home unknown when its inputs are");
 }
 
-// The five cases the AC-side house load and losses must get right, matching
-// SigenStorDisplay 0.47.3's summary.py. kW throughout; a NAN plant is unread.
+// The cases the AC-side house load and the system's total losses must get right,
+// matching SigenStorDisplay 0.47.6's summary.py. kW throughout; a NAN plant is
+// unread. `strings` says how many PV strings reported (0: no string data, so the
+// losses fall back to the plant's PV figure), with each one's volts and amps.
 struct BalanceCase {
   const char* name;
   float grid, batt, plant, pv, ev_ac, ev_dc;
+  int strings;
+  float volts[2];
+  float amps[2];
   float home;
   float losses;  // NAN: unknown
 };
 constexpr BalanceCase BALANCE_CASES[] = {
-    {"grid charging", 9.09f, 8.20f, -8.60f, 0.0f, 0.0f, 0.0f, 0.49f, 0.40f},
-    {"idle standby", 0.075f, 0.0f, -0.075f, 0.0f, 0.0f, 0.0f, 0.0f, 0.075f},
-    {"AC charger, battery idle", 7.60f, 0.0f, -0.08f, 0.0f, 7.0f, 0.0f, 0.52f, 0.08f},
-    {"DC charger on solar", -2.0f, 0.0f, 2.8f, 10.0f, 0.0f, 7.0f, 0.80f, 0.20f},
-    {"plant unknown (fallback)", -1.1f, 1.2f, NAN, 3.42f, 0.0f, 0.0f, 1.12f, NAN},
+    // The owner's screen: battery out 0.87, Solar figure 0.07, plant out 0.93.
+    // The Solar figure already has the losses taken out, so only the strings'
+    // 0.2476 kW shows the 0.19 kW actually lost.
+    {"sun and battery", 0.0f, -0.87f, 0.93f, 0.07f, 0.0f, 0.0f,
+     2, {348.0f, 205.0f}, {0.47f, 0.41f}, 0.93f, 0.19f},
+    {"sun and battery, no string data", 0.0f, -0.87f, 0.93f, 0.07f, 0.0f, 0.0f,
+     0, {}, {}, 0.93f, 0.01f},
+    {"grid charging", 9.09f, 8.20f, -8.60f, 0.0f, 0.0f, 0.0f,
+     2, {0.0f, 0.0f}, {0.0f, 0.0f}, 0.49f, 0.40f},
+    {"idle standby", 0.075f, 0.0f, -0.075f, 0.0f, 0.0f, 0.0f,
+     2, {0.0f, 0.0f}, {0.0f, 0.0f}, 0.0f, 0.075f},
+    {"AC charger, battery idle", 7.60f, 0.0f, -0.08f, 0.0f, 7.0f, 0.0f,
+     0, {}, {}, 0.52f, 0.08f},
+    // Strings 2 x 420 V x 12.5 A = 10.5 kW against a Solar figure of 10.0.
+    {"DC charger on solar", -2.0f, 0.0f, 2.8f, 10.0f, 0.0f, 7.0f,
+     2, {420.0f, 420.0f}, {12.5f, 12.5f}, 0.80f, 0.70f},
+    {"plant unknown (fallback)", -1.1f, 1.2f, NAN, 3.42f, 0.0f, 0.0f,
+     0, {}, {}, 1.12f, NAN},
 };
 
 MaybeFloat known_kw(float value) {
@@ -709,6 +736,17 @@ MaybeFloat known_kw(float value) {
   if (!isnan(value)) {
     out.known = true;
     out.value = value;
+  }
+  return out;
+}
+
+MaybeFloat strings_kw(const BalanceCase& c) {
+  MaybeFloat out;
+  if (c.strings > 0) {
+    out.known = true;
+    for (int n = 0; n < c.strings; ++n) {
+      out.value += c.volts[n] * c.amps[n] / 1000.0f;
+    }
   }
   return out;
 }
@@ -721,8 +759,15 @@ void s32_kw_words(float kw, uint16_t words[2]) {
   words[1] = static_cast<uint16_t>(bits & 0xFFFF);
 }
 
+// A string's voltage and current as the inverter sends them: S16 at 0.1 V and
+// 0.01 A.
+void string_words(float volts, float amps, uint16_t* pair) {
+  pair[0] = static_cast<uint16_t>(static_cast<int16_t>(lroundf(volts * 10.0f)));
+  pair[1] = static_cast<uint16_t>(static_cast<int16_t>(lroundf(amps * 100.0f)));
+}
+
 void check_balance(const Snapshot& snapshot, const BalanceCase& c, const char* path) {
-  char what[96];
+  char what[112];
   snprintf(what, sizeof(what), "%s, %s: home", path, c.name);
   check(snapshot.power.home.known, what);
   check_near(snapshot.power.home.value, c.home, what);
@@ -738,14 +783,51 @@ void check_balance(const Snapshot& snapshot, const BalanceCase& c, const char* p
   check_near(snapshot.power.ev.value, c.ev_ac + c.ev_dc, what);
 }
 
+// The plant-level registers of a case, as a Modbus cycle would fold them in.
+ModbusValues modbus_case_values(const BalanceCase& c) {
+  ModbusValues values;
+  uint16_t words[2];
+  s32_kw_words(c.grid, words);
+  modbus_apply(&values, ModbusScope::Plant, 30005, words, 2);
+  s32_kw_words(c.batt, words);
+  modbus_apply(&values, ModbusScope::Plant, 30037, words, 2);
+  s32_kw_words(c.pv, words);
+  modbus_apply(&values, ModbusScope::Plant, 30035, words, 2);
+  if (!isnan(c.plant)) {
+    s32_kw_words(c.plant, words);
+    modbus_apply(&values, ModbusScope::Plant, 30031, words, 2);
+  }
+  if (c.ev_ac > 0.0f) {
+    s32_kw_words(c.ev_ac, words);
+    modbus_apply(&values, ModbusScope::AcCharger, 32003, words, 2);
+  }
+  if (c.ev_dc > 0.0f) {
+    s32_kw_words(c.ev_dc, words);
+    modbus_apply(&values, ModbusScope::Inverter, 31502, words, 2);
+  }
+  return values;
+}
+
+// A string head read (31025..31034) for a case's strings.
+void head_words_for(const BalanceCase& c, uint16_t head[MB_PV_HEAD_WORDS]) {
+  for (size_t i = 0; i < MB_PV_HEAD_WORDS; ++i) {
+    head[i] = 0;
+  }
+  head[0] = static_cast<uint16_t>(c.strings);
+  head[1] = static_cast<uint16_t>(c.strings);  // MPPT count, unused
+  for (int n = 0; n < c.strings; ++n) {
+    string_words(c.volts[n], c.amps[n], head + 2 + 2 * n);
+  }
+}
+
 void test_power_balance() {
   printf("power balance\n");
 
   for (const BalanceCase& c : BALANCE_CASES) {
     const PowerBalance balance =
         power_balance(known_kw(c.pv), known_kw(c.batt), known_kw(c.grid), known_kw(c.plant),
-                      known_kw(c.ev_ac), known_kw(c.ev_dc));
-    char what[96];
+                      known_kw(c.ev_ac), known_kw(c.ev_dc), strings_kw(c));
+    char what[112];
     snprintf(what, sizeof(what), "balance, %s: home", c.name);
     check(balance.home.known, what);
     check_near(balance.home.value, c.home, what);
@@ -755,27 +837,17 @@ void test_power_balance() {
           what);
   }
 
-  // Through the Modbus decoder: the AC charger is 32003, the DC charger 31502.
+  // Through the Modbus decoder: the AC charger is 32003, the DC charger 31502,
+  // and the strings come from the head read. "No string data" is a string read
+  // that failed this cycle.
   for (const BalanceCase& c : BALANCE_CASES) {
-    ModbusValues values;
-    uint16_t words[2];
-    s32_kw_words(c.grid, words);
-    modbus_apply(&values, ModbusScope::Plant, 30005, words, 2);
-    s32_kw_words(c.batt, words);
-    modbus_apply(&values, ModbusScope::Plant, 30037, words, 2);
-    s32_kw_words(c.pv, words);
-    modbus_apply(&values, ModbusScope::Plant, 30035, words, 2);
-    if (!isnan(c.plant)) {
-      s32_kw_words(c.plant, words);
-      modbus_apply(&values, ModbusScope::Plant, 30031, words, 2);
-    }
-    if (c.ev_ac > 0.0f) {
-      s32_kw_words(c.ev_ac, words);
-      modbus_apply(&values, ModbusScope::AcCharger, 32003, words, 2);
-    }
-    if (c.ev_dc > 0.0f) {
-      s32_kw_words(c.ev_dc, words);
-      modbus_apply(&values, ModbusScope::Inverter, 31502, words, 2);
+    ModbusValues values = modbus_case_values(c);
+    if (c.strings > 0) {
+      uint16_t head[MB_PV_HEAD_WORDS];
+      head_words_for(c, head);
+      modbus_apply_strings(&values, head, MB_PV_HEAD_WORDS, nullptr, 0);
+    } else {
+      modbus_strings_failed(&values);
     }
     Snapshot snapshot;
     modbus_to_snapshot(values, &snapshot);
@@ -786,25 +858,143 @@ void test_power_balance() {
   // is one entity; the case says which kind it is.
   for (const BalanceCase& c : BALANCE_CASES) {
     const bool dc = c.ev_dc > 0.0f;
-    char json[512];
+    char json[768];
     char plant[64] = "";
     if (!isnan(c.plant)) {
       snprintf(plant, sizeof(plant), "\"xp\":{\"s\":\"%.3f\",\"u\":\"kW\"},", c.plant);
+    }
+    char strings[256] = "";
+    size_t used = 0;
+    for (int n = 0; n < c.strings; ++n) {
+      used += snprintf(strings + used, sizeof(strings) - used,
+                       "\"s%dv\":{\"s\":\"%.1f\",\"u\":\"V\"},"
+                       "\"s%dc\":{\"s\":\"%.2f\",\"u\":\"A\"},",
+                       n + 1, c.volts[n], n + 1, c.amps[n]);
     }
     snprintf(json, sizeof(json),
              "{\"v\":1,\"ts\":1788970000,"
              "\"pp\":{\"s\":\"%.3f\",\"u\":\"kW\"},"
              "\"gp\":{\"s\":\"%.3f\",\"u\":\"kW\"},"
              "\"bp\":{\"s\":\"%.3f\",\"u\":\"kW\"},"
-             "%s"
+             "%s%s"
              "\"ep\":{\"s\":\"%.3f\",\"u\":\"kW\"}}",
-             c.pv, c.grid, c.batt, plant, dc ? c.ev_dc : c.ev_ac);
+             c.pv, c.grid, c.batt, plant, strings, dc ? c.ev_dc : c.ev_ac);
     HaParseOptions options;
     options.ev_is_dc = dc;
     Snapshot snapshot;
     check(ha_payload_parse(json, strlen(json), &snapshot, nullptr, &options),
           "HA balance payload parses");
     check_balance(snapshot, c, "home assistant");
+  }
+
+  // --- Modbus strings: the awkward reads --------------------------------------
+  const BalanceCase& sunny = BALANCE_CASES[0];
+  {
+    // More than four strings needs the tail read, PV5 onwards at 31042.
+    ModbusSpan span;
+    check(!modbus_pv_tail_span(4, &span), "four strings need no tail read");
+    check(modbus_pv_tail_span(6, &span) && span.start == 31042 && span.words == 4,
+          "six strings read PV5-6 at 31042, four words");
+    check(modbus_pv_tail_span(40, &span) && span.words == 24,
+          "a count past 16 is clamped to PV16");
+
+    uint16_t head[MB_PV_HEAD_WORDS] = {6, 6};
+    for (int n = 0; n < 4; ++n) {
+      string_words(400.0f, 1.0f, head + 2 + 2 * n);  // 0.4 kW each
+    }
+    uint16_t tail[4];
+    string_words(300.0f, 2.0f, tail);      // 0.6 kW
+    string_words(-0.0f, 0.0f, tail + 2);   // dark
+    ModbusValues values;
+    modbus_apply_strings(&values, head, MB_PV_HEAD_WORDS, tail, 4);
+    check(values.strings_any && !values.strings_failed, "six strings fold in");
+    check_near(values.strings_kw, 2.2f, "PV1-4 from the head and PV5-6 from the tail sum");
+
+    ModbusValues short_tail;
+    modbus_apply_strings(&short_tail, head, MB_PV_HEAD_WORDS, nullptr, 0);
+    check(short_tail.strings_failed, "a count the reads do not cover is a failure, not a total");
+  }
+  {
+    // An inverter reporting no strings has no string data.
+    uint16_t head[MB_PV_HEAD_WORDS] = {};
+    ModbusValues values = modbus_case_values(sunny);
+    modbus_apply_strings(&values, head, MB_PV_HEAD_WORDS, nullptr, 0);
+    Snapshot snapshot;
+    modbus_to_snapshot(values, &snapshot);
+    check_near(snapshot.power.losses.value, 0.01f, "a zero string count falls back to Solar");
+  }
+  {
+    // A failed read in daylight is the fallback, never strings = 0: with zero
+    // strings the losses would read 0 + 0.87 - 0.93 = -0.06.
+    ModbusValues values = modbus_case_values(sunny);
+    modbus_strings_failed(&values);
+    Snapshot snapshot;
+    modbus_to_snapshot(values, &snapshot);
+    check(snapshot.power.losses.known, "a failed string read still gives the fallback losses");
+    check_near(snapshot.power.losses.value, 0.01f, "a failed string read falls back to Solar");
+  }
+  {
+    // Two inverters: one answers, one fails. A total missing an inverter would
+    // show as a loss, so the whole figure falls back.
+    ModbusValues values = modbus_case_values(sunny);
+    uint16_t head[MB_PV_HEAD_WORDS];
+    head_words_for(sunny, head);
+    modbus_apply_strings(&values, head, MB_PV_HEAD_WORDS, nullptr, 0);
+    modbus_strings_failed(&values);
+    Snapshot snapshot;
+    modbus_to_snapshot(values, &snapshot);
+    check_near(snapshot.power.losses.value, 0.01f,
+               "one inverter's failed strings make the total fall back");
+
+    // Both answer: their strings add.
+    ModbusValues both = modbus_case_values(sunny);
+    modbus_apply_strings(&both, head, MB_PV_HEAD_WORDS, nullptr, 0);
+    modbus_apply_strings(&both, head, MB_PV_HEAD_WORDS, nullptr, 0);
+    check_near(both.strings_kw, 2.0f * strings_kw(sunny).value, "two inverters' strings sum");
+  }
+
+  // --- HA strings: partial mappings and units ---------------------------------
+  {
+    // PV2's current unavailable: never a partial total.
+    const char* json =
+        "{\"v\":1,\"ts\":1788970000,"
+        "\"pp\":{\"s\":\"0.07\",\"u\":\"kW\"},\"gp\":{\"s\":\"0\",\"u\":\"kW\"},"
+        "\"bp\":{\"s\":\"-0.87\",\"u\":\"kW\"},\"xp\":{\"s\":\"0.93\",\"u\":\"kW\"},"
+        "\"s1v\":{\"s\":\"348\",\"u\":\"V\"},\"s1c\":{\"s\":\"0.47\",\"u\":\"A\"},"
+        "\"s2v\":{\"s\":\"205\",\"u\":\"V\"},\"s2c\":{\"s\":\"unavailable\",\"u\":\"A\"}}";
+    Snapshot snapshot;
+    ha_payload_parse(json, strlen(json), &snapshot);
+    check_near(snapshot.power.losses.value, 0.01f, "an unavailable HA string falls back");
+  }
+  {
+    // Only one half of a pair mapped: not a pair, so no string data at all.
+    const char* json =
+        "{\"v\":1,\"ts\":1788970000,"
+        "\"pp\":{\"s\":\"0.07\",\"u\":\"kW\"},\"gp\":{\"s\":\"0\",\"u\":\"kW\"},"
+        "\"bp\":{\"s\":\"-0.87\",\"u\":\"kW\"},\"xp\":{\"s\":\"0.93\",\"u\":\"kW\"},"
+        "\"s1v\":{\"s\":\"348\",\"u\":\"V\"}}";
+    Snapshot snapshot;
+    ha_payload_parse(json, strlen(json), &snapshot);
+    check_near(snapshot.power.losses.value, 0.01f, "a half-mapped HA string pair is ignored");
+  }
+  {
+    // Millivolts and milliamps normalise like W and Wh do.
+    const char* json =
+        "{\"v\":1,\"ts\":1788970000,"
+        "\"pp\":{\"s\":\"0.07\",\"u\":\"kW\"},\"gp\":{\"s\":\"0\",\"u\":\"kW\"},"
+        "\"bp\":{\"s\":\"-0.87\",\"u\":\"kW\"},\"xp\":{\"s\":\"0.93\",\"u\":\"kW\"},"
+        "\"s1v\":{\"s\":\"348000\",\"u\":\"mV\"},\"s1c\":{\"s\":\"470\",\"u\":\"mA\"},"
+        "\"s2v\":{\"s\":\"205\",\"u\":\"V\"},\"s2c\":{\"s\":\"0.41\",\"u\":\"A\"}}";
+    Snapshot snapshot;
+    ha_payload_parse(json, strlen(json), &snapshot);
+    check_near(snapshot.power.losses.value, 0.19f, "mV and mA strings normalise");
+  }
+  {
+    // A string voltage in an unsupported unit is unknown, never zero.
+    MaybeFloat out;
+    check(ha_normalise_state("348", HaUnit::Kilowatts, HaValueKind::Voltage, &out) ==
+              HaValueStatus::UnsupportedUnit,
+          "a voltage in kW is an unsupported unit");
   }
 
   // The same AC-charger reading taken as DC: it no longer comes off home, and

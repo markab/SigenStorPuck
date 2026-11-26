@@ -11,7 +11,14 @@
 // at the AC terminals is instead:
 //
 //   home   = grid + plant - ev_ac
-//   losses = pv - batt - plant - ev_dc
+//   losses = strings - batt - plant - ev_dc
+//
+// `strings` is the power at the inverters' PV inputs, V x I summed over every
+// string. The plant's own PV figure (`pv`, 30035) cannot stand in for it while
+// the sun is up: it is what is left once the battery and the AC output are
+// accounted for, already net of nearly every loss (standby, the battery's
+// conversion, the solar conversion), so with it the losses read ~0 all day. It is
+// only the fallback where string data is missing, as in SigenStorDisplay 0.47.6.
 //
 // `plant` (30031) is negative while the inverter takes AC in. An AC charger is
 // on the house wiring, so it comes off home; a DC charger leaves the DC bus
@@ -26,8 +33,8 @@
 
 struct PowerBalance {
   MaybeFloat home;    // kW, floored at zero
-  MaybeFloat losses;  // kW, not floored: a small negative is sensor noise, and a
-                      // floor would hide a sign error rather than show it
+  MaybeFloat losses;  // kW, the system's total; not floored: a small negative is
+                      // sensor noise, and a floor would hide a sign error
 };
 
 // Every input in kW. `ev_ac` and `ev_dc` must be known (zero when no charger of
@@ -35,7 +42,8 @@ struct PowerBalance {
 //
 // With `plant` unknown, home falls back to the old DC-side formula so a source
 // that cannot read the plant's power still gets a house figure, and losses is
-// unknown.
+// unknown. With `strings` unknown — no string data, or a read that failed this
+// cycle, never zero — losses falls back to `pv`, and misses most daytime loss.
 PowerBalance power_balance(const MaybeFloat& pv, const MaybeFloat& batt, const MaybeFloat& grid,
                            const MaybeFloat& plant, const MaybeFloat& ev_ac,
-                           const MaybeFloat& ev_dc);
+                           const MaybeFloat& ev_dc, const MaybeFloat& strings = MaybeFloat{});

@@ -36,6 +36,13 @@ uint32_t s_slow_at_ms = 0;
 
 ModbusDayBaseline s_baseline;
 
+// How long an inverter's PV strings are left alone after it answers them with an
+// exception. An inverter without those registers would otherwise be asked, and
+// log the refusal, on every poll; ten minutes keeps the log readable and still
+// picks a strings figure back up soon after a firmware update adds it.
+constexpr uint32_t STRINGS_RETRY_MS = 10UL * 60UL * 1000UL;
+uint32_t s_strings_retry_at_ms[SETTINGS_MAX_MODBUS_DEVICES] = {};
+
 // Set from the settings page, acted on by the poll task. Everything above is
 // touched by the poll task alone, and it must stay that way: the settings page
 // runs in loop() on the other core, and stopping a WiFiClient out from under a
@@ -216,6 +223,49 @@ FetchResult read_scope(uint8_t unit, ModbusScope scope, ModbusCadence cadence,
   return FetchResult::Ok;
 }
 
+// Reads one inverter's PV strings and folds them in (modbus_regs.h). The head
+// read tells how many there are; a tail read follows only when there are more
+// than four.
+//
+// A Modbus exception is the inverter declining these registers, not a broken
+// connection, so it costs this cycle its strings figure — the losses fall back to
+// the plant's PV figure — and never the poll. Anything else (timeout, connection
+// lost, out-of-step reply) fails the cycle as any other read would.
+FetchResult read_strings(size_t device_index, uint8_t unit, ModbusValues* values) {
+  uint32_t& retry_at = s_strings_retry_at_ms[device_index];
+  if (retry_at != 0 && static_cast<int32_t>(millis() - retry_at) < 0) {
+    modbus_strings_failed(values);
+    return FetchResult::Ok;
+  }
+  retry_at = 0;
+
+  static uint16_t head[MB_PV_HEAD_WORDS];
+  static uint16_t tail[2 * (MB_PV_MAX_STRINGS - 4)];
+  int exception = 0;
+  FetchResult result = read_span(unit, MB_PV_HEAD_START, MB_PV_HEAD_WORDS, head, &exception);
+  size_t tail_words = 0;
+  ModbusSpan tail_span;
+  if (result == FetchResult::Ok &&
+      modbus_pv_tail_span(modbus_pv_string_count(head, MB_PV_HEAD_WORDS), &tail_span)) {
+    result = read_span(unit, tail_span.start, tail_span.words, tail, &exception);
+    tail_words = tail_span.words;
+  }
+  if (result == FetchResult::ProtocolError && exception != 0) {
+    retry_at = millis() + STRINGS_RETRY_MS;
+    if (retry_at == 0) {
+      retry_at = 1;  // 0 means "not backing off"
+    }
+    modbus_strings_failed(values);
+    return FetchResult::Ok;
+  }
+  if (result != FetchResult::Ok) {
+    return result;
+  }
+  modbus_apply_strings(values, head, MB_PV_HEAD_WORDS, tail_words > 0 ? tail : nullptr,
+                       tail_words);
+  return FetchResult::Ok;
+}
+
 // Local days since the epoch, for spotting midnight. Falls back to UTC when the
 // plant has not reported a timezone, which only shifts the rollover by the
 // offset — the day still rolls exactly once a day.
@@ -310,6 +360,11 @@ FetchResult modbus_api_fetch(Snapshot* out, int* detail) {
         // _ev_power does from the configured devices.
         result = read_scope(device.slave_id, ModbusScope::Inverter, ModbusCadence::DcCharger,
                             &values, detail);
+      }
+      // PV strings, for the losses under PLANT: at least one more request per
+      // inverter, so a second or more on every poll.
+      if (result == FetchResult::Ok) {
+        result = read_strings(i, device.slave_id, &values);
       }
     }
   }

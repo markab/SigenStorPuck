@@ -44,6 +44,22 @@ const HaEntityDescriptor HA_ENTITIES[HA_ENTITY_COUNT] = {
      "sensor.sigen_plant_daily_battery_charge_energy", HaValueKind::Energy},
     {"dds", "ha_dds", "ha_dds", "Today: battery discharge",
      "sensor.sigen_plant_daily_battery_discharge_energy", HaValueKind::Energy},
+    {"s1v", "ha_s1v", "ha_s1v", "PV1 voltage", "sensor.sigen_inverter_pv1_voltage",
+     HaValueKind::Voltage},
+    {"s1c", "ha_s1c", "ha_s1c", "PV1 current", "sensor.sigen_inverter_pv1_current",
+     HaValueKind::Current},
+    {"s2v", "ha_s2v", "ha_s2v", "PV2 voltage", "sensor.sigen_inverter_pv2_voltage",
+     HaValueKind::Voltage},
+    {"s2c", "ha_s2c", "ha_s2c", "PV2 current", "sensor.sigen_inverter_pv2_current",
+     HaValueKind::Current},
+    {"s3v", "ha_s3v", "ha_s3v", "PV3 voltage", "sensor.sigen_inverter_pv3_voltage",
+     HaValueKind::Voltage},
+    {"s3c", "ha_s3c", "ha_s3c", "PV3 current", "sensor.sigen_inverter_pv3_current",
+     HaValueKind::Current},
+    {"s4v", "ha_s4v", "ha_s4v", "PV4 voltage", "sensor.sigen_inverter_pv4_voltage",
+     HaValueKind::Voltage},
+    {"s4c", "ha_s4c", "ha_s4c", "PV4 current", "sensor.sigen_inverter_pv4_current",
+     HaValueKind::Current},
     {"sft", "ha_sft", "ha_sft", "Today forecast",
      "sensor.example_solar_forecast_today", HaValueKind::Energy},
     {"sfr", "ha_sfr", "ha_sfr", "Remaining today",
@@ -164,6 +180,18 @@ HaUnit ha_unit_from_text(const char* unit) {
   if (strcmp(unit, "°C") == 0 || strcmp(unit, "C") == 0 || strcmp(unit, "degC") == 0) {
     return HaUnit::Celsius;
   }
+  if (strcmp(unit, "V") == 0) {
+    return HaUnit::Volts;
+  }
+  if (strcmp(unit, "mV") == 0) {
+    return HaUnit::Millivolts;
+  }
+  if (strcmp(unit, "A") == 0) {
+    return HaUnit::Amps;
+  }
+  if (strcmp(unit, "mA") == 0) {
+    return HaUnit::Milliamps;
+  }
   return HaUnit::Unknown;
 }
 
@@ -204,6 +232,22 @@ HaValueStatus ha_normalise_state(const char* state, HaUnit unit, HaValueKind kin
       break;
     case HaValueKind::Temperature:
       supported = unit == HaUnit::Celsius;
+      break;
+    case HaValueKind::Voltage:
+      if (unit == HaUnit::Millivolts) {
+        value /= 1000.0f;
+        supported = true;
+      } else {
+        supported = unit == HaUnit::Volts;
+      }
+      break;
+    case HaValueKind::Current:
+      if (unit == HaUnit::Milliamps) {
+        value /= 1000.0f;
+        supported = true;
+      } else {
+        supported = unit == HaUnit::Amps;
+      }
       break;
     case HaValueKind::Boolean:
       break;
@@ -358,8 +402,44 @@ bool ha_payload_parse(const char* json, size_t length, Snapshot* out, HaParseInf
   no_charger.known = true;
   const MaybeFloat& ev_ac = ev_is_dc ? no_charger : built.power.ev;
   const MaybeFloat& ev_dc = ev_is_dc ? built.power.ev : no_charger;
+  // The strings' own power, from whichever PV pairs are mapped. Known only when
+  // at least one pair is and every mapped pair read: a total short by a string
+  // would show as a loss. A pair with only one half mapped is not a pair.
+  MaybeFloat strings;
+  {
+    bool any_pair = false;
+    bool all_known = true;
+    float kw = 0.0f;
+    for (size_t n = 0; n < HA_PV_STRINGS; ++n) {
+      const HaEntity voltage_entity =
+          static_cast<HaEntity>(static_cast<size_t>(HaEntity::Pv1Voltage) + 2 * n);
+      const HaEntity current_entity =
+          static_cast<HaEntity>(static_cast<size_t>(HaEntity::Pv1Current) + 2 * n);
+      const bool voltage_mapped =
+          root[HA_ENTITIES[static_cast<size_t>(voltage_entity)].payload_key]
+              .is<JsonObjectConst>();
+      const bool current_mapped =
+          root[HA_ENTITIES[static_cast<size_t>(current_entity)].payload_key]
+              .is<JsonObjectConst>();
+      const MaybeFloat volts = parse_number(root, voltage_entity, &parsed_info);
+      const MaybeFloat amps = parse_number(root, current_entity, &parsed_info);
+      if (!voltage_mapped || !current_mapped) {
+        continue;
+      }
+      any_pair = true;
+      if (!volts.known || !amps.known) {
+        all_known = false;
+        continue;
+      }
+      kw += volts.value * amps.value / 1000.0f;
+    }
+    if (any_pair && all_known) {
+      strings.known = true;
+      strings.value = kw;
+    }
+  }
   const PowerBalance balance = power_balance(built.power.pv, built.power.batt, built.power.grid,
-                                             built.power.plant, ev_ac, ev_dc);
+                                             built.power.plant, ev_ac, ev_dc, strings);
   if (!home_configured) {
     built.power.home = balance.home;
   }

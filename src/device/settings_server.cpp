@@ -395,6 +395,11 @@ String page(const String& message, bool message_is_error) {
       html += "<h3>Battery</h3>";
     } else if (i == static_cast<size_t>(HaEntity::TodayPv)) {
       html += "<h3>Today's energy</h3>";
+    } else if (i == static_cast<size_t>(HaEntity::Pv1Voltage)) {
+      html += "<h3>PV strings</h3>";
+      html += "<p class=hint>Optional. Loss under PLANT is the system's total loss. Without "
+              "PV string sensors it misses most daytime losses. Map a voltage and a current "
+              "for each string; voltage in V or mV, current in A or mA.</p>";
     } else if (i == static_cast<size_t>(HaEntity::ForecastToday)) {
       html += "<h3>Solar forecast</h3>";
       html += "<p class=hint>Choose one source for the existing Solar screen. This does not "

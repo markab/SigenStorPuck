@@ -332,8 +332,15 @@ void modbus_to_snapshot(const ModbusValues& values, Snapshot* out) {
   }
 
   // House load and losses, derived exactly as the server derives them.
+  // The strings' own power, where every inverter gave it; otherwise the plant's
+  // PV figure stands in, and the losses miss most of what happens in daylight.
+  MaybeFloat strings;
+  if (values.strings_any && !values.strings_failed) {
+    strings.known = true;
+    strings.value = values.strings_kw;
+  }
   const PowerBalance balance = power_balance(built.power.pv, built.power.batt, built.power.grid,
-                                             built.power.plant, ev_ac, ev_dc);
+                                             built.power.plant, ev_ac, ev_dc, strings);
   built.power.home = balance.home;
   built.power.losses = balance.losses;
 
@@ -369,4 +376,67 @@ void modbus_to_snapshot(const ModbusValues& values, Snapshot* out) {
   built.cost.configured = false;
 
   *out = built;
+}
+
+uint16_t modbus_pv_string_count(const uint16_t* head, size_t head_words) {
+  if (head == nullptr || head_words < 1) {
+    return 0;
+  }
+  const uint16_t count = head[0];
+  return count > MB_PV_MAX_STRINGS ? MB_PV_MAX_STRINGS : count;
+}
+
+bool modbus_pv_tail_span(uint16_t string_count, ModbusSpan* out) {
+  if (out == nullptr || string_count <= 4) {
+    return false;
+  }
+  if (string_count > MB_PV_MAX_STRINGS) {
+    string_count = MB_PV_MAX_STRINGS;
+  }
+  out->start = MB_PV_TAIL_START;
+  out->words = static_cast<uint16_t>(2 * (string_count - 4));
+  return true;
+}
+
+void modbus_apply_strings(ModbusValues* values, const uint16_t* head, size_t head_words,
+                          const uint16_t* tail, size_t tail_words) {
+  if (values == nullptr) {
+    return;
+  }
+  const uint16_t count = modbus_pv_string_count(head, head_words);
+  if (count == 0) {
+    // No string data from this inverter: the total would be missing it.
+    values->strings_failed = true;
+    return;
+  }
+  float kw = 0.0f;
+  for (uint16_t n = 1; n <= count; ++n) {
+    const uint16_t* pair = nullptr;
+    if (n <= 4) {
+      const size_t offset = 2 + 2 * static_cast<size_t>(n - 1);  // after count, MPPT count
+      if (offset + 2 > head_words) {
+        values->strings_failed = true;
+        return;
+      }
+      pair = head + offset;
+    } else {
+      const size_t offset = 2 * static_cast<size_t>(n - 5);
+      if (tail == nullptr || offset + 2 > tail_words) {
+        values->strings_failed = true;
+        return;
+      }
+      pair = tail + offset;
+    }
+    const float volts = static_cast<float>(static_cast<int16_t>(pair[0])) / 10.0f;
+    const float amps = static_cast<float>(static_cast<int16_t>(pair[1])) / 100.0f;
+    kw += volts * amps / 1000.0f;
+  }
+  values->strings_kw += kw;
+  values->strings_any = true;
+}
+
+void modbus_strings_failed(ModbusValues* values) {
+  if (values != nullptr) {
+    values->strings_failed = true;
+  }
 }
