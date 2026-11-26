@@ -15,7 +15,7 @@
 
 // Shared across every board variant: one repo, one version. package_release.sh
 // greps this file for this line, so keep it here in board_config.h.
-#define PUCK_FW_VERSION "0.16.0"
+#define PUCK_FW_VERSION "0.17.1"
 
 // -------------------------------------------------------- profile selection ---
 
