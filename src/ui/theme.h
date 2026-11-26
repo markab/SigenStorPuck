@@ -25,6 +25,9 @@ static constexpr uint32_t PUCK_COLOUR_GRID = 0x0A84FF;
 static constexpr uint32_t PUCK_COLOUR_BATTERY = 0x30D158;
 static constexpr uint32_t PUCK_COLOUR_HOME = 0xF2F2F7;
 static constexpr uint32_t PUCK_COLOUR_EV = 0xBF5AF2;
+// The system's own losses: the LOSSES sink on the flows screen and the loss line
+// under PLANT. SigenStorDisplay's pink, so the dashboard and the Puck agree.
+static constexpr uint32_t PUCK_COLOUR_LOSSES = 0xDB61A2;
 
 static constexpr uint32_t PUCK_COLOUR_WARN = 0xFF9F0A;
 static constexpr uint32_t PUCK_COLOUR_ALARM = 0xFF453A;

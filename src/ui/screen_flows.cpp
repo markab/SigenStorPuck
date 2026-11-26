@@ -11,7 +11,7 @@ namespace {
 
 // ------------------------------------------------------------------ layout ---
 //
-// Three source nodes down the left, three sink nodes down the right, joined by
+// Three source nodes down the left, four or five sink nodes down the right, joined by
 // one ribbon per flow whose thickness is the energy that took that path.
 //
 // The rule that makes it readable: **a colour is always a node, and a ribbon
@@ -35,6 +35,16 @@ namespace {
 constexpr lv_coord_t LEFT_ROW_Y[3] = {-76, 5, 86};
 constexpr lv_coord_t RIGHT_ROW_Y[4] = {-76, -22, 32, 86};
 
+// A server from 0.47.3 adds a fifth sink, LOSSES, and the right column closes up
+// to 42 px rows to take it. 92 is as low as the bottom row goes: its label then
+// reaches y = 113, inside the bezel's 116.
+//
+// Which arrangement is drawn depends on whether the server sends the *_losses
+// flows at all, never on their values — otherwise every sink row would jump
+// whenever a day's loss rounded to nothing. An older server keeps the four rows
+// exactly as they were.
+constexpr lv_coord_t RIGHT_ROW_Y_WITH_LOSSES[5] = {-76, -34, 8, 50, 92};
+
 // The node bars, and the channel the ribbons run down between them.
 constexpr lv_coord_t NODE_X = 132;
 constexpr lv_coord_t NODE_WIDTH = 9;
@@ -47,6 +57,11 @@ constexpr lv_coord_t LABEL_X = 162;
 // The tallest a node bar may be drawn. Set by the tighter of the two columns —
 // the sinks, 54 apart — so neighbours never touch.
 constexpr lv_coord_t MAX_NODE_PX = 44;
+// The same, for the closer rows of the five-sink arrangement.
+constexpr lv_coord_t MAX_NODE_PX_WITH_LOSSES = 36;
+
+// A node's name and value sit this far above and below its row.
+constexpr lv_coord_t LABEL_DY = 11;
 
 // A flow that happened must be visible, however small its share. Below a pixel
 // or two it would round away and the diagram would claim it never happened.
@@ -66,26 +81,40 @@ enum Source { SRC_SOLAR = 0, SRC_BATTERY, SRC_GRID, SRC_COUNT };
 // EV is its own sink rather than part of the house. A 7 kW charger dwarfs a
 // house, so folding the two together leaves a "home" figure that says nothing
 // about the home — and screen 1 already draws the charger as a leg of its own.
-enum Sink { SNK_HOME = 0, SNK_EV, SNK_BATTERY, SNK_GRID, SNK_COUNT };
+//
+// LOSSES is the fifth: what the system itself used up on the way — conversion,
+// standby, battery heating. Without it each source column falls short of its day
+// total by that much, because from server 0.47.3 *_load no longer carries it.
+enum Sink { SNK_HOME = 0, SNK_EV, SNK_BATTERY, SNK_GRID, SNK_LOSSES, SNK_COUNT };
 
 // Declared source-major, which is also the order ribbons stack at each end: it
 // keeps the same flow in the same place on both nodes and cuts the crossings.
+// Losses come last in each source's group, so the loss ribbon leaves the bottom
+// of every source node for the bottom node and crosses nothing to get there.
 struct FlowSpec {
   Source from;
   Sink to;
 };
 constexpr FlowSpec FLOWS[] = {
-    {SRC_SOLAR, SNK_HOME},   {SRC_SOLAR, SNK_EV},   {SRC_SOLAR, SNK_BATTERY},
-    {SRC_SOLAR, SNK_GRID},   {SRC_BATTERY, SNK_HOME}, {SRC_BATTERY, SNK_EV},
-    {SRC_BATTERY, SNK_GRID}, {SRC_GRID, SNK_HOME},  {SRC_GRID, SNK_EV},
-    {SRC_GRID, SNK_BATTERY},
+    {SRC_SOLAR, SNK_HOME},   {SRC_SOLAR, SNK_EV},       {SRC_SOLAR, SNK_BATTERY},
+    {SRC_SOLAR, SNK_GRID},   {SRC_SOLAR, SNK_LOSSES},   {SRC_BATTERY, SNK_HOME},
+    {SRC_BATTERY, SNK_EV},   {SRC_BATTERY, SNK_GRID},   {SRC_BATTERY, SNK_LOSSES},
+    {SRC_GRID, SNK_HOME},    {SRC_GRID, SNK_EV},        {SRC_GRID, SNK_BATTERY},
+    {SRC_GRID, SNK_LOSSES},
 };
 constexpr size_t FLOW_COUNT = sizeof(FLOWS) / sizeof(FLOWS[0]);
 
 constexpr uint32_t SOURCE_COLOUR[SRC_COUNT] = {PUCK_COLOUR_SOLAR, PUCK_COLOUR_BATTERY,
                                                PUCK_COLOUR_GRID};
 constexpr uint32_t SINK_COLOUR[SNK_COUNT] = {PUCK_COLOUR_HOME, PUCK_COLOUR_EV,
-                                             PUCK_COLOUR_BATTERY, PUCK_COLOUR_GRID};
+                                             PUCK_COLOUR_BATTERY, PUCK_COLOUR_GRID,
+                                             PUCK_COLOUR_LOSSES};
+
+// The row a sink sits on. LOSSES has a row only in the five-sink arrangement,
+// and is hidden in the other, so it keeps that row either way.
+lv_coord_t sink_row_y(int sink, bool with_losses) {
+  return with_losses || sink == SNK_LOSSES ? RIGHT_ROW_Y_WITH_LOSSES[sink] : RIGHT_ROW_Y[sink];
+}
 
 // Everything the draw callback needs, computed once per reading rather than per
 // buffer slice: LVGL calls the callback once for every slice the object crosses,
@@ -139,9 +168,9 @@ void build_node(NodeUi* node, const char* name, uint32_t colour, lv_coord_t x, l
   lv_obj_align(node->bar, LV_ALIGN_CENTER, x, y);
 
   const lv_coord_t label_x = x < 0 ? -LABEL_X : LABEL_X;
-  node->name = make_label(s_root, PUCK_FONT_SMALL, colour, label_x, y - 11);
+  node->name = make_label(s_root, PUCK_FONT_SMALL, colour, label_x, y - LABEL_DY);
   lv_label_set_text(node->name, name);
-  node->value = make_label(s_root, PUCK_FONT_BODY, PUCK_COLOUR_TEXT, label_x, y + 11);
+  node->value = make_label(s_root, PUCK_FONT_BODY, PUCK_COLOUR_TEXT, label_x, y + LABEL_DY);
   lv_label_set_text(node->value, "--");
 }
 
@@ -278,12 +307,12 @@ lv_obj_t* screen_flows_create(lv_obj_t* parent) {
   // Short names on purpose: the labels sit where the bezel has already closed in,
   // and "BATTERY" twice over would not fit beside the bars.
   static const char* const SOURCE_NAME[SRC_COUNT] = {"SOLAR", "BATT", "GRID"};
-  static const char* const SINK_NAME[SNK_COUNT] = {"HOME", "EV", "BATT", "GRID"};
+  static const char* const SINK_NAME[SNK_COUNT] = {"HOME", "EV", "BATT", "GRID", "LOSSES"};
   for (int i = 0; i < SRC_COUNT; ++i) {
     build_node(&s_source[i], SOURCE_NAME[i], SOURCE_COLOUR[i], -NODE_X, LEFT_ROW_Y[i]);
   }
   for (int i = 0; i < SNK_COUNT; ++i) {
-    build_node(&s_sink[i], SINK_NAME[i], SINK_COLOUR[i], NODE_X, RIGHT_ROW_Y[i]);
+    build_node(&s_sink[i], SINK_NAME[i], SINK_COLOUR[i], NODE_X, sink_row_y(i, false));
   }
 
   return s_root;
@@ -310,13 +339,17 @@ void screen_flows_update(const Snapshot& snapshot) {
     return home > 0.0f ? home : 0.0f;
   };
 
+  // Whether the server sends the losses split at all — see RIGHT_ROW_Y_WITH_LOSSES.
+  const bool with_losses =
+      have && (f.solar_losses.known || f.grid_losses.known || f.batt_losses.known);
+
   // Source-major, matching FLOWS above.
   const float amount[FLOW_COUNT] = {
-      to_home(f.solar_load, f.solar_ev), amount_of(f.solar_ev),
-      amount_of(f.solar_batt),           amount_of(f.solar_grid),
-      to_home(f.batt_load, f.batt_ev),   amount_of(f.batt_ev),
-      amount_of(f.batt_grid),            to_home(f.grid_load, f.grid_ev),
-      amount_of(f.grid_ev),              amount_of(f.grid_batt),
+      to_home(f.solar_load, f.solar_ev), amount_of(f.solar_ev),     amount_of(f.solar_batt),
+      amount_of(f.solar_grid),           amount_of(f.solar_losses), to_home(f.batt_load, f.batt_ev),
+      amount_of(f.batt_ev),              amount_of(f.batt_grid),    amount_of(f.batt_losses),
+      to_home(f.grid_load, f.grid_ev),   amount_of(f.grid_ev),      amount_of(f.grid_batt),
+      amount_of(f.grid_losses),
   };
 
   float source_total[SRC_COUNT] = {};
@@ -357,7 +390,8 @@ void screen_flows_update(const Snapshot& snapshot) {
 
   // One scale for both columns — the two sides carry the same total, so scaling
   // them separately would make a kWh mean two different heights on one screen.
-  const float scale = static_cast<float>(MAX_NODE_PX) / largest;
+  const float scale =
+      static_cast<float>(with_losses ? MAX_NODE_PX_WITH_LOSSES : MAX_NODE_PX) / largest;
 
   lv_coord_t source_top[SRC_COUNT];
   lv_coord_t sink_top[SNK_COUNT];
@@ -372,8 +406,11 @@ void screen_flows_update(const Snapshot& snapshot) {
   for (int i = 0; i < SNK_COUNT; ++i) {
     const lv_coord_t height = static_cast<lv_coord_t>(lroundf(sink_total[i] * scale));
     lv_obj_set_height(s_sink[i].bar, height > 0 ? height : 1);
-    lv_obj_align(s_sink[i].bar, LV_ALIGN_CENTER, NODE_X, RIGHT_ROW_Y[i]);
-    sink_top[i] = PUCK_LCD_HEIGHT / 2 + RIGHT_ROW_Y[i] - height / 2;
+    const lv_coord_t row = sink_row_y(i, with_losses);
+    lv_obj_align(s_sink[i].bar, LV_ALIGN_CENTER, NODE_X, row);
+    lv_obj_align(s_sink[i].name, LV_ALIGN_CENTER, LABEL_X, row - LABEL_DY);
+    lv_obj_align(s_sink[i].value, LV_ALIGN_CENTER, LABEL_X, row + LABEL_DY);
+    sink_top[i] = PUCK_LCD_HEIGHT / 2 + row - height / 2;
     show_node(s_sink[i], sink_total[i] > 0.0f);
     set_node_value(s_sink[i], sink_total[i]);
   }
@@ -409,7 +446,8 @@ void screen_flows_update(const Snapshot& snapshot) {
   // payload, not a piece of the server's business logic.
   // Consumption is the house and the car together: charging one is still using
   // energy, and a day spent filling the car off the grid is not self-sufficient
-  // however little the house drew.
+  // however little the house drew. Losses are not consumption, so grid->losses
+  // counts neither for nor against it; from_grid only ever adds home and EV.
   const float consumed = sink_total[SNK_HOME] + sink_total[SNK_EV];
   if (consumed <= 0.0f) {
     lv_label_set_text(s_hero, "--");

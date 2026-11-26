@@ -83,6 +83,7 @@ lv_obj_t* s_root = nullptr;
 lv_obj_t* s_edge = nullptr;
 lv_obj_t* s_plant_value = nullptr;
 lv_obj_t* s_plant_status = nullptr;
+lv_obj_t* s_plant_loss = nullptr;
 lv_obj_t* s_soc_label = nullptr;
 lv_obj_t* s_device_battery = nullptr;
 Leg s_legs[LEG_COUNT];
@@ -227,23 +228,23 @@ void set_leg(LegId id, const MaybeFloat& power, FlowDirection direction, const c
   }
 }
 
-void set_plant_status(const Snapshot& snapshot) {
+bool set_plant_status(const Snapshot& snapshot) {
   char text[24];
   if (!snapshot.valid) {
     lv_label_set_text(s_plant_status, "OFFLINE");
     lv_obj_set_style_text_color(s_plant_status, lv_color_hex(PUCK_COLOUR_ALARM), LV_PART_MAIN);
-    return;
+    return false;
   }
   if (snapshot.alarms > 0) {
     snprintf(text, sizeof(text), "%d ALARM%s", snapshot.alarms, snapshot.alarms == 1 ? "" : "S");
     lv_label_set_text(s_plant_status, text);
     lv_obj_set_style_text_color(s_plant_status, lv_color_hex(PUCK_COLOUR_ALARM), LV_PART_MAIN);
-    return;
+    return false;
   }
   if (!snapshot.ok) {
     lv_label_set_text(s_plant_status, "NO DATA");
     lv_obj_set_style_text_color(s_plant_status, lv_color_hex(PUCK_COLOUR_WARN), LV_PART_MAIN);
-    return;
+    return false;
   }
   if (snapshot.age_s >= PUCK_STALE_AFTER_S) {
     if (snapshot.age_s >= 120) {
@@ -253,10 +254,10 @@ void set_plant_status(const Snapshot& snapshot) {
     }
     lv_label_set_text(s_plant_status, text);
     lv_obj_set_style_text_color(s_plant_status, lv_color_hex(PUCK_COLOUR_WARN), LV_PART_MAIN);
-    return;
+    return false;
   }
-  lv_label_set_text(s_plant_status, "kW");
-  lv_obj_set_style_text_color(s_plant_status, lv_color_hex(PUCK_COLOUR_MUTED), LV_PART_MAIN);
+  lv_label_set_text(s_plant_status, "");
+  return true;
 }
 
 }  // namespace
@@ -279,16 +280,36 @@ lv_obj_t* screen_power_create(lv_obj_t* parent) {
   lv_obj_set_style_border_width(hub, 1, LV_PART_MAIN);
   lv_obj_set_style_border_color(hub, lv_color_hex(PUCK_COLOUR_TRACK), LV_PART_MAIN);
 
-  // PLANT above and kW below, held clear of the taller HERO value in the middle.
+  // PLANT above, the status or loss line below, both held clear of the taller
+  // HERO value in the middle.
   lv_obj_t* plant_name = make_label(s_root, PUCK_FONT_SMALL, PUCK_COLOUR_MUTED);
   lv_label_set_text(plant_name, "PLANT");
   lv_obj_align(plant_name, LV_ALIGN_CENTER, 0, -42);
-  s_plant_value = make_label(s_root, PUCK_FONT_HERO, PUCK_COLOUR_TEXT);
+  // The value with its unit beside it, centred as a pair so it stays centred
+  // whatever the width. The unit sits on the value's baseline rather than its
+  // centre, which is what makes "8.60 kW" read as one figure.
+  lv_obj_t* value_row = make_group(s_root);
+  lv_obj_set_size(value_row, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+  lv_obj_set_flex_flow(value_row, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(value_row, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_END);
+  lv_obj_set_style_pad_column(value_row, 4, LV_PART_MAIN);
+  lv_obj_align(value_row, LV_ALIGN_CENTER, 0, 0);
+  s_plant_value = make_label(value_row, PUCK_FONT_HERO, PUCK_COLOUR_TEXT);
   lv_label_set_text(s_plant_value, "--");
-  lv_obj_align(s_plant_value, LV_ALIGN_CENTER, 0, 0);
+  lv_obj_t* plant_unit = make_label(value_row, PUCK_FONT_SMALL, PUCK_COLOUR_MUTED);
+  lv_label_set_text(plant_unit, "kW");
+  lv_obj_set_style_pad_bottom(plant_unit, 8, LV_PART_MAIN);
   s_plant_status = make_label(s_root, PUCK_FONT_SMALL, PUCK_COLOUR_MUTED);
-  lv_label_set_text(s_plant_status, "kW");
+  lv_label_set_text(s_plant_status, "");
   lv_obj_align(s_plant_status, LV_ALIGN_CENTER, 0, 42);
+
+  // The system's own loss — conversion, standby, battery heating — on the same
+  // line, shown only while the status leaves it free: a stale reading's loss is
+  // as stale as everything else, and the warning matters more.
+  s_plant_loss = make_label(s_root, PUCK_FONT_SMALL, PUCK_COLOUR_LOSSES);
+  lv_label_set_text(s_plant_loss, "");
+  lv_obj_align(s_plant_loss, LV_ALIGN_CENTER, 0, 42);
+  lv_obj_add_flag(s_plant_loss, LV_OBJ_FLAG_HIDDEN);
 
   build_leg(LEG_SOLAR, "SOLAR", PUCK_COLOUR_SOLAR, POS_SOLAR);
   build_leg(LEG_GRID, "GRID", PUCK_COLOUR_GRID, POS_GRID);
@@ -315,12 +336,27 @@ void screen_power_update(const Snapshot& snapshot) {
   if (s_root == nullptr) {
     return;
   }
-  set_plant_status(snapshot);
+  const bool status_clear = set_plant_status(snapshot);
 
   char plant_text[16];
   puck_format_magnitude(snapshot.valid ? snapshot.power.plant : MaybeFloat{},
                         PUCK_KW_DECIMALS, plant_text, sizeof(plant_text));
   lv_label_set_text(s_plant_value, plant_text);
+
+  // Hidden when unknown, and below 5 W, where a reading is sensor noise — small
+  // negatives included. The same figure on every source: the server sends it,
+  // Modbus and HA derive it (power_balance.h).
+  const MaybeFloat& loss = snapshot.power.losses;
+  if (snapshot.valid && status_clear && loss.known && loss.value > 0.005f) {
+    char loss_value[16];
+    puck_format_magnitude(loss, PUCK_KW_DECIMALS, loss_value, sizeof(loss_value));
+    char loss_text[32];
+    snprintf(loss_text, sizeof(loss_text), "%s kW loss", loss_value);
+    lv_label_set_text(s_plant_loss, loss_text);
+    lv_obj_clear_flag(s_plant_loss, LV_OBJ_FLAG_HIDDEN);
+  } else {
+    lv_obj_add_flag(s_plant_loss, LV_OBJ_FLAG_HIDDEN);
+  }
 
   if (!snapshot.valid) {
     const MaybeFloat unknown;
