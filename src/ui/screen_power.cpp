@@ -475,20 +475,25 @@ void screen_power_update(const Snapshot& snapshot) {
   // goes makes the shape itself flicker, and "EV / - / idle" is information.
   set_leg(LEG_EV, snapshot.power.ev, FLOW_OUTWARD, "kW charge", true);
 
-  // Off grid: the leg is suppressed rather than drawn as a real zero, but it is
-  // labelled so the gap reads as a state and not a fault.
+  // Off grid (the gateway's contactor open): the leg carries no reading, but it
+  // says so in the warning colour, with the name dimmed. The muted "--" it used to
+  // show was the same mark an unread register gets, so islanding read as missing
+  // data rather than as a state of the system.
   if (snapshot.power.off_grid) {
     Leg& grid = s_legs[LEG_GRID];
     lv_obj_clear_flag(grid.box, LV_OBJ_FLAG_HIDDEN);
-    lv_label_set_text(grid.value, "--");
-    lv_label_set_text(grid.detail, "off grid");
-    lv_obj_set_style_text_color(grid.value, lv_color_hex(PUCK_COLOUR_MUTED), LV_PART_MAIN);
+    lv_label_set_text(grid.value, "Off");
+    lv_label_set_text(grid.detail, "contactor open");
+    lv_obj_set_style_text_color(grid.value, lv_color_hex(PUCK_COLOUR_WARN), LV_PART_MAIN);
+    lv_obj_set_style_text_color(grid.name, lv_color_hex(PUCK_COLOUR_MUTED), LV_PART_MAIN);
     grid.direction = FLOW_IDLE;
     for (lv_obj_t* dot : grid.dots) {
       lv_obj_add_flag(dot, LV_OBJ_FLAG_HIDDEN);
     }
   } else {
     lv_obj_set_style_text_color(s_legs[LEG_GRID].value, lv_color_hex(PUCK_COLOUR_TEXT),
+                                LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_legs[LEG_GRID].name, lv_color_hex(PUCK_COLOUR_GRID),
                                 LV_PART_MAIN);
     const bool importing = snapshot.power.grid.known && snapshot.power.grid.value > 0.0f;
     set_leg(LEG_GRID, snapshot.power.grid, importing ? FLOW_INWARD : FLOW_OUTWARD,
