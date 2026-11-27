@@ -166,6 +166,25 @@ void format_span(uint32_t seconds, char* out, size_t size) {
   }
 }
 
+// Reads an array of events into `list`, up to `max`. Without the array (a server
+// older than the key), `fallback` alone when there is one.
+void read_list(JsonVariantConst array, GridEvent* list, size_t max, uint8_t* count,
+               const GridEvent* fallback) {
+  *count = 0;
+  if (array.is<JsonArrayConst>()) {
+    for (JsonVariantConst entry : array.as<JsonArrayConst>()) {
+      if (*count >= max) {
+        break;
+      }
+      if (entry.is<JsonObjectConst>()) {
+        list[(*count)++] = parse_event(entry.as<JsonObjectConst>());
+      }
+    }
+  } else if (fallback != nullptr) {
+    list[(*count)++] = *fallback;
+  }
+}
+
 }  // namespace
 
 bool events_parse(const char* json, size_t length, EventList* out) {
@@ -198,21 +217,16 @@ bool events_parse(const char* json, size_t length, EventList* out) {
     out->current = parse_event(current.as<JsonObjectConst>());
   }
 
-  // Every live event (0.48.0+). Without the key, an older server: `current` is
-  // the only live event it could send.
-  JsonVariantConst live = doc["live"];
-  if (live.is<JsonArrayConst>()) {
-    for (JsonVariantConst entry : live.as<JsonArrayConst>()) {
-      if (out->live_count >= EVENTS_MAX_LIVE) {
-        break;
-      }
-      if (entry.is<JsonObjectConst>()) {
-        out->live[out->live_count++] = parse_event(entry.as<JsonObjectConst>());
-      }
-    }
-  } else if (out->has_current && out->current.state == EventState::Live) {
-    out->live[out->live_count++] = out->current;
-  }
+  // Every live event (0.48.0+) and every booked one (0.48.1+). Without a key, an
+  // older server: `current` is the only one of that kind it could send.
+  const EventState current_state = out->has_current ? out->current.state : EventState::Unknown;
+  read_list(doc["live"], out->live, EVENTS_MAX_LIVE, &out->live_count,
+            out->has_current && current_state == EventState::Live ? &out->current : nullptr);
+  read_list(doc["upcoming"], out->upcoming, EVENTS_MAX_UPCOMING, &out->upcoming_count,
+            out->has_current && (current_state == EventState::Upcoming ||
+                                 current_state == EventState::Deferred)
+                ? &out->current
+                : nullptr);
 
   // Absent, null or not an array: no past events, not a broken payload.
   for (JsonVariantConst entry : doc["past"].as<JsonArrayConst>()) {

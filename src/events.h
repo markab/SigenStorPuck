@@ -84,6 +84,8 @@ static constexpr size_t EVENTS_FETCH_LIMIT = 6;
 // Events live at once. Two overlap in practice (an Axle export inside a Saving
 // Session); a third is kept in case, and any more are dropped.
 static constexpr size_t EVENTS_MAX_LIVE = 3;
+// Booked events kept: two booked for the same hour is the case that matters.
+static constexpr size_t EVENTS_MAX_UPCOMING = 4;
 
 struct EventList {
   // False until a payload has parsed. Also false when the server has no events
@@ -104,6 +106,13 @@ struct EventList {
   // whenever live_count > 0.
   uint8_t live_count = 0;
   GridEvent live[EVENTS_MAX_LIVE];
+
+  // Every booked event, soonest first: the server's `upcoming` (0.48.1+), so two
+  // booked for the same hour both show before they start. From an older server,
+  // `current` when it is booked rather than live. upcoming[0] is `current`
+  // whenever nothing is live and upcoming_count > 0.
+  uint8_t upcoming_count = 0;
+  GridEvent upcoming[EVENTS_MAX_UPCOMING];
 
   // Finished, newest first.
   uint8_t past_count = 0;

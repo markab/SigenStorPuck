@@ -2262,6 +2262,37 @@ void test_events() {
           "live beyond the capacity is dropped");
   }
 
+  // Two booked for the same hour (0.48.1's `upcoming`), and an older server.
+  {
+    const std::string saving =
+        event_json("\"state\":\"upcoming\",\"start\":1794675600,\"end\":1794679200");
+    const std::string axle = event_json(
+        "\"kind\":\"axle\",\"state\":\"upcoming\",\"start\":1794675600,\"end\":1794679200");
+    EventList list;
+    check(parse_events("{\"now\":1794672000,\"current\":" + saving + ",\"live\":[],\"upcoming\":[" +
+                           saving + "," + axle + "],\"past\":[]}",
+                       &list),
+          "a payload with upcoming parses");
+    check(list.upcoming_count == 2 && list.upcoming[0].kind == EventKind::Saving &&
+              list.upcoming[1].kind == EventKind::Axle && list.live_count == 0,
+          "both booked events read, none live");
+    check(parse_events("{\"now\":1794672000,\"current\":" + saving + ",\"past\":[]}", &list) &&
+              list.upcoming_count == 1 && list.upcoming[0].kind == EventKind::Saving &&
+              list.live_count == 0,
+          "no upcoming key: a booked current is the one booked event");
+    check(parse_events("{\"now\":1794672000,\"current\":" +
+                           event_json("\"state\":\"deferred\",\"start\":1794675600") +
+                           ",\"past\":[]}",
+                       &list) &&
+              list.upcoming_count == 1,
+          "no upcoming key: a deferred session ahead counts as booked");
+    check(parse_events("{\"now\":1794678480,\"current\":" +
+                           event_json("\"state\":\"live\"") + ",\"past\":[]}",
+                       &list) &&
+              list.upcoming_count == 0 && list.live_count == 1,
+          "no upcoming key: a live current is not booked");
+  }
+
   // Nulls stay unknown — never zero, and a null end is not 1970.
   {
     const std::string json =
