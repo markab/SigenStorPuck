@@ -2226,6 +2226,42 @@ void test_events() {
     check(e.points.known && e.points.value == 1520 && e.points_estimated, "points and estimate");
   }
 
+  // Two live at once (0.48.0's `live`), and an older server without it.
+  {
+    const std::string saving =
+        event_json("\"state\":\"live\",\"start\":1794675600,\"end\":1794679200");
+    const std::string axle = event_json(
+        "\"kind\":\"axle\",\"state\":\"live\",\"start\":1794677400,\"end\":1794681000");
+    EventList list;
+    check(parse_events("{\"now\":1794678480,\"current\":" + saving + ",\"live\":[" + saving +
+                           "," + axle + "],\"past\":[]}",
+                       &list),
+          "a payload with live parses");
+    check(list.live_count == 2 && list.live[0].kind == EventKind::Saving &&
+              list.live[1].kind == EventKind::Axle && list.live[1].start == 1794677400u,
+          "both live events read, in the server's order");
+    check(list.has_current && list.current.kind == EventKind::Saving,
+          "current is still read beside live");
+
+    check(parse_events("{\"now\":1794678480,\"current\":" + saving + ",\"past\":[]}", &list) &&
+              list.live_count == 1 && list.live[0].kind == EventKind::Saving,
+          "no live key: a live current is the one live event");
+    check(parse_events("{\"now\":1794678480,\"current\":" +
+                           event_json("\"state\":\"upcoming\"") + ",\"past\":[]}",
+                       &list) &&
+              list.live_count == 0,
+          "no live key: an upcoming current is not live");
+    check(parse_events("{\"now\":1794678480,\"current\":null,\"live\":[],\"past\":[]}",
+                       &list) &&
+              list.live_count == 0,
+          "an empty live list");
+    check(parse_events("{\"now\":1794678480,\"current\":" + saving + ",\"live\":[" + saving +
+                           "," + axle + "," + axle + "," + axle + ",7],\"past\":[]}",
+                       &list) &&
+              list.live_count == EVENTS_MAX_LIVE,
+          "live beyond the capacity is dropped");
+  }
+
   // Nulls stay unknown — never zero, and a null end is not 1970.
   {
     const std::string json =

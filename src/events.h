@@ -81,6 +81,9 @@ struct GridEvent {
 // the capacity are dropped at parse time.
 static constexpr size_t EVENTS_MAX_PAST = 8;
 static constexpr size_t EVENTS_FETCH_LIMIT = 6;
+// Events live at once. Two overlap in practice (an Axle export inside a Saving
+// Session); a third is kept in case, and any more are dropped.
+static constexpr size_t EVENTS_MAX_LIVE = 3;
 
 struct EventList {
   // False until a payload has parsed. Also false when the server has no events
@@ -93,6 +96,14 @@ struct EventList {
   // none.
   bool has_current = false;
   GridEvent current;
+
+  // Every event live now, earliest start first: the server's `live` (0.48.0+),
+  // so a screen with room can show events that overlap. An older server sends
+  // `current` alone, and then this holds `current` when it is live, so a screen
+  // can read live events from here whatever the server. live[0] is `current`
+  // whenever live_count > 0.
+  uint8_t live_count = 0;
+  GridEvent live[EVENTS_MAX_LIVE];
 
   // Finished, newest first.
   uint8_t past_count = 0;

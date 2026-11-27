@@ -198,6 +198,22 @@ bool events_parse(const char* json, size_t length, EventList* out) {
     out->current = parse_event(current.as<JsonObjectConst>());
   }
 
+  // Every live event (0.48.0+). Without the key, an older server: `current` is
+  // the only live event it could send.
+  JsonVariantConst live = doc["live"];
+  if (live.is<JsonArrayConst>()) {
+    for (JsonVariantConst entry : live.as<JsonArrayConst>()) {
+      if (out->live_count >= EVENTS_MAX_LIVE) {
+        break;
+      }
+      if (entry.is<JsonObjectConst>()) {
+        out->live[out->live_count++] = parse_event(entry.as<JsonObjectConst>());
+      }
+    }
+  } else if (out->has_current && out->current.state == EventState::Live) {
+    out->live[out->live_count++] = out->current;
+  }
+
   // Absent, null or not an array: no past events, not a broken payload.
   for (JsonVariantConst entry : doc["past"].as<JsonArrayConst>()) {
     if (out->past_count >= EVENTS_MAX_PAST) {
